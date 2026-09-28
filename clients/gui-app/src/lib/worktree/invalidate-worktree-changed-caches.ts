@@ -124,8 +124,8 @@ export function invalidateWorktreeChangedCaches(
     refetchType: "active",
     predicate: (query) => isAffected(query.queryKey),
   });
-  // Keep pending-create seeds authoritative: mark affected entries without
-  // refetching until their existing hold is released.
+  // Binding membership can change even when no cached row names the path.
+  // Pending-create seeds stay mark-only until their existing hold is released.
   const bindingsScope = hostQueryKeys.methodScope(
     hostId,
     "worktree.listBindingsForEpic",
@@ -134,14 +134,12 @@ export function invalidateWorktreeChangedCaches(
     queryKey: bindingsScope,
     refetchType: "active",
     predicate: (query) =>
-      isAffected(query.queryKey) &&
       !isPendingCreateSeedBindingsQuery(hostId, query.queryKey),
   });
   void queryClient.invalidateQueries({
     queryKey: bindingsScope,
     refetchType: "none",
     predicate: (query) =>
-      isAffected(query.queryKey) &&
       isPendingCreateSeedBindingsQuery(hostId, query.queryKey),
   });
 }

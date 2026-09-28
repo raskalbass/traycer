@@ -1390,4 +1390,78 @@ describe("debounced persistence", () => {
 
     expect(reload.location.pathname).toBe("/draft/draft-a");
   });
+
+  // A same-document localStorage write never fires `storage`; only a peer
+  // window does, so the event is built by hand.
+  it.each([
+    {
+      label: "a peer's replacement of this window's key",
+      peer: () => {
+        const snapshot = { entries: ["/epics/epic-a/tab-peer"], index: 0 };
+        window.localStorage.setItem(
+          storageKey("window-a"),
+          JSON.stringify(snapshot),
+        );
+        return { key: storageKey("window-a"), expected: snapshot };
+      },
+    },
+    {
+      label: "a peer's clear-all",
+      peer: () => {
+        window.localStorage.clear();
+        return { key: null, expected: null };
+      },
+    },
+  ])(
+    "a queued write does not survive $label, on debounce flush or destroy()",
+    ({ peer }) => {
+      const history = createPersistentMemoryHistory(
+        "/epics/epic-a/tab-a",
+        "window-a",
+      );
+      flushHistory("window-a");
+      history.push("/draft/draft-a");
+
+      const { key, expected } = peer();
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key,
+          storageArea: window.localStorage,
+        }),
+      );
+
+      flushHistory("window-a");
+      expect(readPersisted("window-a")).toEqual(expected);
+      history.destroy();
+      expect(readPersisted("window-a")).toEqual(expected);
+    },
+  );
+
+  it("keeps a queued write when the event names another key or another storage area", () => {
+    const history = createPersistentMemoryHistory(
+      "/epics/epic-a/tab-a",
+      "window-a",
+    );
+    flushHistory("window-a");
+    history.push("/draft/draft-a");
+
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: storageKey("window-b"),
+        storageArea: window.localStorage,
+      }),
+    );
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: storageKey("window-a"),
+        storageArea: window.sessionStorage,
+      }),
+    );
+
+    history.destroy();
+    expect(readPersisted("window-a")).toEqual({
+      entries: ["/epics/epic-a/tab-a", "/draft/draft-a"],
+      index: 1,
+    });
+  });
 });

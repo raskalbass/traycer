@@ -277,11 +277,15 @@ describe("<RateLimitPollProvider />", () => {
     act(() => {
       setDesktopWindowOnScreen(true);
     });
+    // Brought back: `startVisibleInterval`'s `fireOnShow` catches up
+    // immediately on the hide->show edge, rather than leaving rate-limit
+    // data stale until the next full interval elapses.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
     act(() => {
       vi.advanceTimersByTime(EPHEMERAL_RATE_LIMIT_POLL_INTERVAL_MS);
     });
-    // Brought back: polling resumes.
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // Polling resumes on its ordinary cadence after the catch-up tick.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("keeps polling when the window loses focus but stays visible - never keys off blur", () => {

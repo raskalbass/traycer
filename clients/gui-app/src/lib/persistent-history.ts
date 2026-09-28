@@ -544,9 +544,25 @@ export function createPersistentMemoryHistory(
 
   persistState(windowId, entries, index);
 
+  const storageKey = windowId === null ? null : buildStorageKey(windowId);
+  const onStorage = (event: StorageEvent): void => {
+    if (
+      storageKey !== null &&
+      event.storageArea === window.localStorage &&
+      (event.key === null || event.key === storageKey)
+    ) {
+      // A peer's wipe or replacement supersedes this renderer's queued write.
+      cancelDeferredJsonWrite(storageKey);
+    }
+  };
+  if (storageKey !== null) window.addEventListener("storage", onStorage);
+
   const history = createHistory({
     destroy: () => {
-      if (windowId !== null) flushDeferredJsonWrite(buildStorageKey(windowId));
+      if (storageKey !== null) {
+        window.removeEventListener("storage", onStorage);
+        flushDeferredJsonWrite(storageKey);
+      }
     },
     getLocation: () =>
       parseHref(

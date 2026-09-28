@@ -226,7 +226,7 @@ function uniqueSvgCopy(svg: string): string {
             token.startsWith('"') || token.startsWith("'") ? token[0] : "";
           const original = quote === "" ? token : token.slice(1, -1);
           const rewritten = rewriteAttribute(
-            name.replace(/\\:/g, ":").replace("|", ":"),
+            name.replace(/\\:/g, ":").replaceAll("|", ":"),
             original,
           );
           if (rewritten === original) return match;

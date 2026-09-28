@@ -227,6 +227,7 @@ vi.mock("@/lib/epic-selectors", () => ({
   // non-throwing) selectors, so both forms are answered here.
   useEpicAgentActivityTiers: () => new Map<string, false>(),
   useRegisteredEpicAgentActivityTiers: () => new Map<string, false>(),
+  useRegisteredEpicAgentActivityTier: () => undefined,
   useRegisteredEpicPermissionRole: () => "owner",
 }));
 

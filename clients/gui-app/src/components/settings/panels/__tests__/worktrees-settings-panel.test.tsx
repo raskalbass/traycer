@@ -31,7 +31,10 @@ import {
   type HostStreamRpcRegistry,
 } from "@traycer/protocol/host/registry";
 import { WorktreesList } from "@/components/settings/panels/worktrees-settings-panel";
-import { useWorktreeListing } from "@/components/settings/panels/worktrees-listing-query";
+import {
+  listingQueryKeyFor,
+  useWorktreeListing,
+} from "@/components/settings/panels/worktrees-listing-query";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import {
   __resetWorktreeDeleteRunForTests,
@@ -40,7 +43,6 @@ import {
   useWorktreeDeleteRun,
 } from "@/components/settings/panels/use-worktree-delete-run";
 import { hostQueryKeys } from "@/lib/query-keys";
-import { WORKTREE_BINDING_INVALIDATIONS } from "@/hooks/worktree/invalidations";
 import {
   DEFAULT_WORKTREE_SORT_MODE,
   EMPTY_WORKTREE_TIER_FILTERS,
@@ -53,6 +55,10 @@ import {
 } from "./worktrees-virtualizer-test-utils";
 import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 import { TEST_CLIENT_IDENTITY } from "@traycer-clients/shared/test-fixtures/client-identity";
+
+// Typed as `unknown` so the asymmetric matcher's `any` never lands in an
+// object property (`no-unsafe-assignment`).
+const ANY_PREDICATE: unknown = expect.any(Function);
 
 // The delete is a stream: mock the wrapper so a test can drive server frames
 // (started / phase / output / complete / failed) and assert the modal + cache
@@ -503,6 +509,37 @@ function renderList(args: {
       />
     </Wrapper>,
   );
+}
+
+// `WorktreesList` is props-driven, so deletion only invalidates queries a
+// test caches itself.
+function seedAffectedWorktreeCaches(
+  queryClient: QueryClient,
+  hostId: string,
+  deletedPaths: readonly string[],
+): void {
+  queryClient.setQueryData(listingQueryKeyFor(hostId), {
+    worktrees: [],
+    nextCursor: null,
+  });
+  queryClient.setQueryData(
+    hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+      hostId,
+      "worktree.getBinding",
+      { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+    ),
+    { binding: null, missingWorktreePaths: [deletedPaths[0]] },
+  );
+  for (const workspacePath of deletedPaths) {
+    queryClient.setQueryData(
+      hostQueryKeys.method<HostRpcRegistry, "worktree.listBranches">(
+        hostId,
+        "worktree.listBranches",
+        { workspacePath, includeRemote: false },
+      ),
+      { branches: [], uncommittedFileCount: 0 },
+    );
+  }
 }
 
 // Renders the toolbar with explicit props (the `renderList` helper always
@@ -1743,6 +1780,8 @@ describe("WorktreesList delete flow", () => {
       onVisiblePathsChange: undefined,
       taskTitlesByEpicId: undefined,
     });
+    const deletedPaths = ["/wt/clean", "/wt/dirty", "/wt/api-clean"];
+    seedAffectedWorktreeCaches(queryClient, "host-a", deletedPaths);
 
     selectRows(["feat-clean", "feat-dirty", "feat-api-clean"]);
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
@@ -1793,13 +1832,38 @@ describe("WorktreesList delete flow", () => {
       callbacksFor("/wt/api-clean").onComplete(true);
     });
     screen.getByText("3/3 deleted");
-    expect(invalidateSpy).toHaveBeenCalledTimes(
-      WORKTREE_BINDING_INVALIDATIONS.length + 2,
-    );
+    expect(invalidateSpy).toHaveBeenCalledTimes(2 + deletedPaths.length + 1);
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-a", "worktree.listAllForHost"),
+      queryKey: hostQueryKeys.methodScope("host-a", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: listingQueryKeyFor("host-a"),
+      exact: true,
       refetchType: "active",
     });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+        "host-a",
+        "worktree.getBinding",
+        { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+      ),
+      exact: true,
+      refetchType: "active",
+    });
+    for (const workspacePath of deletedPaths) {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: hostQueryKeys.method<
+          HostRpcRegistry,
+          "worktree.listBranches"
+        >("host-a", "worktree.listBranches", {
+          workspacePath,
+          includeRemote: false,
+        }),
+        exact: true,
+        refetchType: "active",
+      });
+    }
   });
 
   it("fails every target non-modally when the command stream cannot start", () => {
@@ -1980,6 +2044,8 @@ describe("WorktreesList delete flow", () => {
       onVisiblePathsChange: undefined,
       taskTitlesByEpicId: undefined,
     });
+    const deletedPaths = ["/wt/clean", "/wt/dirty"];
+    seedAffectedWorktreeCaches(queryClient, "host-a", deletedPaths);
 
     selectRows(["feat-clean", "feat-dirty"]);
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
@@ -2000,9 +2066,36 @@ describe("WorktreesList delete flow", () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-a", "worktree.listAllForHost"),
+      queryKey: hostQueryKeys.methodScope("host-a", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: listingQueryKeyFor("host-a"),
+      exact: true,
       refetchType: "active",
     });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+        "host-a",
+        "worktree.getBinding",
+        { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+      ),
+      exact: true,
+      refetchType: "active",
+    });
+    for (const workspacePath of deletedPaths) {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: hostQueryKeys.method<
+          HostRpcRegistry,
+          "worktree.listBranches"
+        >("host-a", "worktree.listBranches", {
+          workspacePath,
+          includeRemote: false,
+        }),
+        exact: true,
+        refetchType: "active",
+      });
+    }
   });
 
   it("keeps fallback reservations in step with the queue, so drained and dismissed targets can be deleted again", () => {
@@ -2428,6 +2521,8 @@ describe("WorktreesList delete flow", () => {
       onVisiblePathsChange: undefined,
       taskTitlesByEpicId: undefined,
     });
+    const deletedPaths = ["/wt/clean"];
+    seedAffectedWorktreeCaches(queryClient, "host-a", deletedPaths);
 
     confirmDelete("feat-clean");
 
@@ -2455,19 +2550,40 @@ describe("WorktreesList delete flow", () => {
       streamMock.callbacks?.onComplete(true);
     });
 
+    // Every invalidation carries the captured host-a, never the swapped host-b.
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-a", "worktree.listAllForHost"),
+      queryKey: hostQueryKeys.methodScope("host-a", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: listingQueryKeyFor("host-a"),
+      exact: true,
       refetchType: "active",
     });
-    for (const method of WORKTREE_BINDING_INVALIDATIONS) {
-      expect(invalidateSpy).toHaveBeenCalledWith({
-        queryKey: hostQueryKeys.methodScope("host-a", method),
-        refetchType: "all",
-      });
-    }
-    expect(invalidateSpy).not.toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-b", "worktree.listAllForHost"),
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+        "host-a",
+        "worktree.getBinding",
+        { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+      ),
+      exact: true,
       refetchType: "active",
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.listBranches">(
+        "host-a",
+        "worktree.listBranches",
+        {
+          workspacePath: deletedPaths[0],
+          includeRemote: false,
+        },
+      ),
+      exact: true,
+      refetchType: "active",
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.methodScope("host-b", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
     });
   });
 

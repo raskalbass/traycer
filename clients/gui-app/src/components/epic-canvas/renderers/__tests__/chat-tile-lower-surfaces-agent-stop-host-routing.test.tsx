@@ -21,6 +21,10 @@ import {
 import { stopAgentRequestSchema } from "@traycer/protocol/host/agent/shared";
 import type { BackgroundItem } from "@traycer/protocol/host/agent/gui/subscribe";
 
+// Typed as `unknown` so the asymmetric matcher's `any` never lands in an
+// object property (`no-unsafe-assignment`).
+const ANY_PREDICATE: unknown = expect.any(Function);
+
 /**
  * The composer's cascade-stop dialog must send "Stop all" to the tab's own
  * host, even when the app's selected host differs. Production routing
@@ -432,6 +436,7 @@ describe("composer cascade-stop dialog host routing", () => {
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({
         queryKey: hostQueryKeys.methodScope(TAB_HOST.hostId, "agent.list"),
+        predicate: ANY_PREDICATE,
       });
     });
   });

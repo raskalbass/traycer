@@ -18,6 +18,10 @@ import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { hostRpcSchedulingPolicy } from "@/lib/host-rpc-policy/host-method-policy-table";
 import { hostQueryKeys } from "@/lib/query-keys";
 
+// Typed as `unknown` so the asymmetric matcher's `any` never lands in an
+// object property (`no-unsafe-assignment`).
+const ANY_PREDICATE: unknown = expect.any(Function);
+
 type NotificationConfig = ResponseOfMethod<
   HostRpcRegistry,
   "host.notifications.getConfig"
@@ -112,6 +116,7 @@ describe("useHostNotificationsSetConfigForClient", () => {
           "host-a",
           "host.notifications.getConfig",
         ),
+        predicate: ANY_PREDICATE,
       });
     });
   });
