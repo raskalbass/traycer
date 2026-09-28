@@ -52,6 +52,10 @@ export function flushDeferredJsonWrite(key: string): void {
   }
 }
 
+export function hasDeferredJsonWrite(key: string): boolean {
+  return pendingWrites.has(key);
+}
+
 export function cancelDeferredJsonWrite(key: string): void {
   pendingWrites.delete(key);
   if (pendingWrites.size === 0) clearTimers();

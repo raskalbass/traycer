@@ -9,18 +9,27 @@ import {
 } from "vitest";
 import type { JsonContent } from "@traycer/protocol/common/registry";
 import { cancelDeferredJsonWrites } from "@/lib/persist/deferred-json-storage";
+import {
+  composerDraftRowPrefix,
+  composerDraftStorageKey,
+} from "@/lib/persist/keys";
 import * as stripModule from "@/lib/composer/strip-base64-image-nodes";
 import { useComposerDraftStore } from "../composer-draft-store";
+import {
+  ANON_NAME,
+  draftWith,
+  rawRows,
+  readDraftRow,
+  readStoredRow,
+  resetComposerDraftPersistence,
+  rowKey,
+  rowKeys,
+  seedRow,
+  textDoc,
+} from "./composer-draft-rows";
 
-const STORAGE_KEY = "traycer-gui-app:composer-drafts";
 const DEBOUNCE_MS = 100;
-
-function textDoc(text: string): JsonContent {
-  return {
-    type: "doc",
-    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
-  };
-}
+const ROW_PREFIX = composerDraftRowPrefix(ANON_NAME);
 
 function pendingB64Doc(): JsonContent {
   return {
@@ -59,20 +68,6 @@ function containsB64String(value: unknown): boolean {
   return false;
 }
 
-interface PersistedComposerShape {
-  readonly state: {
-    readonly drafts: Record<
-      string,
-      { readonly content: JsonContent; readonly selection: unknown }
-    >;
-  };
-}
-
-function readPersisted(): PersistedComposerShape | null {
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  return raw === null ? null : (JSON.parse(raw) as PersistedComposerShape);
-}
-
 // Some environments run the jsdom setup's `installMockLocalStorage()`
 // fallback (own-property methods on the `window.localStorage` instance
 // itself, not inherited from `Storage.prototype` - see
@@ -91,8 +86,15 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
     typeof stripModule.stripBase64ImageNodesWithSelection
   >;
 
+  /** Row-key writes only: the number of drafts a flush actually serialized. */
   function storeWrites(): number {
-    return setItemSpy.mock.calls.filter(([key]) => key === STORAGE_KEY).length;
+    return writtenRowKeys().length;
+  }
+
+  function writtenRowKeys(): string[] {
+    return setItemSpy.mock.calls
+      .map(([key]) => key)
+      .filter((key) => key.startsWith(ROW_PREFIX));
   }
 
   function resetStore(): void {
@@ -102,19 +104,15 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
     });
   }
 
-  beforeEach(() => {
-    window.localStorage.clear();
-    // Fake timers FIRST: `resetStore()` below commits through the real
-    // persist middleware, which schedules a deferred write. Installing fake
-    // timers before that commit keeps that scheduling on the fake clock, so
-    // the `cancelDeferredJsonWrites()` right after actually reaches it -
-    // otherwise it arms a real 100ms timeout that fires mid a LATER test.
+  beforeEach(async () => {
+    // Fake timers FIRST: anything committed through the real persist
+    // middleware schedules a deferred write, and it must land on the fake
+    // clock so `cancelDeferredJsonWrites()` actually reaches it - otherwise it
+    // arms a real 100ms timeout that fires mid a LATER test.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    resetStore();
-    cancelDeferredJsonWrites();
-    // `getOptions().name` may have been left retargeted by a prior test in
-    // this file; every assertion here keys off the well-known STORAGE_KEY.
-    useComposerDraftStore.persist.setOptions({ name: STORAGE_KEY });
+    // Rehydrates onto the anonymous namespace, which also re-baselines the
+    // storage adapter against the emptied disk.
+    await resetComposerDraftPersistence();
     setItemSpy = vi.spyOn(storageSpyTarget(), "setItem");
     stringifySpy = vi.spyOn(JSON, "stringify");
     stripSpy = vi.spyOn(stripModule, "stripBase64ImageNodesWithSelection");
@@ -148,16 +146,44 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
     expect(storeWrites()).toBe(0);
     expect(stringifySpy).not.toHaveBeenCalled();
     expect(stripSpy).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(rowKeys(ANON_NAME)).toEqual([]);
 
     vi.advanceTimersByTime(DEBOUNCE_MS);
 
     expect(storeWrites()).toBe(1);
-    expect(stringifySpy).toHaveBeenCalledTimes(1);
     expect(stripSpy).toHaveBeenCalledTimes(1);
-    expect(readPersisted()?.state.drafts[chatId]?.content).toEqual(
+    expect(readDraftRow(chatId, ANON_NAME)?.content).toEqual(
       textDoc("draft v4"),
     );
+  });
+
+  it("an edit to one of several drafts serializes and writes only that draft's row", () => {
+    const store = useComposerDraftStore.getState();
+    store.setSnapshot("chat-a", textDoc("a v0"), null);
+    store.setSnapshot("chat-b", textDoc("b v0"), null);
+    store.setSnapshot("chat-c", textDoc("c v0"), null);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(storeWrites()).toBe(3);
+    const untouchedBefore = {
+      a: window.localStorage.getItem(rowKey("draft", "chat-a", ANON_NAME)),
+      c: window.localStorage.getItem(rowKey("draft", "chat-c", ANON_NAME)),
+    };
+    setItemSpy.mockClear();
+    stripSpy.mockClear();
+
+    store.setSnapshot("chat-b", textDoc("b v1"), null);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+
+    expect(writtenRowKeys()).toEqual([rowKey("draft", "chat-b", ANON_NAME)]);
+    expect(stripSpy).toHaveBeenCalledTimes(1);
+    expect(readDraftRow("chat-b", ANON_NAME)?.content).toEqual(textDoc("b v1"));
+    // Byte-identical, revision included: nothing rewrote the other rows.
+    expect(
+      window.localStorage.getItem(rowKey("draft", "chat-a", ANON_NAME)),
+    ).toBe(untouchedBefore.a);
+    expect(
+      window.localStorage.getItem(rowKey("draft", "chat-c", ANON_NAME)),
+    ).toBe(untouchedBefore.c);
   });
 
   it("an unchanged caret is a genuine no-op: it never schedules a write", () => {
@@ -186,7 +212,7 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
     // `persistNowOrThrow` before it returns, so a restorer's caller (which
     // acknowledges the source right after) never races a still-queued write.
     expect(storeWrites()).toBe(1);
-    expect(readPersisted()?.state.drafts[chatId]?.content).toEqual(
+    expect(readDraftRow(chatId, ANON_NAME)?.content).toEqual(
       textDoc("restored prompt"),
     );
   });
@@ -206,22 +232,27 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
 
     vi.advanceTimersByTime(DEBOUNCE_MS);
     expect(storeWrites()).toBe(1);
-    expect(readPersisted()?.state.drafts[chatId]?.selection).toEqual({
+    expect(readDraftRow(chatId, ANON_NAME)?.selection).toEqual({
       from: 4,
       to: 4,
     });
   });
 
-  it("pagehide flushes the pending write immediately, stripped of the pending base64 node", () => {
+  it("pagehide flushes every pending row immediately, each stripped of its pending base64 node", () => {
     const chatId = "chat-pagehide";
     useComposerDraftStore.getState().setSnapshot(chatId, pendingB64Doc(), null);
+    useComposerDraftStore
+      .getState()
+      .setSnapshot("chat-pagehide-other", textDoc("plain"), null);
     expect(storeWrites()).toBe(0);
 
     window.dispatchEvent(new Event("pagehide"));
 
-    expect(storeWrites()).toBe(1);
-    const persisted = readPersisted();
-    expect(containsB64String(persisted?.state.drafts[chatId])).toBe(false);
+    expect(storeWrites()).toBe(2);
+    expect(containsB64String(readDraftRow(chatId, ANON_NAME))).toBe(false);
+    expect(readDraftRow("chat-pagehide-other", ANON_NAME)?.content).toEqual(
+      textDoc("plain"),
+    );
     // The live in-memory draft still carries the pending node: it is the
     // background ingest job's work token, not something the flush may drop.
     expect(
@@ -231,27 +262,19 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
     ).toBe(true);
   });
 
-  it("an external, newer disk write followed by persist.rehydrate is never clobbered by the older queued local write", async () => {
+  it("an explicit rehydrate stays disk-authoritative: it adopts the stored rows and drops a still-queued local edit rather than flushing it over them", async () => {
     useComposerDraftStore
       .getState()
       .setSnapshot("local-chat", textDoc("STALE-LOCAL"), null);
-
-    const externalPayload = JSON.stringify({
-      version: 1,
-      state: {
-        drafts: {
-          "ext-chat": { content: textDoc("EXTERNAL-NEWER"), selection: null },
-        },
-        pendingSubmittedDraftDeletes: {},
-      },
-    });
-    window.localStorage.setItem(STORAGE_KEY, externalPayload);
+    seedRow(
+      "draft",
+      "ext-chat",
+      { value: draftWith("EXTERNAL-NEWER"), revision: "rev-ext" },
+      ANON_NAME,
+    );
 
     await useComposerDraftStore.persist.rehydrate();
 
-    // This store's `merge` replaces `drafts` wholesale from disk, so the
-    // stale local edit is gone from memory too - the read that authorized
-    // this trusted the disk over the still-queued edit.
     expect(
       useComposerDraftStore.getState().drafts["local-chat"],
     ).toBeUndefined();
@@ -259,9 +282,10 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
 
     vi.advanceTimersByTime(DEBOUNCE_MS * 2);
 
-    const onDisk = window.localStorage.getItem(STORAGE_KEY);
-    expect(onDisk).not.toBeNull();
-    expect(onDisk).not.toContain("STALE-LOCAL");
+    expect(readStoredRow("draft", "local-chat", ANON_NAME)).toBeNull();
+    expect(readDraftRow("ext-chat", ANON_NAME)?.content).toEqual(
+      textDoc("EXTERNAL-NEWER"),
+    );
   });
 
   it("retargeting the persist key cancels a pending write on the outgoing key", () => {
@@ -270,22 +294,26 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
       .setSnapshot("chat-retarget", textDoc("about to move"), null);
 
     useComposerDraftStore.persist.setOptions({
-      name: "traycer-gui-app:composer-drafts:other-account",
+      name: composerDraftStorageKey("other-account"),
     });
 
     vi.advanceTimersByTime(DEBOUNCE_MS * 2);
 
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(rowKeys(ANON_NAME)).toEqual([]);
+    expect(rowKeys(composerDraftStorageKey("other-account"))).toEqual([]);
   });
 
-  it("clearStorage cancels a pending write through the same removeItem cancellation path", () => {
-    useComposerDraftStore
-      .getState()
-      .setSnapshot("chat-clear", textDoc("about to be cleared"), null);
+  it("clearStorage cancels a pending write and removes every stored row through the same removeItem path", () => {
+    const store = useComposerDraftStore.getState();
+    store.setSnapshot("chat-flushed", textDoc("already on disk"), null);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(rawRows(ANON_NAME)).not.toBeNull();
+    store.setSnapshot("chat-clear", textDoc("about to be cleared"), null);
 
     useComposerDraftStore.persist.clearStorage();
 
     vi.advanceTimersByTime(DEBOUNCE_MS * 2);
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(rowKeys(ANON_NAME)).toEqual([]);
+    expect(window.localStorage.getItem(ANON_NAME)).toBeNull();
   });
 });

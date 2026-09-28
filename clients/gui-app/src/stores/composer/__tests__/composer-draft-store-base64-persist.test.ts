@@ -3,8 +3,12 @@ import type { JsonContent } from "@traycer/protocol/common/registry";
 import { cancelDeferredJsonWrites } from "@/lib/persist/deferred-json-storage";
 
 import { useComposerDraftStore } from "../composer-draft-store";
+import {
+  ANON_NAME,
+  readDraftRow,
+  resetComposerDraftPersistence,
+} from "./composer-draft-rows";
 
-const STORAGE_KEY = "traycer-gui-app:composer-drafts";
 const DEBOUNCE_MS = 100;
 
 // Flush before reading disk - the write is queued, not synchronous.
@@ -36,28 +40,6 @@ function pendingB64ImageDoc(): JsonContent {
   };
 }
 
-function persistedDraftsFromLocalStorage(): Record<string, unknown> {
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  expect(raw).not.toBeNull();
-  if (raw === null) throw new Error("expected persisted drafts");
-  const parsed: unknown = JSON.parse(raw);
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("state" in parsed) ||
-    typeof parsed.state !== "object" ||
-    parsed.state === null
-  ) {
-    throw new Error("unexpected persisted shape");
-  }
-  const state = (parsed as { state: { drafts?: unknown } }).state;
-  const drafts = state.drafts;
-  if (typeof drafts !== "object" || drafts === null) {
-    throw new Error("expected drafts map");
-  }
-  return drafts as Record<string, unknown>;
-}
-
 function containsB64String(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsB64String);
   if (typeof value === "object" && value !== null) {
@@ -71,19 +53,13 @@ function containsB64String(value: unknown): boolean {
   return false;
 }
 
-beforeEach(() => {
-  window.localStorage.clear();
-  // Fake timers before the reset: `setState` below commits through the
-  // persist middleware and schedules a deferred write, so it must happen
-  // while the fake clock is already installed - otherwise it arms a REAL
-  // 100ms timeout that `cancelDeferredJsonWrites` (called before it) never
-  // reaches, and that stray timer fires mid a later test.
+beforeEach(async () => {
+  // Fake timers before anything commits through the persist middleware: its
+  // deferred write must land on the fake clock, or it arms a REAL 100ms
+  // timeout that `cancelDeferredJsonWrites` never reaches and that fires mid
+  // a later test.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  useComposerDraftStore.setState({
-    drafts: {},
-    pendingSubmittedDraftDeletes: {},
-  });
-  cancelDeferredJsonWrites();
+  await resetComposerDraftPersistence();
 });
 
 afterEach(() => {
@@ -104,11 +80,9 @@ describe("composer draft store: base64 strip at the persist boundary", () => {
     flushPendingWrite();
 
     // (a) What actually landed in localStorage carries no b64content anywhere.
-    const fromStorage = persistedDraftsFromLocalStorage();
-    expect(containsB64String(fromStorage[taskId])).toBe(false);
-    const persistedContent = (
-      fromStorage[taskId] as { content?: unknown } | undefined
-    )?.content;
+    const persistedRow = readDraftRow(taskId, ANON_NAME);
+    expect(containsB64String(persistedRow)).toBe(false);
+    const persistedContent = persistedRow?.content;
     expect(persistedContent).toBeDefined();
     expect(JSON.stringify(persistedContent)).not.toContain("b64content");
 
@@ -152,22 +126,15 @@ describe("composer draft store: base64 strip at the persist boundary", () => {
     );
 
     flushPendingWrite();
-    const fromStorage = persistedDraftsFromLocalStorage();
-
     // Stripped: the caret cannot be trusted against the shorter document.
-    expect(
-      (fromStorage[pendingId] as { selection?: unknown } | undefined)
-        ?.selection,
-    ).toBeNull();
+    expect(readDraftRow(pendingId, ANON_NAME)?.selection).toBeNull();
     // ...and the in-memory draft still has both the node and the caret, which
     // is what the live editor is actually pointing at.
     const live = useComposerDraftStore.getState().drafts[pendingId];
     expect(live?.selection).toEqual(caret);
     expect(containsB64String(live?.content)).toBe(true);
 
-    expect(
-      (fromStorage[cleanId] as { selection?: unknown } | undefined)?.selection,
-    ).toEqual(caret);
+    expect(readDraftRow(cleanId, ANON_NAME)?.selection).toEqual(caret);
   });
 
   it("carries a hash-only node through the persisted shape unchanged (nothing to strip)", () => {
@@ -196,10 +163,8 @@ describe("composer draft store: base64 strip at the persist boundary", () => {
     useComposerDraftStore.getState().setSnapshot(taskId, content, null);
     flushPendingWrite();
 
-    const fromStorage = persistedDraftsFromLocalStorage();
-    expect(
-      (fromStorage[taskId] as { content?: unknown } | undefined)?.content,
-    ).toEqual(content);
-    expect(containsB64String(fromStorage[taskId])).toBe(false);
+    const persistedRow = readDraftRow(taskId, ANON_NAME);
+    expect(persistedRow?.content).toEqual(content);
+    expect(containsB64String(persistedRow)).toBe(false);
   });
 });

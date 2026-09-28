@@ -34,7 +34,8 @@ import {
   readComposerDraftSnapshot,
   useComposerDraftStore,
 } from "@/stores/composer/composer-draft-store";
-import { persistKey, STORE_KEYS } from "@/lib/persist/keys";
+import { composerDraftStorageKey } from "@/lib/persist/keys";
+import { rawRows } from "@/stores/composer/__tests__/composer-draft-rows";
 import {
   __resetHostHeldImageHashesForTests,
   hostHeldImageHashes,
@@ -278,11 +279,12 @@ describe("editQueuedItem same_turn: queueCancel's admission gate owns the mutati
     useComposerDraftStore.getState().replaceDraft(nodeId, content, selection);
   }
 
+  /** Every persisted composer row (key, revision and value) as one string. */
   function persistedComposerDraftBlob(): string | null {
-    const key =
+    return rawRows(
       useComposerDraftStore.persist.getOptions().name ??
-      persistKey(STORE_KEYS.composerDraft);
-    return window.localStorage.getItem(key);
+        composerDraftStorageKey(null),
+    );
   }
 
   /** A real store, admitted by default (owner, connection open). */
