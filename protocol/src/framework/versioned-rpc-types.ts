@@ -480,7 +480,7 @@ export type UncheckedMethodVersionRegistry = Readonly<
 > & {
   readonly degrade?: MethodDegradeDeclaration;
   /** Explicit permission to discard a dispatched read. Never grant to mutations. */
-  readonly cancelAfterDispatch?: true;
+  readonly cancelAfterDispatch?: boolean;
 };
 
 /**

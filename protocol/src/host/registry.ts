@@ -4951,6 +4951,7 @@ export const epicCreateTuiAgentUpgradeV10ToV11 = defineUpgradePath<
 
 const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "organization.read": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -4965,6 +4966,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "organization.refresh": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -4982,6 +4984,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "organization.command": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -4995,6 +4998,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "organization.history": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5008,6 +5012,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "browser.savedLoginSites": {
+    cancelAfterDispatch: true,
     // Settings > Browser's "Sites with saved logins" list (keychain refactor
     // ticket 10). Off `RELEASED_FLOOR_METHOD_NAMES` because it is OPTIONAL,
     // not because it is unreleased: `browser.savedLoginSites` is in
@@ -5042,6 +5047,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // setting could live
   // in the CLI config's `features` block.
   "autoJudge.get": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       // @1.0 is RELEASED (`host-v1.3.2-staging.39` advertised it), so the
@@ -5090,6 +5096,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "autoJudge.set": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       // Same line, same reasons, as `autoJudge.get`: the echo reports the
@@ -5128,6 +5135,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // Read-only and host-scoped; a host that predates the log advertises
   // nothing, and the tab renders its unsupported state.
   "autoJudge.listRecent": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5141,6 +5149,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "autoPolicy.get": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5154,6 +5163,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "autoPolicy.set": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5167,6 +5177,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.get": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5180,6 +5191,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.set": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5193,6 +5205,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.reset": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5206,6 +5219,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.add": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5219,6 +5233,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.remove": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5232,6 +5247,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.revertArgs": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5245,6 +5261,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.listDetected": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -5262,6 +5279,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.shell.probe": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5275,6 +5293,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.env.list": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5288,6 +5307,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.env.set": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5301,6 +5321,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.env.delete": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5314,6 +5335,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.logLevels.get": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5327,6 +5349,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.logLevels.set": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5340,6 +5363,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.browser.get": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5353,6 +5377,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "config.browser.set": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5366,6 +5391,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "diagnostics.logs.list": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5379,6 +5405,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "diagnostics.logs.tail": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5425,6 +5452,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.restart": {
+    cancelAfterDispatch: false,
     // Restart authority is meaningful only on hosts that can atomically close
     // work admission before testing drain state; older hosts must not emulate
     // it with a racy activity read.
@@ -5466,6 +5494,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.identity.set": {
+    cancelAfterDispatch: false,
     // Renaming over RPC requires the host-side writer; on an older host the
     // desktop's direct-file path is the only writer, and it is local-only.
     degrade: { kind: "unsupported" },
@@ -5481,6 +5510,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.doctor": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5501,6 +5531,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // majors. A v1.0 peer keeps stable-only default semantics; provenance is
   // reported only where v1.1 is negotiated.
   "host.update.check": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 2,
@@ -5522,6 +5553,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.update.install": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 3,
@@ -5586,6 +5618,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // binds the FROZEN request shape, which is what makes the key structurally
   // absent for a released peer rather than filtered out after the fact.
   "host.update.activate": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -5603,6 +5636,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.update.continue": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -5660,6 +5694,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.service.register": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5673,6 +5708,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.service.deregister": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5686,6 +5722,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.usage.summary": {
+    cancelAfterDispatch: true,
     // Off `RELEASED_FLOOR_METHOD_NAMES` because it is OPTIONAL, not because
     // it is unreleased: `host.usage.summary` is in
     // `released-baseline-surface.json`, so `@1.0` is frozen. (This said
@@ -5730,6 +5767,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "lifecycle.claimShutdown": {
+    cancelAfterDispatch: false,
     // Hosts predating the lifecycle layer cannot safely emulate a shutdown
     // claim, so reconciliation must re-probe and use its legacy-safe path.
     degrade: { kind: "unsupported" },
@@ -5754,6 +5792,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "lifecycle.commitShutdown": {
+    cancelAfterDispatch: false,
     // A commit token has authority only on the host that granted it; there is
     // no meaningful fallback on an older host.
     degrade: { kind: "unsupported" },
@@ -5769,6 +5808,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "lifecycle.releaseShutdown": {
+    cancelAfterDispatch: false,
     // Release authority is meaningful only to the host that minted the token;
     // an older host cannot emulate this recovery arm safely.
     degrade: { kind: "unsupported" },
@@ -5797,6 +5837,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.rebindLocalStore": {
+    cancelAfterDispatch: false,
     // A pre-durability host cannot repair a refused local WAL safely, so this
     // button is simply absent when its optional protocol method is unsupported.
     degrade: { kind: "unsupported" },
@@ -5812,6 +5853,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.getRateLimitUsage": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 2,
       versions: {
@@ -5888,6 +5930,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "providers.consumeRateLimitResetCredit": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5901,6 +5944,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "providers.refreshProfileStatus": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     // v1.0 is frozen at the twenty provider ids `1.3.0` shipped; v2.0 carries
     // the live union, and its v2->v1 bridge fails closed for an id v1.0 cannot
@@ -5930,6 +5974,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notificationHooks.status": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5943,6 +5988,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notificationHooks.test": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5956,6 +6002,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notificationHooks.save": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5983,6 +6030,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.setConfig": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5996,6 +6044,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.markRead": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6009,6 +6058,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.resolve": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6028,6 +6078,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // scoped to the local partition reached the whole origin, and unlike the
   // other three there is nothing to re-read afterwards.
   "host.notifications.clearAll": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -6045,6 +6096,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.cloudFeed.markRead": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6058,6 +6110,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.cloudFeed.resolve": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6071,6 +6124,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.cloudFeed.markAllRead": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6084,6 +6138,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.cloudFeed.clear": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6097,6 +6152,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.cloudFeed.clearAll": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6111,6 +6167,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   },
 
   "comments.listThreads": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6123,6 +6180,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "comments.setThreadStatus": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6135,6 +6193,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "snapshots.getLocalStorageSize": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6147,6 +6206,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "snapshots.readSnapshotDiff": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6159,6 +6219,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "snapshots.clearLocalSnapshots": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6243,6 +6304,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // `fallback.releaseChoice`) are stream actions for that reason, and the lease
   // token these carry is the bridge between the two transports.
   "chat.fallback.cancel": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6256,6 +6318,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "chat.fallback.chooseTarget": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6273,6 +6336,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // the `1.0` response, which strips it; a `1.1` client on a `1.0` host is
   // lifted to `detail: null` by the upgrade path.
   "chat.fallback.runManualRung": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -6290,6 +6354,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "chat.fallback.returnToPreferred": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6310,6 +6375,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // siblings: a client meeting a host without it draws no "Switch now", which
   // is the card that host already renders.
   "chat.fallback.proceed": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6327,6 +6393,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // client meeting an older host renders no destination menu rather than
   // failing - the affordance is absent, not broken.
   "chat.fallback.listTargets": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6340,6 +6407,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.gui.listHarnesses": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6504,6 +6572,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.gui.listModels": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6516,6 +6585,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.gui.listCommands": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6528,6 +6598,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.gui.getPlan": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6540,6 +6611,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.tui.listHarnesses": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6552,6 +6624,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.tui.prepareLaunch": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -6576,6 +6649,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // rather than calling a method the host would reject. Mirrors
   // `epic.setChatArchived`'s degrade strategy.
   "agent.tui.validateForkProfile": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6589,6 +6663,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "agent.tui.generateTitle": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6601,6 +6676,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.tui.turnEnded": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6613,6 +6689,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.tui.recordActivity": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -6637,6 +6714,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // `recordActivity` rather than calling a method the host would reject.
   // Mirrors `agent.tui.validateForkProfile`'s degrade strategy above.
   "agent.tui.promptSubmitted": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -6654,6 +6732,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "agent.create": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6689,6 +6768,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.selectionGuide": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6701,6 +6781,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.selectionGuide.getGlobal": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6713,6 +6794,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.selectionGuide.getGlobalOnboardingDraft": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6725,6 +6807,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.selectionGuide.setGlobal": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6737,6 +6820,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.selectionGuide.resetGlobalToDefault": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6749,6 +6833,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.listHarnessModels": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6773,6 +6858,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.list": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6918,6 +7004,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.resolveMessagePeer": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6931,6 +7018,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.sendMessage": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6943,6 +7031,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.getTranscript": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -6960,6 +7049,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // that adds the resolvers - advertising a method the host cannot dispatch is
   // exactly how `agent.tui.listHarnesses` shipped broken.
   "agent.roles.claim": {
+    cancelAfterDispatch: false,
     1: {
       // @1.1 adds `deferredToPrompt` on the awareness report. @1.0 stays
       // installed and FROZEN; a negotiated v1.0 peer gets deferred ids folded
@@ -6981,6 +7071,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "agent.roles.list": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -6994,6 +7085,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "agent.roles.relinquish": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -7011,6 +7103,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "agent.inbox.read": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7033,6 +7126,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.inbox.ack": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7046,6 +7140,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "agent.stop": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7062,6 +7157,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // lacks it, so a caller (the CLI) gets per-call upgrade guidance instead of
   // a fatal handshake mismatch.
   "agent.fork": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -7075,6 +7171,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "agent.archive": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -7088,6 +7185,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "phase.migrateToEpic": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7100,6 +7198,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.listTasks": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 6,
       versions: {
@@ -7140,6 +7239,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.setPinned": {
+    cancelAfterDispatch: false,
     1: {
       // `@1.1`'s `home` is an ADDED OPTIONAL KEY, not value growth over a
       // released enum, so a `@1.0` peer's frozen response schema strips it at
@@ -7162,6 +7262,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.recordViewed": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7178,6 +7279,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // Old peers lack it in their optional manifest; callers get
   // E_HOST_UNSUPPORTED for this call only and degrade to cache-only titles.
   "epic.getTaskContexts": {
+    cancelAfterDispatch: true,
     1: {
       // @1.1's new row-union values are projection-gated in host dispatch:
       // a v1.0 caller receives its released nullable rows, never a union arm.
@@ -7223,6 +7325,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // its frozen response enum is the reason the new kind could not be added in
   // place: an unknown `kind` fails that peer's whole response parse.
   "epic.create": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 2,
       versions: {
@@ -7255,6 +7358,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // tombstone the way the deletion was actually scoped. Added optional KEY,
   // not value growth, so a `@1.0` peer's frozen row strips it at parse time.
   "epic.batchDelete": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -7271,6 +7375,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.prepareFolders": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 4,
       versions: {
@@ -7491,6 +7596,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.removeRepo": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7503,6 +7609,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.mentionEpics": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7515,6 +7622,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.mentionSpecs": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7527,6 +7635,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.mentionTickets": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7539,6 +7648,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.mentionStories": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7551,6 +7661,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.mentionReviews": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7563,6 +7674,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.listCollaborators": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7575,6 +7687,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.createArtifact": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7587,6 +7700,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.deleteArtifact": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7599,6 +7713,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.updateArtifactStatus": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7611,6 +7726,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.renameArtifact": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7623,6 +7739,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.reparentArtifact": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7635,6 +7752,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.createChat": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 2,
       versions: {
@@ -7667,6 +7785,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "epic.renameChat": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7683,6 +7802,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // E_HOST_UNSUPPORTED for this call only and degrade to the legacy
   // persist-on-next-send behavior.
   "epic.updateChatRunSettings": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -7723,6 +7843,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // profile. Old peers lack it; callers get E_HOST_UNSUPPORTED for this call
   // only and degrade to persist-on-next-send.
   "epic.updateChatProfile": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7741,6 +7862,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // predates session import cannot be running an import, and the surface that
   // reads this is hidden anyway when the stream methods are missing.
   "sessionImport.status": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -7754,6 +7876,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.deleteChat": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -7770,6 +7893,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.reparentChat": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7797,6 +7921,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // refusal backstop it, rather than asserting a publication fact it could not
   // read.
   "epic.chatPublicationState": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7817,6 +7942,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // manifest; the caller gets E_HOST_UNSUPPORTED for this call only and hides
   // the archive affordance.
   "epic.setChatArchived": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7830,6 +7956,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.prepareArtifactImage": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7843,6 +7970,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.finishArtifactImage": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7856,6 +7984,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.createTuiAgent": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -7872,6 +8001,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.deleteTuiAgent": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7884,6 +8014,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.renameTuiAgent": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7896,6 +8027,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.updateTitle": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7908,6 +8040,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.grantAccess": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7920,6 +8053,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.batchUpdateRoles": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7932,6 +8066,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.revokeCollaborator": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7944,6 +8079,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.createCommentThread": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7956,6 +8092,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.replyToCommentThread": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7968,6 +8105,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.editComment": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7980,6 +8118,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.deleteComment": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -7992,6 +8131,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.setCommentThreadResolved": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8004,6 +8144,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.deleteCommentThread": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8016,6 +8157,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.listCommentThreads": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8028,6 +8170,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "epic.resolveArtifactByPath": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8043,6 +8186,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // lacks it in its optional manifest; callers get E_HOST_UNSUPPORTED for this
   // call only and the sidebar degrades to no search (no cross-Epic fallback).
   "epic.searchArtifacts": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8056,6 +8200,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.artifactVersions.list": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8069,6 +8214,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.artifactVersions.getBlob": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8082,6 +8228,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.artifactVersions.restore": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8095,6 +8242,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.deletedArtifacts.list": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8108,6 +8256,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.deletedArtifacts.revive": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8121,6 +8270,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.artifactVersionSettings.get": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8134,6 +8284,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.artifactVersionSettings.setEnabled": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8147,6 +8298,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.artifactVersionSettings.setRetentionPolicy": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8160,6 +8312,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.artifactVersionSettings.clearHistory": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8182,6 +8335,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // surface rather than rendering a failure - a host that predates the surface
   // has nothing a user can do about except update it.,
   "epic.listCloudChats": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8195,6 +8349,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.resolveCloudChatHead": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8208,6 +8363,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.readCloudChatPart": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8221,6 +8377,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.listCloudChatPayloads": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8234,6 +8391,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.readCloudChatPayload": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8251,6 +8409,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // floor). A host that predates them answers E_HOST_UNSUPPORTED and the
   // client hides Share / Mark-all-private rather than rendering a failure.
   "epic.setCloudChatVisibility": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8264,6 +8423,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "epic.setChatSharingDefault": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8283,6 +8443,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // right until a chat forks and exactly wrong afterwards - see
   // `epic/chat-publication-identity.ts`.
   "epic.listChatPublicationTargets": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8299,6 +8460,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // there is no cloud fallback because publication lag belongs to the machine
   // whose durable store and publisher are being compared.
   "epic.chatBackupStatus": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8316,6 +8478,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // above: an older host omits it and the client keeps the notice it already
   // renders.
   "epic.chatReplicaRead": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8344,6 +8507,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // re-encoded registry. @1.2 stays installed and its callers keep receiving
   // the unconditional snapshot.
   "epic.listChatRecords": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 3,
       versions: {
@@ -8432,6 +8596,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // there, not a blank surface. The refetch obligation (reconnect, and every
   // control-lane migration/permission frame) is documented on the contract.
   "epic.getWorkspaceContext": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8454,6 +8619,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // older host still understands the frame, so the legacy adapter covers it and
   // a client must not surface a dead Retry button.
   "epic.retryMigration": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8478,6 +8644,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // growth: a `@1.0` peer's frozen request schema strips it and runs the
   // released disk-then-cloud chain, which is what that host would do anyway.
   "epic.readChatAttachment": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 1,
       versions: {
@@ -8500,6 +8667,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // a capability. Older hosts continue serving attachments through their @1
   // root-doc replicas, so absence degrades cleanly to that existing path.
   "epic.fetchArtifactAttachment": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8519,6 +8687,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // talking to a host without it renders the harness mark alone, which is what
   // that host's client already showed.
   "epic.getChatRunSettings": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8567,6 +8736,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // an old host answers `E_HOST_UNSUPPORTED` and the client falls back to
   // N singles of `epic.getChatRunSettings`.
   "epic.getChatRunSettingsBatch": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8592,6 +8762,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // fact - stamping it moves the list revision - so a host serving one
   // without the other would pay for the second twice.
   "epic.listTuiAgents": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 3,
       versions: {
@@ -8685,6 +8856,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     degrade: { kind: "unsupported" },
   },
   "editor.openPaths": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 2,
       versions: {
@@ -8764,6 +8936,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.create": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8790,6 +8963,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.kill": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -8805,6 +8979,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // simply lacks it, so callers get per-call upgrade guidance instead of a
   // fatal handshake mismatch. Same pattern as `providers.submitLoginCode`.
   "resources.kill": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8818,6 +8993,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "resources.listLocalServers": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       // Shipped in the v1.3.0 release naming an epic; frozen, and served for
@@ -8855,6 +9031,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // the shipped `1.0` stays pinned to the pre-relaunch command shape (see
   // `managedCommandSchemaPreRelaunch`).
   "managedCommand.start": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -8872,6 +9049,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "managedCommand.stop": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -8889,6 +9067,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "managedCommand.delete": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8902,6 +9081,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "managedCommand.create": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8915,6 +9095,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "managedCommand.list": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8928,6 +9109,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "managedCommand.view": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8944,6 +9126,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // below: the agent edits the settings it authored and reads back the wider
   // agent view, so the two cannot share one contract.
   "managedCommand.configureAgentShell": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8957,6 +9140,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "managedCommand.restart": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8976,6 +9160,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // such a host does (it respawns every survivor; it never offered the
   // choice).
   "managedCommand.configure": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -8995,6 +9180,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // `chat.subscribe`, which negotiates separately) with the action disabled
   // rather than offering one that cannot be served.
   "managedCommand.deliverHeld": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9008,6 +9194,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.resolveRepoPaths": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9021,6 +9208,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.fileCopy.start": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9048,6 +9236,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.fileCopy.cancel": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9061,6 +9250,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.fileTransfer.enumerate": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9074,6 +9264,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.fileTransfer.open": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9087,6 +9278,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.fileTransfer.readChunk": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9100,6 +9292,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.fileTransfer.close": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9113,6 +9306,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.portForward.acquireLease": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9126,6 +9320,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.portForward.releaseLease": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9139,6 +9334,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.portForward.leaseEnded": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9152,6 +9348,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "portForward.listForHost": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9165,6 +9362,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "portForward.stop": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9178,6 +9376,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "portForward.cutLease": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9191,6 +9390,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.oneOffShell.run": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9208,6 +9408,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // typed guidance and keeps the realm on its own machine rather than failing
   // the cell.
   "browser.repl.runCell": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9221,6 +9422,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "browser.repl.releaseRealm": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9234,6 +9436,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "browser.repl.stopCell": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9250,6 +9453,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // host that predates it lacks it, and the browser's host answers the cell
   // with a typed "could not ask" rather than a fabricated decision.
   "browser.repl.requestApproval": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9267,6 +9471,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // handshake mismatch - the same `degrade: unsupported` channel every other
   // host-agent verb rides.
   "host.agent.createFromRemoteSender": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9280,6 +9485,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.list": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -9318,6 +9524,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // lacks it, so the CLI gets per-call upgrade guidance instead of a fatal
   // handshake mismatch.
   "terminal.readOutput": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9331,6 +9538,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.rename": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -9345,6 +9553,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // v1.0 is the frozen local-only RC family; v2.1 is the fleet family. They
   // negotiate as a whole so callers never compose incompatible topologies.
   "terminal.plain.create": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9369,6 +9578,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.plain.list": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9392,6 +9602,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.plain.rename": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9415,6 +9626,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.plain.ensureRunning": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9441,6 +9653,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.plain.close": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9465,6 +9678,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "terminal.plain.importLegacy": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9491,6 +9705,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.listByWorkspacePaths": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 4,
       versions: {
@@ -9523,6 +9738,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.listBranches": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -9535,6 +9751,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.create": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -9551,6 +9768,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.createPaths": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -9567,6 +9785,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.import": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -9579,6 +9798,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.setEntryMode": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -9591,6 +9811,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "workspaceBinding.removeEntry": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -9603,6 +9824,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.retrySetup": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -9615,6 +9837,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.delete": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 2,
       versions: {
@@ -9635,6 +9858,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.listHolders": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -9652,6 +9876,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.listAllForHost": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 7,
       versions: {
@@ -9692,6 +9917,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.setRepoScripts": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -9704,6 +9930,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.setRepoBranchPrefix": {
+    cancelAfterDispatch: false,
     // Not on the released floor (added after it was frozen) and has no
     // sensible fallback target, so an old host simply lacks the affordance -
     // the GUI gates it with `useHostSupportsMethod` before offering the edit.
@@ -9720,6 +9947,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.getBinding": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -9732,6 +9960,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.listBindingsForEpic": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 3,
       versions: {
@@ -9763,6 +9992,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // unary methods only manage the recognizer's model files. Schemas live in
   // `protocol/host/speech/`.
   "speech.getModelStatus": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -9775,6 +10005,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "speech.ensureModel": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -9787,6 +10018,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "agent.listProviderProfiles": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9870,6 +10102,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "agent.getProviderProfileRateLimits": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -9958,6 +10191,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "agent.configure": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10045,6 +10279,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // (`degrade: unsupported`) and stays out of the released floor / baseline
   // surface.
   "pr.getLocalDiff": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10063,6 +10298,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // that finds these missing calls `pr.getLocalDiff` instead, so neither
   // touches the released floor / baseline surface.
   "pr.getLocalDiffSummary": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10079,6 +10315,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "pr.getLocalFileDiff": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10096,6 +10333,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // Additive post-v1.0 unary methods. An older host lacks the GitHub mention
   // picker surface entirely, so callers feature-detect and degrade per call.
   "mention.githubCatalog": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10109,6 +10347,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "mention.githubSearch": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10128,6 +10367,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // scheduling deletions itself, without the host's freshness proof and only
   // while a window is open. The controls go unavailable instead.
   "worktree.getAutoCleanupPolicy": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10141,6 +10381,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.setAutoCleanupPolicy": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10154,6 +10395,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.listAutoCleanupRuns": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10167,6 +10409,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "worktree.getAutoCleanupRun": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10235,6 +10478,7 @@ const HOST_RPC_NOTIFICATION_METHODS = {
     },
   },
   "host.notifications.markAllRead": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -10286,6 +10530,7 @@ const HOST_RPC_NOTIFICATION_METHODS = {
  */
 const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   "providers.list": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -10433,6 +10678,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   },
 
   "providers.setSelection": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -10461,6 +10707,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.addCustomPath": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -10489,6 +10736,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.removeCustomPath": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -10517,6 +10765,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.detectVersion": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -10529,6 +10778,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.startLogin": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 2,
       versions: {
@@ -10549,6 +10799,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.awaitLogin": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -10577,6 +10828,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.cancelLogin": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 1,
       versions: {
@@ -10593,6 +10845,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setProfileEnabled": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10606,6 +10859,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.fallbackPolicy.get": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -10623,6 +10877,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.fallbackPolicy.set": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -10640,6 +10895,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.fallbackPolicy.restoreTierGroups": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10653,6 +10909,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.fallbackPolicy.reset": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10666,6 +10923,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.fallbackPolicy.previewTierGroups": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -10684,6 +10942,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setProfileApiKey": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10697,6 +10956,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.clearProfileApiKey": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10710,6 +10970,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.mcpAuth": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10723,6 +10984,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.awaitMcpAuth": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10736,6 +10998,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.cancelMcpAuth": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10749,6 +11012,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.nativeMutate": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10762,6 +11026,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.listModelProviders": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10775,6 +11040,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.modelProviderAuth": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10788,6 +11054,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.awaitModelProviderAuth": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10801,6 +11068,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.cancelModelProviderAuth": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10818,6 +11086,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   // predates them must fail these calls individually rather than refuse the
   // connection. `providers.ensurePack` above keeps its own name and shape.
   "providers.installPackVersion": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10831,6 +11100,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.removePackVersion": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10844,6 +11114,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.usePackVersion": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10857,6 +11128,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setPackPolicy": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10873,6 +11145,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   // Not one of the four above - it reads a head instead of writing the store -
   // but a new name outside the floor all the same, so it degrades identically.
   "providers.refreshPackDiscovery": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10886,6 +11159,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.submitLoginCode": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10899,6 +11173,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.touchLogin": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10912,6 +11187,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.startTerminalLogin": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10938,6 +11214,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.ensurePack": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10951,6 +11228,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setApiKey": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -10979,6 +11257,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.clearApiKey": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -11007,6 +11286,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setAutoJudge": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -11020,6 +11300,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setTerminalAgentArgs": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -11050,6 +11331,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setEnvOverride": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -11078,6 +11360,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.deleteEnvOverride": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -11106,6 +11389,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.setEnabled": {
+    cancelAfterDispatch: false,
     1: {
       latestMinor: 0,
       versions: {
@@ -11143,6 +11427,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
  */
 const HOST_RPC_DRAFTS_REGISTRY_DEFINITION = {
   "drafts.upsert": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -11156,6 +11441,7 @@ const HOST_RPC_DRAFTS_REGISTRY_DEFINITION = {
     },
   },
   "drafts.delete": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -11183,6 +11469,7 @@ const HOST_RPC_DRAFTS_REGISTRY_DEFINITION = {
     },
   },
   "drafts.retract": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -11204,6 +11491,7 @@ const HOST_RPC_DRAFTS_REGISTRY_DEFINITION = {
   // an over-cap `@1.0` body still reaches the resolver and is refused by the
   // host store's own version-independent decoded cap.
   "drafts.putBlob": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -11244,6 +11532,7 @@ const HOST_RPC_EDITING_REGISTRY_DEFINITION = {
   // Additive, post-v1.0.0 optional method. Older hosts render the same file
   // surfaces read-only; newer hosts provide conflict-safe in-place saves.
   "workspace.writeFile": {
+    cancelAfterDispatch: false,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -11312,6 +11601,7 @@ type HostRpcNotificationMethodMap = {
     };
   };
   readonly "host.notifications.markAllRead": {
+    readonly cancelAfterDispatch: false;
     readonly degrade: { readonly kind: "unsupported" };
     readonly 1: {
       readonly latestMinor: 1;
@@ -11454,7 +11744,7 @@ const HOST_RPC_REGISTRY_DEFINITION: HostRpcRegistryDefinition = {
   ...HOST_RPC_EDITING_REGISTRY_DEFINITION,
   ...HOST_RPC_DRAFTS_REGISTRY_DEFINITION,
   ...HOST_RPC_NOTIFICATION_METHODS,
-};
+} satisfies Readonly<Record<string, { readonly cancelAfterDispatch: boolean }>>;
 
 export const hostRpcRegistry: VersionedRpcRegistry<HostRpcRegistryDefinition> =
   defineFloorAwareVersionedRpcRegistry(
