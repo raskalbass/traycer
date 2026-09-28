@@ -99,7 +99,6 @@ interface TestState {
   createdArtifactId: string;
   activeArtifactId: string | null;
   artifactFilterKinds: ReadonlyArray<string>;
-  collapsedPanelIds: ReadonlySet<string>;
   expandedIds: ReadonlySet<string>;
   unreadArtifactIds: ReadonlySet<string>;
   tree: {
@@ -147,7 +146,6 @@ const testState = vi.hoisted<TestState>(() => ({
   createdArtifactId: "new-spec-1",
   activeArtifactId: null,
   artifactFilterKinds: [],
-  collapsedPanelIds: new Set<string>(),
   expandedIds: new Set<string>(),
   unreadArtifactIds: new Set<string>(),
   tree: {
@@ -548,6 +546,13 @@ vi.mock("@/stores/epics/epic-sidebar-expansion-store", () => ({
     }),
 }));
 
+// The rail's shape and its per-panel Hide/Show live beside the bijection
+// now, not on the panel store (G1-09), so the sidebar's two reads are
+// stubbed where they are actually imported from.
+vi.mock("@/lib/layout/rail-view", () => ({
+  useLayoutRail: () => [{ kind: "panel", id: "railArtifacts" }],
+  usePanelVisibilityOverrides: () => ({}),
+}));
 vi.mock("@/stores/epics/left-panel-store", () => ({
   DEFAULT_LEFT_PANEL_ID: "artifacts",
   isArtifactFilterActive: () => testState.artifactFilterKinds.length > 0,
@@ -563,21 +568,14 @@ vi.mock("@/stores/epics/left-panel-store", () => ({
   useChatFilter: () => ({ origin: "all", ownership: "all" }),
   useChatSort: () => ({ field: "updated", direction: "desc" }),
   useCommentsPanelRevealed: () => false,
-  usePanelVisibilityOverrides: () => ({}),
   useEpicLeftPanelStore: (selector: (state: unknown) => unknown) =>
     selector({
       clearAcknowledgedRootCreatePending: vi.fn(),
       clearLocalRootCreatePending: vi.fn(),
-      panelSectionCollapsedByPanelId: {},
       setAcknowledgedRootCreatePending: vi.fn(),
       setActivePanelId: vi.fn(),
       setLocalRootCreatePending: vi.fn(),
-      setPanelSectionWeights: vi.fn(),
-      togglePanelSectionCollapsed: vi.fn(),
     }),
-  useLeftPanelGroups: () => [{ panelIds: ["artifacts"] }],
-  useLeftPanelSectionCollapsed: (panelId: string) =>
-    testState.collapsedPanelIds.has(panelId),
   useLocalRootCreatePending: () => null,
 }));
 
@@ -735,7 +733,11 @@ vi.mock("@/stores/settings/settings-store", async (importOriginal) => {
     ...actual,
     useSettingsStore: Object.assign(
       (selector: (settingsState: typeof state) => unknown) => selector(state),
-      { getState: () => state },
+      {
+        getState: () => state,
+        // `theme-applier` subscribes at module load, and this graph reaches it.
+        subscribe: () => () => undefined,
+      },
     ),
   };
 });
@@ -763,7 +765,6 @@ describe("sidebar navigation boundary (back/forward regression fixes)", () => {
     vi.clearAllMocks();
     testState.activeArtifactId = null;
     testState.artifactFilterKinds = [];
-    testState.collapsedPanelIds = new Set<string>();
     testState.expandedIds = new Set<string>();
     testState.unreadArtifactIds = new Set<string>();
     testState.tree = { rootIds: [], childrenByParent: {}, nodeById: {} };
@@ -776,7 +777,7 @@ describe("sidebar navigation boundary (back/forward regression fixes)", () => {
   });
 
   it("routes root-create-then-open through navigateNested + prepareOpenTileInTabFocusTargetFromSource", () => {
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-add-artifact-root-spec"));
 
@@ -819,7 +820,7 @@ describe("sidebar navigation boundary (back/forward regression fixes)", () => {
       instanceId: "instance-1",
     });
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-more-spec-root"));
     fireEvent.click(screen.getByTestId("epic-sidebar-delete-spec-root"));
@@ -866,7 +867,7 @@ describe("sidebar navigation boundary (back/forward regression fixes)", () => {
       return { paneId: "pane-1", tileInstanceId: "instance-1" };
     });
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-more-spec-root"));
     fireEvent.click(screen.getByTestId("epic-sidebar-delete-spec-root"));
     fireEvent.click(screen.getByTestId("confirm-action"));
@@ -893,7 +894,7 @@ describe("sidebar navigation boundary (back/forward regression fixes)", () => {
       "tab-a",
     );
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Select artifacts" }));
     fireEvent.click(screen.getByRole("button", { name: "Select all" }));
@@ -945,7 +946,7 @@ describe("sidebar navigation boundary (back/forward regression fixes)", () => {
       "tab-d",
     );
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Select artifacts" }));
     fireEvent.click(screen.getByRole("button", { name: "Select all" }));

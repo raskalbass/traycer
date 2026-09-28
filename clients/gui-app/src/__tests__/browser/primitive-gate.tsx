@@ -204,18 +204,28 @@ function MenuCase(props: {
                 Tooltip preview
               </Tooltip.TooltipContent>
             </Tooltip.Tooltip>
-            <Hover.HoverCard>
-              <Hover.HoverCardTrigger
-                render={
-                  <Menu.DropdownMenuItem data-gate-item="hover-preview">
-                    Hover for preview
-                  </Menu.DropdownMenuItem>
-                }
-              />
-              <Hover.HoverCardContent data-gate-popup="preview-in-menu">
-                Preview card content
-              </Hover.HoverCardContent>
-            </Hover.HoverCard>
+            <Hover.HoverCard
+              trigger={
+                <Menu.DropdownMenuItem data-gate-item="hover-preview">
+                  Hover for preview
+                </Menu.DropdownMenuItem>
+              }
+              content={
+                <span data-gate-popup="preview-in-menu">
+                  Preview card content
+                </span>
+              }
+              appearance="preview"
+              semantics={{ role: "dialog", label: "Preview" }}
+              side="bottom"
+              align="center"
+              sideOffset={4}
+              enabled
+              open={null}
+              onOpenChange={null}
+              testId={null}
+              className={null}
+            />
           </>
         ) : null}
         <Menu.DropdownMenuCheckboxItem
@@ -1390,17 +1400,20 @@ const cases: Partial<Record<string, (props: CaseProps) => ReactNode>> = {
   },
   "hover-card": (): ReactNode => {
     return (
-      <Hover.HoverCard>
-        <Hover.HoverCardTrigger
-          render={<Button data-gate-trigger="hover">Preview</Button>}
-        />
-        <Hover.HoverCardContent
-          data-gate-popup="hover"
-          appearance={state === "tooltip" ? "tooltip" : "preview"}
-        >
-          {label}
-        </Hover.HoverCardContent>
-      </Hover.HoverCard>
+      <Hover.HoverCard
+        trigger={<Button data-gate-trigger="hover">Preview</Button>}
+        content={<span data-gate-popup="hover">{label}</span>}
+        appearance={state === "tooltip" ? "tooltip" : "preview"}
+        semantics={{ role: "dialog", label: "Preview" }}
+        side="bottom"
+        align="center"
+        sideOffset={4}
+        enabled
+        open={null}
+        onOpenChange={null}
+        testId={null}
+        className={null}
+      />
     );
   },
   "dropdown-menu": ({ open, changeOpen, onCloseFocus }): ReactNode => {

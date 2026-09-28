@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { useDialogOverlayBoundaryEl } from "@/providers/dialog-overlay-boundary-context";
 
 import { useSafeAreaCollisionPadding } from "@/components/ui/safe-area-collision-padding";
+import { MenuOpenMarker } from "@/components/ui/open-menus";
 
 function ContextMenu({
   open,
@@ -84,6 +85,7 @@ function ContextMenuContent({
   collisionAvoidance,
   finalFocus,
   portalProps,
+  children,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Popup> &
   ContextMenuPositionProps & {
@@ -132,7 +134,11 @@ function ContextMenuContent({
             )
           }
           {...props}
-        />
+        >
+          {/* Mounted with the open menu: no hover card opens meanwhile. */}
+          <MenuOpenMarker />
+          {children}
+        </ContextMenuPrimitive.Popup>
       </ContextMenuPrimitive.Positioner>
     </ContextMenuPrimitive.Portal>
   );
@@ -212,6 +218,83 @@ function ContextMenuCheckboxItem({
       </span>
       {children}
     </ContextMenuPrimitive.CheckboxItem>
+  );
+}
+
+function ContextMenuRadioGroup({
+  onValueChange,
+  ...props
+}: Omit<
+  ContextMenuPrimitive.RadioGroup.Props,
+  "value" | "defaultValue" | "onValueChange"
+> & {
+  value?: string;
+  defaultValue?: string;
+  onValueChange?: (
+    value: string,
+    details: ContextMenuPrimitive.RadioGroup.ChangeEventDetails,
+  ) => void;
+}) {
+  return (
+    <ContextMenuPrimitive.RadioGroup
+      data-slot="context-menu-radio-group"
+      {...props}
+      onValueChange={(value: unknown, details) => {
+        if (typeof value === "string") onValueChange?.(value, details);
+      }}
+    />
+  );
+}
+
+function ContextMenuRadioItem({
+  className,
+  children,
+  inset,
+  closeOnClick = true,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.RadioItem> & {
+  inset?: boolean;
+}) {
+  return (
+    <ContextMenuPrimitive.RadioItem
+      closeOnClick={closeOnClick}
+      data-slot="context-menu-radio-item"
+      data-inset={inset}
+      className={(state) =>
+        cn(
+          "relative flex cursor-default items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-ui-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground focus:**:text-accent-foreground data-inset:pl-7 data-checked:bg-foreground/5 data-disabled:pointer-events-none data-disabled:opacity-50 aria-disabled:opacity-50 pointer-coarse:min-h-11 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+          typeof className === "function" ? className(state) : className,
+        )
+      }
+      {...props}
+    >
+      <span
+        className="pointer-events-none absolute right-2 flex items-center justify-center"
+        data-slot="context-menu-radio-item-indicator"
+      >
+        <ContextMenuPrimitive.RadioItemIndicator>
+          <CheckIcon />
+        </ContextMenuPrimitive.RadioItemIndicator>
+      </span>
+      {children}
+    </ContextMenuPrimitive.RadioItem>
+  );
+}
+
+/** A section heading inside a menu, drawn like `DropdownMenuLabel`. */
+function ContextMenuLabel({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="context-menu-label"
+      className={cn(
+        "px-1.5 py-1 text-overline tracking-wide uppercase text-muted-foreground",
+        className,
+      )}
+      {...props}
+    />
   );
 }
 
@@ -352,6 +435,9 @@ export {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuCheckboxItem,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuLabel,
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,

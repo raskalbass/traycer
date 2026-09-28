@@ -1,3 +1,4 @@
+import { useReadingWidthClass } from "@/lib/layout-overrides";
 import {
   memo,
   useCallback,
@@ -48,11 +49,11 @@ import {
 } from "@/lib/chats/resolve-steer-submit";
 import { resolveComposerTopBannerKind } from "./chat-composer-top-banner";
 import { ChatComposerFallbackBanners } from "@/components/chat/fallback/chat-composer-fallback-banners";
-import { composerRateLimitAdvisory } from "@/components/chat/fallback/fallback-return-low-usage";
 import {
   fallbackComposerCardVisible,
   type ChatProviderFallbackState,
 } from "@/components/chat/fallback/fallback-state";
+import { useComposerRateLimitAdvisory } from "@/components/chat/fallback/use-settled-routing-card-offers-switch";
 import { usePaneFocused } from "@/components/epic-tabs/pane-visibility-context";
 import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
 import { chatTileCatalogActivity } from "@/components/epic-canvas/renderers/chat-tile-surface-activity";
@@ -68,6 +69,7 @@ import type { ComposerPromptEditorHandle } from "./composer-prompt-editor";
 import { ChatComposerAttachmentsStrip } from "./chat-composer-attachments-strip";
 import { ChatComposerEditorSlot } from "./chat-composer-editor-slot";
 import { ChatComposerToolbarSlot } from "./chat-composer-toolbar-slot";
+import { ComposerTileIdProvider } from "@/components/home/composer/composer-tile-context";
 import { createComposerPickerStore } from "./picker/composer-picker-store";
 import { ProviderReauthBanner } from "./provider-reauth-banner";
 import { ProfileRateLimitSwitchBanner } from "./profile-rate-limit-switch-banner";
@@ -227,7 +229,7 @@ interface ChatComposerProps {
   readonly topSpacing: ChatLowerSurfaceTopSpacing;
   /**
    * Optional element rendered directly above the composer input box (within
-   * the same `max-w-3xl` column). Used by the chat tile for the
+   * the same reading column). Used by the chat tile for the
    * accumulated-changes tab, which connects to the composer's top edge.
    * `null` renders nothing.
    */
@@ -302,6 +304,7 @@ function ChatComposerImpl(props: ChatComposerProps) {
     topSlot,
     getDraftBlobBridgeSupported,
   } = props;
+  const readingWidth = useReadingWidthClass();
   const runnerHost = useRunnerHost();
   const hostClient = useTabHostClient();
   const tabHostId = useTabHostId();
@@ -479,6 +482,20 @@ function ChatComposerImpl(props: ChatComposerProps) {
     selectedModel,
     active: focused,
     client: hostClient,
+  });
+  // ONE value for both readers: the chain's `rateLimitVisible` below and the
+  // return banner, which OUTRANKS the advisory in that chain and so absorbs
+  // its sentence rather than silencing it (MF09, UX §2). Withheld while the
+  // settled routing card in the transcript draws its own "Switch to…" for this
+  // account (clutter cuts, 2026-09-27) - the live routing cards are already
+  // handled by the chain below; that card is the one that lives outside it.
+  const rateLimitAdvisory = useComposerRateLimitAdvisory({
+    epicId: currentEpicId,
+    chatId: taskId,
+    hostId: tabHostId,
+    account: { harnessId, profileId },
+    prompt: rateLimitPrompt,
+    signedOut: reauthGate.signedOut,
   });
   // Keeps the switch prompt's own `providers.list` read converging with a
   // turn's passive rate-limit capture: without this, a turn that just pushed
@@ -663,8 +680,7 @@ function ChatComposerImpl(props: ChatComposerProps) {
     // meaning "no offer", so a `"pendingReturn" in ...` test here would pin the
     // banner open for the life of the chat.
     fallbackReturnVisible: providerFallback.pendingReturn !== undefined,
-    rateLimitVisible:
-      !reauthGate.signedOut && rateLimitPrompt.kind === "visible",
+    rateLimitVisible: rateLimitAdvisory !== null,
   });
 
   const removeImage = useCallback((id: string) => {
@@ -709,13 +725,7 @@ function ChatComposerImpl(props: ChatComposerProps) {
       <ChatComposerFallbackBanners
         topBannerKind={topBannerKind}
         fallback={providerFallback}
-        // The return banner OUTRANKS the advisory in the chain above, so it
-        // absorbs its sentence rather than silencing it (MF09, UX §2). Same
-        // suppression as `rateLimitVisible`, from one helper.
-        rateLimitAdvisory={composerRateLimitAdvisory(
-          rateLimitPrompt,
-          reauthGate.signedOut,
-        )}
+        rateLimitAdvisory={rateLimitAdvisory}
         client={hostClient}
         chatId={taskId}
         epicId={currentEpicId}
@@ -725,7 +735,12 @@ function ChatComposerImpl(props: ChatComposerProps) {
       {topBannerKind === "rate-limit" ? (
         <ChatComposerBannerPortal>
           <div className="pointer-events-none px-4">
-            <div className="pointer-events-auto mx-auto w-full max-w-3xl bg-canvas pt-4">
+            <div
+              className={cn(
+                "pointer-events-auto mx-auto w-full bg-canvas pt-4",
+                readingWidth,
+              )}
+            >
               {rateLimitPrompt.kind === "visible" ? (
                 <ProfileRateLimitSwitchBanner
                   key={rateLimitPrompt.warningKey}
@@ -764,7 +779,8 @@ function ChatComposerImpl(props: ChatComposerProps) {
         />
         <div
           className={cn(
-            "pointer-events-auto relative mx-auto w-full max-w-3xl bg-canvas pb-4 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-canvas after:content-['']",
+            "pointer-events-auto relative mx-auto w-full bg-canvas pb-4 after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-canvas after:content-['']",
+            readingWidth,
             topSpacing === "normal" ? "pt-4" : "pt-0",
           )}
         >
@@ -790,78 +806,80 @@ function ChatComposerImpl(props: ChatComposerProps) {
           ) : null}
           {topSlot}
           <div className="relative flex flex-col gap-3">
-            <ComposerAttachmentDropZone
-              viewTabId={viewTabId}
-              hostId={tabHostId}
-              editorRef={editorRef}
-            >
-              <ComposerShell
-                pickerStore={pickerStore}
-                onDragOver={onDragOver}
-                onDrop={onDrop}
-                onDragEnter={onDragEnter}
-                onDragLeave={onDragLeave}
-                dragOverlayVariant={dragOverlayVariant}
-                utilityRail={null}
-                expansion={composerExpansion}
-                attachmentsStrip={
-                  <ChatComposerAttachmentsStrip
-                    taskId={taskId}
-                    content={draftContent}
-                    editingQueueItemId={editingQueueItemId}
-                    onCancelQueueEdit={onCancelQueueEdit}
-                    onRemoveImage={removeImage}
-                  />
-                }
-                editor={
-                  <ChatComposerEditorSlot
-                    ref={editorRef}
-                    pickerStore={pickerStore}
-                    initialContent={initialContent}
-                    initialSelection={initialSelection}
-                    slashProviderId={harnessId}
-                    hasPastedImageBytes={hasPastedImageBytes}
-                    ingestPastedComposerImages={ingestPastedComposerImages}
-                    isActive={focused}
-                    disabled={false}
-                    onDocumentChange={handleDocumentChangeNotingEdit}
-                    onSelectionChange={handleSelectionChange}
-                    onSubmit={handleSubmitDraft}
-                    steerHintActive={steerHintActive}
-                    onPaste={onPaste}
-                    onDragOver={onDragOver}
-                    onDrop={onDrop}
-                    onEditorReady={handleEditorReady}
-                    onFocus={handleComposerFocus}
-                  />
-                }
-                toolbar={
-                  <ChatComposerToolbarSlot
-                    store={toolbarStore}
-                    onAttachImages={attachImageFiles}
-                    canSubmit={canSubmit}
-                    attachmentPending={attachmentPending}
-                    onSubmit={handleSubmitFromButton}
-                    activeTurnStatus={activeTurnStatus}
-                    stopDisabled={stopDisabled}
-                    onStopTurn={onStopTurn}
-                    composerDisabledHint={sendBlockedHint}
-                    dictation={dictationControl}
-                    dictationPreparing={dictationPreparing}
-                    settingsLocked={false}
-                    createProfileHostId={tabHostId}
-                    runTargetHostId={tabHostId}
-                    terminalLoginSurface={terminalLoginSurface}
-                    autoPermissionModeProtocolSupported={
-                      autoPermissionModeProtocolSupported
-                    }
-                  />
-                }
-              />
-            </ComposerAttachmentDropZone>
-            {workspaceControls !== null ? (
-              <ComposerWorkspaceRow workspaceControls={workspaceControls} />
-            ) : null}
+            <ComposerTileIdProvider tileId={taskId}>
+              <ComposerAttachmentDropZone
+                viewTabId={viewTabId}
+                hostId={tabHostId}
+                editorRef={editorRef}
+              >
+                <ComposerShell
+                  pickerStore={pickerStore}
+                  onDragOver={onDragOver}
+                  onDrop={onDrop}
+                  onDragEnter={onDragEnter}
+                  onDragLeave={onDragLeave}
+                  dragOverlayVariant={dragOverlayVariant}
+                  utilityRail={null}
+                  expansion={composerExpansion}
+                  attachmentsStrip={
+                    <ChatComposerAttachmentsStrip
+                      taskId={taskId}
+                      content={draftContent}
+                      editingQueueItemId={editingQueueItemId}
+                      onCancelQueueEdit={onCancelQueueEdit}
+                      onRemoveImage={removeImage}
+                    />
+                  }
+                  editor={
+                    <ChatComposerEditorSlot
+                      ref={editorRef}
+                      pickerStore={pickerStore}
+                      initialContent={initialContent}
+                      initialSelection={initialSelection}
+                      slashProviderId={harnessId}
+                      hasPastedImageBytes={hasPastedImageBytes}
+                      ingestPastedComposerImages={ingestPastedComposerImages}
+                      isActive={focused}
+                      disabled={false}
+                      onDocumentChange={handleDocumentChangeNotingEdit}
+                      onSelectionChange={handleSelectionChange}
+                      onSubmit={handleSubmitDraft}
+                      steerHintActive={steerHintActive}
+                      onPaste={onPaste}
+                      onDragOver={onDragOver}
+                      onDrop={onDrop}
+                      onEditorReady={handleEditorReady}
+                      onFocus={handleComposerFocus}
+                    />
+                  }
+                  toolbar={
+                    <ChatComposerToolbarSlot
+                      store={toolbarStore}
+                      onAttachImages={attachImageFiles}
+                      canSubmit={canSubmit}
+                      attachmentPending={attachmentPending}
+                      onSubmit={handleSubmitFromButton}
+                      activeTurnStatus={activeTurnStatus}
+                      stopDisabled={stopDisabled}
+                      onStopTurn={onStopTurn}
+                      composerDisabledHint={sendBlockedHint}
+                      dictation={dictationControl}
+                      dictationPreparing={dictationPreparing}
+                      settingsLocked={false}
+                      createProfileHostId={tabHostId}
+                      runTargetHostId={tabHostId}
+                      terminalLoginSurface={terminalLoginSurface}
+                      autoPermissionModeProtocolSupported={
+                        autoPermissionModeProtocolSupported
+                      }
+                    />
+                  }
+                />
+              </ComposerAttachmentDropZone>
+              {workspaceControls !== null ? (
+                <ComposerWorkspaceRow workspaceControls={workspaceControls} />
+              ) : null}
+            </ComposerTileIdProvider>
           </div>
           {unsupportedImagesMessage === null ? null : (
             <output

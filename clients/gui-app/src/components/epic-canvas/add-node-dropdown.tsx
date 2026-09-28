@@ -1,4 +1,6 @@
 import type { CSSProperties } from "react";
+import type { EdgeSide } from "@/lib/layout/layout-arrangement";
+import { useColumnOverlayPlacement } from "@/components/layout/column-edge-context";
 import {
   useCallback,
   useEffect,
@@ -117,10 +119,34 @@ export interface AddArtifactDropdownProps {
 }
 
 /**
+ * Where the menu opens: beside the sidebar header's "+", below a row's, and
+ * off the column's edge wherever the column says which one that is.
+ */
+function addNodeMenuPosition(
+  menuPlacement: AddArtifactDropdownProps["menuPlacement"],
+  placement: {
+    readonly side: EdgeSide;
+    readonly align: "start" | "end";
+  } | null,
+) {
+  const header = menuPlacement === "header";
+  return {
+    side:
+      placement?.side ?? (header ? ("right" as const) : ("bottom" as const)),
+    align: placement?.align ?? (header ? ("start" as const) : ("end" as const)),
+    sideOffset: header ? 8 : 4,
+    collisionAvoidance: header
+      ? { side: "none" as const, align: "none" as const }
+      : undefined,
+  };
+}
+
+/**
  * Shared dropdown that lists all addable artifact types. Used by the
  * sidebar header "+", per-row inline "+", and other add-node entry points.
  */
 export function AddNodeDropdown(props: AddArtifactDropdownProps) {
+  const placement = useColumnOverlayPlacement("row");
   const {
     children,
     open,
@@ -185,14 +211,7 @@ export function AddNodeDropdown(props: AddArtifactDropdownProps) {
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger render={children} />
       <DropdownMenuContent
-        side={menuPlacement === "header" ? "right" : "bottom"}
-        align={menuPlacement === "header" ? "start" : "end"}
-        sideOffset={menuPlacement === "header" ? 8 : 4}
-        collisionAvoidance={
-          menuPlacement === "header"
-            ? { side: "none", align: "none" }
-            : undefined
-        }
+        {...addNodeMenuPosition(menuPlacement, placement)}
         className="w-[min(90vw,11rem)]"
         data-testid={menuTestId}
       >

@@ -705,8 +705,13 @@ function CommandItem({
       <div
         data-slot="command-item"
         className={cn(
-          "group/command-item relative flex cursor-default items-center gap-2 rounded-sm border border-transparent px-2 py-1.5 text-ui-sm outline-hidden select-none transition-[background-color,border-color,box-shadow,color] duration-150 in-data-[slot=dialog-content]:rounded-lg hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--popover))] hover:text-foreground data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:border-primary/35 data-[selected=true]:bg-[color-mix(in_srgb,var(--primary)_14%,var(--popover))] data-[selected=true]:text-foreground data-[selected=true]:shadow-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[selected=true]:*:[svg]:text-primary",
-          showCheck && "active:press-scrim",
+          "group/command-item relative flex cursor-default items-center gap-2 rounded-sm border border-transparent px-2 py-1.5 text-ui-sm outline-hidden select-none transition-[background-color,border-color,box-shadow,color] duration-150 in-data-[slot=dialog-content]:rounded-lg data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:border-primary/35 data-[selected=true]:bg-[color-mix(in_srgb,var(--primary)_14%,var(--popover))] data-[selected=true]:text-foreground data-[selected=true]:shadow-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[selected=true]:*:[svg]:text-primary",
+          // An action palette (`showCheck={false}`) has no hover fill: the row
+          // under a moving pointer is already the selected one, so a fill only
+          // paints a SECOND highlight on whatever row a resting pointer sits
+          // over when the palette opens or the list reorders.
+          showCheck &&
+            "hover:bg-[color-mix(in_srgb,var(--foreground)_6%,var(--popover))] hover:text-foreground active:press-scrim",
           // `selection="flat"` (see `Command`): the cursor stops competing with
           // the primary the CHOSEN row is marked in. A foreground alpha rather
           // than `bg-accent`, which both sites reached for and which AGENTS.md

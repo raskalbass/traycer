@@ -27,9 +27,8 @@ import { MobileNavDrawerSurface } from "@/components/layout/shell/mobile-nav-dra
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { isMobileApp } from "@/lib/mobile-app";
 import { computeInitials } from "@/lib/auth/compute-initials";
-import { resolvePlatformBaseUrl } from "@/lib/auth/platform-base-url";
+import { usePlatformBillingUrl } from "@/hooks/auth/use-platform-billing-url";
 import { useOpenLink } from "@/lib/links/open-link";
-import { useRunnerHost } from "@/providers/use-runner-host";
 import { openNewEpicIntent } from "@/lib/commands/actions/new-epic";
 import { openEpicFromList } from "@/lib/commands/actions/open-epic-from-list";
 import {
@@ -37,7 +36,7 @@ import {
   homeTabIntent,
   openPhaseMigrationIntent,
 } from "@/lib/tab-navigation";
-import { useSettingsStore } from "@/stores/settings/settings-store";
+import { useRegionShown } from "@/lib/layout-overrides";
 import { cn } from "@/lib/utils";
 import { epicDisplayTitle } from "@/lib/display-title";
 import { useAmbientHistorySearchState } from "@/hooks/home/use-history-search-state";
@@ -78,10 +77,10 @@ export function MobileNavDrawer(): ReactNode {
   const navigate = useNavigate();
   const profile = useAuthStore((state) => state.profile);
   const { openSettings } = useSystemTabModalActions();
-  const runnerHost = useRunnerHost();
+  const billingUrl = usePlatformBillingUrl();
   const openLink = useOpenLink();
   const [signOutOpen, setSignOutOpen] = useState(false);
-  const homeTabEnabled = useSettingsStore((state) => state.homeTabEnabled);
+  const homeTabEnabled = useRegionShown("homeTab");
   // Immutable after boot, so a plain read is stable for this component's
   // whole life - no resize can flip it the way the viewport hook flips.
   const installedApp = isMobileApp();
@@ -116,11 +115,7 @@ export function MobileNavDrawer(): ReactNode {
   };
   const handleManageSubscription = () => {
     close();
-    void openLink(
-      resolvePlatformBaseUrl(runnerHost.signInUrl),
-      "account",
-      null,
-    );
+    void openLink(billingUrl, "account", null);
     Analytics.getInstance().track(AnalyticsEvent.SubscriptionManagementOpened, {
       source: "direct_ui",
     });

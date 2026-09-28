@@ -403,8 +403,17 @@ vi.mock("@/hooks/providers/use-providers-delete-env-override-mutation", () => ({
 // this tree - see the `@/lib/host` mock below). Both resolve to the same
 // recorded mock so assertions don't care which path fired.
 vi.mock("@/hooks/providers/use-providers-start-login-mutation", () => {
+  // The login flow starts through `mutateAsync` (its promise settles even
+  // where StrictMode detached the observer); this adapts it onto the
+  // recorded `(variables, { onSuccess, onError })` fake every test drives.
   const useProvidersStartLogin = () => ({
-    mutate: providerMocks.startLoginMutate,
+    mutateAsync: (variables: StartLoginVariables) =>
+      new Promise<StartLoginData>((resolve, reject) => {
+        providerMocks.startLoginMutate(variables, {
+          onSuccess: resolve,
+          onError: reject,
+        });
+      }),
     isPending: false,
     error: null,
   });
@@ -3919,10 +3928,13 @@ describe("<ProvidersSettingsPanel />", () => {
     });
     expect(typeof startOptions.onSuccess).toBe("function");
 
-    startOptions.onSuccess({
-      url: "https://login.example.test",
-      started: true,
-      profileId: "managed-1",
+    await act(() => {
+      startOptions.onSuccess({
+        url: "https://login.example.test",
+        started: true,
+        profileId: "managed-1",
+      });
+      return Promise.resolve();
     });
 
     const [awaitVariables, awaitOptions] = firstAwaitLoginCall();
@@ -3986,12 +3998,13 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(screen.queryByLabelText("Paste the code")).toBeNull();
 
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     // Now `waiting` - the field appears.
@@ -4045,12 +4058,13 @@ describe("<ProvidersSettingsPanel />", () => {
       await screen.findByRole("button", { name: "Link account" }),
     );
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const input = screen.getByLabelText("Paste the code");
@@ -4128,12 +4142,13 @@ describe("<ProvidersSettingsPanel />", () => {
       await screen.findByRole("button", { name: "Link account" }),
     );
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -4201,12 +4216,13 @@ describe("<ProvidersSettingsPanel />", () => {
       await screen.findByRole("button", { name: "Link account" }),
     );
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const input = screen.getByLabelText("Paste the code");
@@ -4273,12 +4289,13 @@ describe("<ProvidersSettingsPanel />", () => {
       await screen.findByRole("button", { name: "Link account" }),
     );
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     fireEvent.paste(screen.getByLabelText("Paste the code"), {
@@ -4327,12 +4344,13 @@ describe("<ProvidersSettingsPanel />", () => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
     });
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const input = screen.getByLabelText("Paste the code");
@@ -4400,12 +4418,13 @@ describe("<ProvidersSettingsPanel />", () => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
     });
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const input = screen.getByLabelText("Paste the code");
@@ -4475,12 +4494,13 @@ describe("<ProvidersSettingsPanel />", () => {
     // From here on the re-poll's timer is the only thing being waited on -
     // drive it deterministically instead of sleeping out the real delay.
     vi.useFakeTimers();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "ambient",
       });
+      return Promise.resolve();
     });
 
     // The sign-in landed, but the host assembled the response right after
@@ -4563,12 +4583,13 @@ describe("<ProvidersSettingsPanel />", () => {
     });
     const [, startOptions] = firstStartLoginCall();
     vi.useFakeTimers();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "ambient",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -4633,12 +4654,13 @@ describe("<ProvidersSettingsPanel />", () => {
     });
     const [, startOptions] = firstStartLoginCall();
     vi.useFakeTimers();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "ambient",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -4694,12 +4716,13 @@ describe("<ProvidersSettingsPanel />", () => {
     });
     const [, startOptions] = firstStartLoginCall();
     vi.useFakeTimers();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "ambient",
       });
+      return Promise.resolve();
     });
 
     // The initial await plus every budgeted re-poll keeps reporting the
@@ -4752,12 +4775,13 @@ describe("<ProvidersSettingsPanel />", () => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
     });
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const input = screen.getByLabelText("Paste the code");
@@ -4783,19 +4807,20 @@ describe("<ProvidersSettingsPanel />", () => {
     if (retryCall === undefined) {
       throw new Error("Expected retry start login call.");
     }
-    act(() => {
+    await act(() => {
       retryCall[1].onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     expect(
       screen.getByText("That sign-in link expired - a new one was generated."),
     ).toBeDefined();
   });
-  it("does not resolve to identity when the resolved reauth profile row exists but is not authenticated (fixup settlement join, finding 2)", () => {
+  it("does not resolve to identity when the resolved reauth profile row exists but is not authenticated (fixup settlement join, finding 2)", async () => {
     providerMocks.listResult.data = {
       providers: [
         {
@@ -4851,12 +4876,13 @@ describe("<ProvidersSettingsPanel />", () => {
     fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -4936,7 +4962,10 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     const [, startOptions] = firstStartLoginCall();
-    act(() => startOptions.onError());
+    await act(() => {
+      startOptions.onError();
+      return Promise.resolve();
+    });
 
     screen.getByText(
       "Sign-in did not start. You can retry when the provider is available.",
@@ -5006,12 +5035,13 @@ describe("<ProvidersSettingsPanel />", () => {
       await screen.findByRole("button", { name: "Link account" }),
     );
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
     const [, awaitOptions] = firstAwaitLoginCall();
     act(() => awaitOptions.onError());
@@ -5038,12 +5068,13 @@ describe("<ProvidersSettingsPanel />", () => {
     if (retryStart === undefined) {
       throw new Error("Expected a second start login call.");
     }
-    act(() => {
+    await act(() => {
       retryStart[1].onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-2",
       });
+      return Promise.resolve();
     });
     const retryAwait = providerMocks.awaitLoginMutate.mock.calls.at(1);
     if (retryAwait === undefined) {
@@ -5157,12 +5188,13 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(screen.getByRole("dialog")).toBeDefined();
     expect(screen.getByText("Cancelling sign-in")).toBeDefined();
 
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-pending",
       });
+      return Promise.resolve();
     });
 
     expect(providerMocks.cancelLoginMutate).toHaveBeenCalledTimes(1);
@@ -5242,12 +5274,13 @@ describe("<ProvidersSettingsPanel />", () => {
     });
     expect(screen.queryByText("Switching account")).toBeNull();
 
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     expect(providerMocks.cancelLoginMutate).toHaveBeenCalledTimes(1);
@@ -5492,12 +5525,13 @@ describe("<ProvidersSettingsPanel />", () => {
       createProfile: null,
     });
 
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [awaitVariables, awaitOptions] = firstAwaitLoginCall();
@@ -5566,12 +5600,13 @@ describe("<ProvidersSettingsPanel />", () => {
       profileId: "managed-1",
     });
 
-    act(() => {
+    await act(() => {
       retryCall[1].onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
     expect(providerMocks.cancelLoginMutate).toHaveBeenCalledTimes(1);
     expect(providerMocks.awaitLoginMutate).toHaveBeenCalledTimes(1);
@@ -5642,12 +5677,13 @@ describe("<ProvidersSettingsPanel />", () => {
     ).toBeDefined();
 
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -5707,12 +5743,13 @@ describe("<ProvidersSettingsPanel />", () => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
     });
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -5789,12 +5826,13 @@ describe("<ProvidersSettingsPanel />", () => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
     });
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -5883,12 +5921,13 @@ describe("<ProvidersSettingsPanel />", () => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
     });
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -5985,12 +6024,13 @@ describe("<ProvidersSettingsPanel />", () => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
     });
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -6255,10 +6295,13 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     const [, startOptions] = firstStartLoginCall();
-    startOptions.onSuccess({
-      url: "https://login.example.test",
-      started: true,
-      profileId: "managed-1",
+    await act(() => {
+      startOptions.onSuccess({
+        url: "https://login.example.test",
+        started: true,
+        profileId: "managed-1",
+      });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -6367,12 +6410,13 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
     const [, awaitOptions] = firstAwaitLoginCall();
     act(() => {
@@ -6467,12 +6511,13 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
     const [, awaitOptions] = firstAwaitLoginCall();
     act(() => {
@@ -6557,12 +6602,13 @@ describe("<ProvidersSettingsPanel />", () => {
       await screen.findByRole("button", { name: "Link account" }),
     );
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
     const [, awaitOptions] = firstAwaitLoginCall();
     act(() => {
@@ -6874,12 +6920,13 @@ describe("<ProvidersSettingsPanel />", () => {
     });
 
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
 
     const [, awaitOptions] = firstAwaitLoginCall();
@@ -6971,12 +7018,13 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     const [, startOptions] = firstStartLoginCall();
-    act(() => {
+    await act(() => {
       startOptions.onSuccess({
         url: "https://login.example.test",
         started: true,
         profileId: "managed-1",
       });
+      return Promise.resolve();
     });
     const [, awaitOptions] = firstAwaitLoginCall();
     act(() => {

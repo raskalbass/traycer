@@ -325,6 +325,7 @@ function PermissionsPickerFixture() {
         judgeBilling={null}
         closeFocus="trigger"
         onOpenPermissionSettings={null}
+        interactive
       />
     </NarrowContextFixture>
   );

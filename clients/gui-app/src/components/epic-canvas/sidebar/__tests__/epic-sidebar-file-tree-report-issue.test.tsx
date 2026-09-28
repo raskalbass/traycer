@@ -260,6 +260,13 @@ vi.mock("@/stores/epics/epic-sidebar-expansion-store", () => ({
     selector({ collapse: vi.fn(), collapseAll: vi.fn(), expand: vi.fn() }),
 }));
 
+// The rail's shape and its per-panel Hide/Show live beside the bijection
+// now, not on the panel store (G1-09), so the sidebar's two reads are
+// stubbed where they are actually imported from.
+vi.mock("@/lib/layout/rail-view", () => ({
+  useLayoutRail: () => [{ kind: "panel", id: "railFileTree" }],
+  usePanelVisibilityOverrides: () => ({}),
+}));
 vi.mock("@/stores/epics/left-panel-store", () => ({
   DEFAULT_LEFT_PANEL_ID: "chats",
   isArtifactFilterActive: () => false,
@@ -271,20 +278,14 @@ vi.mock("@/stores/epics/left-panel-store", () => ({
   useChatFilter: () => ({ origin: "all", ownership: "all" }),
   useChatSort: () => ({ field: "updated", direction: "desc" }),
   useCommentsPanelRevealed: () => false,
-  usePanelVisibilityOverrides: () => ({}),
   useEpicLeftPanelStore: (selector: (state: unknown) => unknown) =>
     selector({
       clearAcknowledgedRootCreatePending: vi.fn(),
       clearLocalRootCreatePending: vi.fn(),
-      panelSectionCollapsedByPanelId: {},
       setAcknowledgedRootCreatePending: vi.fn(),
       setActivePanelId: vi.fn(),
       setLocalRootCreatePending: vi.fn(),
-      setPanelSectionWeights: vi.fn(),
-      togglePanelSectionCollapsed: vi.fn(),
     }),
-  useLeftPanelGroups: () => [{ panelIds: ["file-tree"] }],
-  useLeftPanelSectionCollapsed: () => false,
   useLocalRootCreatePending: () => null,
 }));
 
@@ -510,7 +511,7 @@ describe("epic sidebar file-tree load failure report action", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <TooltipProvider>
-          <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />
+          <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />
         </TooltipProvider>
       </QueryClientProvider>,
     );
@@ -523,7 +524,7 @@ describe("epic sidebar file-tree load failure report action", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <TooltipProvider>
-          <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />
+          <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />
         </TooltipProvider>
       </QueryClientProvider>,
     );
@@ -571,7 +572,7 @@ describe("epic sidebar file-tree workspace picker persistence", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <TooltipProvider>
-          <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />
+          <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />
         </TooltipProvider>
       </QueryClientProvider>,
     );

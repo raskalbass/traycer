@@ -25,6 +25,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import type {
   AppResourceSnapshotWireV15,
@@ -47,6 +48,11 @@ import {
 import type { HostScope } from "@/components/settings/host-scope/use-host-scope";
 import type { StreamRuntimeBinding } from "@/lib/host/stream-runtime-context";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import type { BarReadingForm } from "@/components/layout/tabs/side-strip/side-strip-tokens";
+import {
+  DEFAULT_LAYOUT_SNAPSHOT,
+  useLayoutStore,
+} from "@/stores/layout/layout-store";
 import { ResourcesStreamMount } from "@/providers/resources-stream-mount";
 import { __setResourcesStreamClientFactoryForTests } from "@/providers/resources-stream-factory-override";
 import {
@@ -857,7 +863,7 @@ function renderPopover(): void {
       <ResourcesStreamMount epicId="epic-1" />
       <ResourceMonitorPopover
         trigger="header-button"
-        className={undefined}
+        form="glyph"
         claimsOpenAction
       />
     </TooltipProvider>,
@@ -958,7 +964,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction={false}
         />
       </TooltipProvider>,
@@ -2422,7 +2428,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -3618,7 +3624,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -3649,7 +3655,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -3709,7 +3715,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -3738,7 +3744,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -3793,7 +3799,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -3836,7 +3842,7 @@ describe("ResourceMonitorPopover", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -4788,7 +4794,7 @@ describe("ResourceMonitorPopover · host picker", () => {
         <ResourcesStreamMount epicId="epic-1" />
         <ResourceMonitorPopover
           trigger="header-button"
-          className={undefined}
+          form="glyph"
           claimsOpenAction
         />
       </TooltipProvider>,
@@ -5295,5 +5301,118 @@ describe("ResourceMonitorPopover · custom trigger", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resources" }));
 
     expect(screen.getByRole("dialog").getAttribute("data-side")).toBe("bottom");
+  });
+});
+
+/**
+ * `readingButtonLook` (G6): what the header-button trigger draws in each
+ * form. `glyph` stays the icon-only button every other form used to be;
+ * `readout` and `inline` draw the segment's own metrics, at the strip
+ * tile's width for `readout` and at their natural width for `inline` -
+ * the difference `header-actions.tsx`'s desktop header relies on to make
+ * room for readings rather than a bare glyph.
+ */
+describe("ResourceMonitorPopover · header-button forms (G6)", () => {
+  afterEach(() => {
+    useLayoutStore.setState({ ...DEFAULT_LAYOUT_SNAPSHOT });
+  });
+
+  function renderPopoverForm(form: BarReadingForm): {
+    readonly emit: () => ResourcesStreamCallbacks;
+  } {
+    const stub = installStubFactory();
+    render(
+      <TooltipProvider>
+        <ResourcesStreamMount epicId="epic-1" />
+        <ResourceMonitorPopover
+          trigger="header-button"
+          form={form}
+          claimsOpenAction
+        />
+      </TooltipProvider>,
+    );
+    return stub;
+  }
+
+  it("draws the metrics the layout store shows, and its accessible name follows them", () => {
+    const stub = renderPopoverForm("inline");
+    act(() => {
+      stub.emit().onSnapshot(projection({ app: app(), owners: [owner({})] }));
+    });
+
+    // Shipped default: cpu + processes on, memory + ramShare off.
+    const button = screen.getByTestId("resource-monitor-header-button");
+    expect(
+      within(button).getByTestId("status-bar-resource-metric-cpu"),
+    ).not.toBeNull();
+    expect(
+      within(button).getByTestId("status-bar-resource-metric-processes"),
+    ).not.toBeNull();
+    expect(
+      within(button).queryByTestId("status-bar-resource-metric-memory"),
+    ).toBeNull();
+    expect(button.getAttribute("aria-label")).toBe(
+      "Resources: cpu 1.0%, procs 1",
+    );
+
+    // The Metrics checkboxes (the resource monitor's fine-tune row) are the
+    // one place that list is picked - swap cpu for memory and confirm both
+    // the readings drawn and the name that reads them out follow.
+    act(() => {
+      useLayoutStore.getState().setRegionValues("resourceMonitor", {
+        cpu: false,
+        memory: true,
+      });
+    });
+
+    expect(
+      within(button).queryByTestId("status-bar-resource-metric-cpu"),
+    ).toBeNull();
+    expect(
+      within(button).getByTestId("status-bar-resource-metric-memory"),
+    ).not.toBeNull();
+    expect(button.getAttribute("aria-label")).toBe(
+      "Resources: mem 20.0 MB, procs 1",
+    );
+  });
+
+  it("is not w-full in the header's own form, unlike the strip's readout", () => {
+    renderPopoverForm("inline");
+    const inlineButton = screen.getByTestId("resource-monitor-header-button");
+    expect(inlineButton.className).not.toMatch(/\bw-full\b/);
+    cleanup();
+
+    renderPopoverForm("readout");
+    const readoutButton = screen.getByTestId("resource-monitor-header-button");
+    expect(readoutButton.className).toMatch(/\bw-full\b/);
+  });
+
+  it("stays icon-only in the glyph form, whatever the metrics say", () => {
+    const stub = renderPopoverForm("glyph");
+    act(() => {
+      stub.emit().onSnapshot(projection({ app: app(), owners: [owner({})] }));
+    });
+
+    const button = screen.getByTestId("resource-monitor-header-button");
+    expect(
+      within(button).queryByTestId("status-bar-resource-metric-cpu"),
+    ).toBeNull();
+    expect(button.getAttribute("aria-label")).toBe("Resources");
+
+    // Even with every metric on, the glyph draws nothing about them - it is
+    // the same fixed Cpu icon regardless.
+    act(() => {
+      useLayoutStore.getState().setRegionValues("resourceMonitor", {
+        cpu: true,
+        memory: true,
+        processes: true,
+        ramShare: true,
+      });
+    });
+
+    expect(
+      within(button).queryByTestId("status-bar-resource-metric-memory"),
+    ).toBeNull();
+    expect(button.getAttribute("aria-label")).toBe("Resources");
   });
 });

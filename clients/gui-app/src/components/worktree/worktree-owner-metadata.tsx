@@ -5,11 +5,10 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { useRender } from "@base-ui/react/use-render";
 import type { WorktreeBindingOwnerKind } from "@traycer/protocol/host/worktree-schemas";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
-import { HoverPreviewCard } from "@/components/ui/hover-preview-card";
+import { HoverCard } from "@/components/ui/hover-card";
 import { Kbd } from "@/components/ui/kbd";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { OwnerWorkspaceMetadataContent } from "@/components/worktree/worktree-pr-metadata";
@@ -30,41 +29,6 @@ import { tileIntent } from "@/lib/canvas/tile-open/intent";
 // but still a leash, so a wedged host can't strand the button disabled.
 const OWNER_METADATA_REFRESH_TIMEOUT_MS = 20_000;
 
-/**
- * Hover state gated on a press, the same shape the composer's folder picker
- * uses (`workspace-folder-summary-control.tsx`) - ONE state object rather than
- * two `useState`s, so the press and the delayed hover-open cannot interleave
- * into a torn combination.
- *
- * `pressed` is what a Tooltip would give for free and a HoverCard does not: a
- * HoverCard is purely pointer-driven and has no notion of the trigger being
- * activated, so clicking a row leaves the card floating over the tab that the
- * click just opened.
- */
-interface OwnerMetadataHoverState {
-  /**
-   * The trigger was pressed, and no FRESH hover has started since.
-   *
-   * Cleared on pointer-ENTER, never on pointer-leave. Leaving looks like the
-   * natural moment to re-arm, and it is wrong: Radix's `handleOpen` overwrites
-   * `openTimerRef` without clearing the timer already in it, and it runs on
-   * both `pointerenter` and `focus`. A click therefore leaves TWO open timers
-   * pending - the hover's and the focus's - with only the second tracked, so
-   * the `handleClose` that pointer-leave triggers cancels only that one. The
-   * orphan then fires ~500ms after the pointer is gone. Re-arming on leave
-   * un-gates exactly in time to let it through, and the card opens anchored to
-   * a row the pointer has already left, with no pointer-leave left to close it.
-   */
-  readonly pressed: boolean;
-  /** Radix's own hover intent, recorded even while `pressed` suppresses it. */
-  readonly hoverOpen: boolean;
-}
-
-const CLOSED_HOVER_STATE: OwnerMetadataHoverState = {
-  pressed: false,
-  hoverOpen: false,
-};
-
 export function WorktreeOwnerMetadataTooltip(props: {
   readonly trigger: ReactElement;
   readonly title: string;
@@ -75,9 +39,9 @@ export function WorktreeOwnerMetadataTooltip(props: {
   readonly supplementalContent: ReactNode | null;
   readonly side: "top" | "right" | "bottom" | "left";
 }): ReactNode {
-  const [hoverState, setHoverState] =
-    useState<OwnerMetadataHoverState>(CLOSED_HOVER_STATE);
-  const open = !hoverState.pressed && hoverState.hoverOpen;
+  // Controlled only to know when the card is up: the metadata queries and the
+  // `R` claim run while it is, and never for a row nobody is looking at.
+  const [open, setOpen] = useState(false);
   const client = useHostClientForHostId(props.hostId);
   const { openTile } = useEpicTileNavigation();
   const openPrInApp = (reference: WorktreePrReference): void => {
@@ -132,9 +96,9 @@ export function WorktreeOwnerMetadataTooltip(props: {
   });
   const trigger = refresh.trigger;
   const canRefresh = client !== null;
-  // A HoverCard opens on POINTER hover and never takes focus, so `R` can only
-  // work if it is caught at the window - the caret stays wherever it already
-  // was, which in a chat tab is the composer.
+  // The card never takes focus (it opens on hover, or on the row's own
+  // keyboard focus), so `R` can only work if it is caught at the window - the
+  // caret stays wherever it already was, which in a chat tab is the composer.
   //
   // Deliberately NOT skipped when the focus is a text field. That guard is the
   // usual reflex for a bare-letter shortcut bound this high, and it is what
@@ -165,22 +129,9 @@ export function WorktreeOwnerMetadataTooltip(props: {
     () => (open && canRefresh ? claimRefreshKey() : undefined),
     [canRefresh, claimRefreshKey, open],
   );
-  // Compose before the hover trigger: a press closes the preview, and only a
-  // fresh pointer entry re-arms it. Leave the hover card's travel delay intact.
-  const hoverTrigger = useRender({
-    render: props.trigger,
-    props: {
-      onPointerEnter: () => {
-        setHoverState((current) =>
-          current.pressed ? { ...current, pressed: false } : current,
-        );
-      },
-      onPointerDown: () => setHoverState({ pressed: true, hoverOpen: false }),
-      onClick: () => setHoverState({ pressed: true, hoverOpen: false }),
-    },
-  });
   return (
-    <HoverPreviewCard
+    <HoverCard
+      trigger={props.trigger}
       content={
         // Sized by the run-settings row, between a floor and a ceiling. The
         // title and workspace blocks stretch to that resolved width without
@@ -240,23 +191,17 @@ export function WorktreeOwnerMetadataTooltip(props: {
           />
         </div>
       }
+      appearance="preview"
+      semantics={{ role: "dialog", label: props.title }}
       side={props.side}
       sideOffset={4}
       align="start"
+      enabled
       open={open}
-      // A late open is SWALLOWED rather than recorded while pressed: the
-      // 500ms open delay routinely fires AFTER the click that started during
-      // it, and recording it would leave `hoverOpen` armed to re-open the card
-      // the instant the press gate lifts.
-      onOpenChange={(next) => {
-        setHoverState((current) => {
-          if (next && current.pressed) return current;
-          return { ...current, hoverOpen: next };
-        });
-      }}
-    >
-      {hoverTrigger}
-    </HoverPreviewCard>
+      onOpenChange={setOpen}
+      testId={null}
+      className={null}
+    />
   );
 }
 

@@ -6,6 +6,7 @@ import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { resolve } from "path";
 import { defineConfig, type HtmlTagDescriptor, type UserConfig } from "vite";
 import { uiModuleGraph } from "../gui-app/vite/ui-module-graph";
+import { asciiOnlyOutput } from "../gui-app/vite/ascii-only-output";
 import { pdfjsAssets } from "../gui-app/vite/pdfjs-assets";
 import { CONTENT_SECURITY_POLICY } from "./src/shared/content-security-policy";
 
@@ -74,6 +75,9 @@ export default defineConfig((): UserConfig => {
       tailwindcss(),
       pdfjsAssets(),
       uiModuleGraph(),
+      // Emitted JS as pure ASCII: one character above U+00FF makes the engine
+      // keep a whole chunk's source as UTF-16 (see the plugin).
+      asciiOnlyOutput(),
       babel({ presets: [reactCompilerPreset()] }).then((plugin) => ({
         ...plugin,
         enforce: "post" as const,
@@ -85,6 +89,11 @@ export default defineConfig((): UserConfig => {
         disable: !process.env.SENTRY_AUTH_TOKEN || !process.env.SENTRY_ORG,
       }),
     ],
+    // Worker bundles are separate builds that do not see `plugins`, and each
+    // worker keeps its own copy of its source - the epic runtime runs several.
+    worker: {
+      plugins: () => [asciiOnlyOutput()],
+    },
     resolve: {
       alias: {
         "@": resolve(guiAppRoot, "src"),

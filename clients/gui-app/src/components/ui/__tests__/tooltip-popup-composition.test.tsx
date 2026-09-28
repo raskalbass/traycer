@@ -45,9 +45,9 @@ import {
 import { ToolbarActionButton } from "@/editor-core/toolbar/toolbar-action-button";
 import { StatusBarResourceSegment } from "@/components/layout/status-bar/status-bar-resource-segment";
 import {
-  DEFAULT_STATUS_BAR_LAYOUT,
+  DEFAULT_LAYOUT_SNAPSHOT,
   useLayoutStore,
-} from "@/stores/settings/layout-store";
+} from "@/stores/layout/layout-store";
 import { GitDiffRepoSwitcher } from "@/components/epic-canvas/git-diff/git-diff-repo-switcher";
 import type { WorktreeBindingSelectorRowV12 } from "@traycer/protocol/host";
 
@@ -59,7 +59,7 @@ vi.mock("@/hooks/resources/use-global-resources-unsupported", () => ({
 
 afterEach(() => {
   cleanup();
-  useLayoutStore.setState({ statusBar: DEFAULT_STATUS_BAR_LAYOUT });
+  useLayoutStore.setState({ ...DEFAULT_LAYOUT_SNAPSHOT });
 });
 
 const REPO_ROW: WorktreeBindingSelectorRowV12 = {
@@ -105,12 +105,11 @@ describe("tooltip guard on composed popup triggers (R1)", () => {
   });
 
   it("stays closed on StatusBarResourceSegment's no-metrics tooltip span while its Popover trigger button is expanded", () => {
-    const previous = useLayoutStore.getState().statusBar;
-    useLayoutStore.setState({
-      statusBar: {
-        ...previous,
-        resources: { ...previous.resources, metrics: [] },
-      },
+    useLayoutStore.getState().setRegionValues("resourceMonitor", {
+      cpu: false,
+      memory: false,
+      processes: false,
+      ramShare: false,
     });
 
     render(
@@ -121,6 +120,7 @@ describe("tooltip guard on composed popup triggers (R1)", () => {
               hostId={null}
               hostLabel="Probe host"
               hasExplicitPick={false}
+              interactive
             />
           }
         />

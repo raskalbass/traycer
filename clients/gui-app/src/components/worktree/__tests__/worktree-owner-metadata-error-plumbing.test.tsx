@@ -97,10 +97,12 @@ vi.mock("@/hooks/pr/use-owner-pr-references", () => ({
 const OPEN_DELAY_MS = 500;
 
 function hoverIn(trigger: HTMLElement): void {
+  // `useHover`'s open-delay timer lives on a native `mouseenter` listener
+  // Floating UI attaches directly to the DOM node, gated on the pointer type
+  // `onPointerEnter` (a React prop) just recorded - both have to fire, like a
+  // real browser's compat mouse events would.
   fireEvent.pointerEnter(trigger, { pointerType: "mouse" });
   fireEvent.mouseEnter(trigger);
-  fireEvent.pointerMove(trigger, { pointerType: "mouse" });
-  fireEvent.mouseMove(trigger);
 }
 
 function settleOpenDelay(): void {

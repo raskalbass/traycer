@@ -218,6 +218,7 @@ function GeometryHarness(props: GeometryHarnessProps): ReactNode {
       style={{ opacity: "0" }}
     >
       <NotificationsPopover
+        variant="center"
         onNavigate={() => undefined}
         headingRef={headingRef}
         shellRef={geometry.shellRef}

@@ -118,13 +118,14 @@ const ANCHORED_PRIMITIVES = [
 ];
 
 /**
- * The surfaces allowed to switch Radix's collision handling off outright.
+ * The surfaces allowed to switch Base's collision handling off outright.
  *
- * `avoidCollisions={false}` is the one call-site prop the primitive defaults
- * cannot rescue: with collisions off, Radix runs neither the inset-aware
- * `collisionPadding` the menu/popover primitives now default to nor the shift
- * that would keep the surface inside the viewport, so a wide anchored menu
- * leaves the screen on a phone with nothing to catch it.
+ * `collisionAvoidance={{ side: "none", align: "none" }}` is the one call-site
+ * prop the primitive defaults cannot rescue: with both axes set to "none",
+ * Base runs neither the inset-aware `collisionPadding` the menu/popover
+ * primitives now default to nor the shift that would keep the surface inside
+ * the viewport, so a wide anchored menu leaves the screen on a phone with
+ * nothing to catch it.
  *
  * Every entry here is a sidebar-header menu that opens sideways into the
  * canvas, and `EpicSurface` drops the desktop sidebar below `md` - so none of
@@ -252,7 +253,7 @@ describe("safe-area token contract", () => {
     ).toEqual([]);
   });
 
-  it("keeps avoidCollisions={false} to the allowlisted desktop-only sidebar menus", () => {
+  it('keeps collisionAvoidance={{ side: "none", align: "none" }} to the allowlisted desktop-only sidebar menus', () => {
     const offenders = productionSourceEntries()
       .filter(([filePath]) => filePath.endsWith(".tsx"))
       .filter(
@@ -263,8 +264,14 @@ describe("safe-area token contract", () => {
       )
       // Comments stripped first, so this file's own prose and a call site's
       // note about why it does NOT switch collisions off stay writable.
+      // Unconditional only: `collisionAvoidance={{ side: "none", align:
+      // "none" }}` directly, not one branch of a placement-gated ternary
+      // (`add-node-dropdown.tsx` keeps collisions on for every OTHER
+      // placement, which this prop is not).
       .filter(([, source]) =>
-        /avoidCollisions=\{\s*false\s*\}/.test(stripComments(source)),
+        /collisionAvoidance=\{\{\s*side:\s*"none",\s*align:\s*"none",?\s*\}\}/.test(
+          stripComments(source),
+        ),
       )
       .map(([filePath]) => filePath);
 

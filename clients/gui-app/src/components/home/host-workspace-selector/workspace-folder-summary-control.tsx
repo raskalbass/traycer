@@ -18,7 +18,7 @@ import { useActivePaneEffect } from "@/components/epic-tabs/pane-visibility-cont
 import { useIsComposerNarrow } from "@/components/home/composer/composer-narrow-hooks";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
-import { HoverPreviewCard } from "@/components/ui/hover-preview-card";
+import { HoverCard } from "@/components/ui/hover-card";
 import { Kbd } from "@/components/ui/kbd";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
@@ -56,11 +56,6 @@ const EXTERNAL_REFRESH_DEADLINE_MS = 30_000;
 // Module scope so the identity is stable when there is nothing to refresh -
 // a fresh arrow per render would re-bind the key listener on every render.
 const NOOP_REFRESH = (): Promise<void> => Promise.resolve();
-
-interface SummaryOverlayState {
-  readonly workspacePopoverOpen: boolean;
-  readonly summaryHoverOpen: boolean;
-}
 
 /**
  * Caps an external `isRefreshing` contribution to the spinner at ~30s, keyed
@@ -178,15 +173,11 @@ export function WorkspaceFolderSummaryControl(props: {
   // shares with its siblings has the least width to give. Outside a composer
   // the context reads wide, so the word stays.
   const iconOnly = useIsComposerNarrow();
-  const [overlayState, setOverlayState] = useState<SummaryOverlayState>({
-    workspacePopoverOpen: false,
-    summaryHoverOpen: false,
-  });
+  const [popoverOpen, setPopoverOpen] = useState(false);
   const preview = useWorkspaceFolderPreviewReveal();
   const refreshUi = useWorkspaceRefreshUi(props.refresh);
   const triggerRefresh = refreshUi.triggerRefresh;
   const canRefresh = refreshUi.canRefresh;
-  const popoverOpen = overlayState.workspacePopoverOpen;
   // Bound at the WINDOW, not on the popover content: the content prevents its
   // own open-autofocus (so a click never yanks the caret out of the composer),
   // which leaves focus on the trigger - outside the portaled content, whose
@@ -242,34 +233,22 @@ export function WorkspaceFolderSummaryControl(props: {
   const dialogBoundaryEl = useDialogOverlayBoundaryEl();
 
   const handleExternalAddFolder = async (): Promise<boolean> => {
-    setOverlayState({
-      workspacePopoverOpen: true,
-      summaryHoverOpen: false,
-    });
+    setPopoverOpen(true);
     try {
       const added = await props.onAddFolder();
       if (!added) {
-        setOverlayState((current) => ({
-          ...current,
-          workspacePopoverOpen: false,
-        }));
+        setPopoverOpen(false);
       }
       return added;
     } catch {
-      setOverlayState((current) => ({
-        ...current,
-        workspacePopoverOpen: false,
-      }));
+      setPopoverOpen(false);
       return false;
     }
   };
   const handleUpdate = (): void => {
     if (props.onUpdate === null) return;
     props.onUpdate();
-    setOverlayState({
-      workspacePopoverOpen: false,
-      summaryHoverOpen: false,
-    });
+    setPopoverOpen(false);
   };
 
   const emptyRecentTrigger = itemCount === 0 && props.bindingResolved;
@@ -324,9 +303,7 @@ export function WorkspaceFolderSummaryControl(props: {
     );
   }
 
-  // Controlled hover, gated on the click-open popover: a HoverCard is purely
-  // hover-driven and (unlike a Tooltip) does not dismiss when the trigger is
-  // clicked, so the preview must be forced closed while the picker is open.
+  // Shut while the picker is open: the preview repeats what the picker shows.
   const popoverTrigger = emptyRecentTrigger ? (
     <EmptyRecentFolderTrigger
       trigger={trigger}
@@ -337,21 +314,24 @@ export function WorkspaceFolderSummaryControl(props: {
       iconOnly={iconOnly}
     />
   ) : (
-    <HoverPreviewCard
+    <HoverCard
+      trigger={
+        // Innermost, so the press guard runs BEFORE the popover's own open
+        // handler and can cancel it (`preventBaseUIHandler`).
+        <PopoverTrigger render={previewTrigger} />
+      }
       content={<WorkspaceFolderHoverList items={props.items} />}
+      appearance="preview"
+      semantics={{ role: "dialog", label: "Workspace folders" }}
       side={props.popoverSide}
       sideOffset={4}
       align="start"
-      open={!overlayState.workspacePopoverOpen && overlayState.summaryHoverOpen}
-      onOpenChange={(open) => {
-        setOverlayState((current) => {
-          if (current.workspacePopoverOpen) return current;
-          return { ...current, summaryHoverOpen: open };
-        });
-      }}
-    >
-      <PopoverTrigger render={previewTrigger} />
-    </HoverPreviewCard>
+      enabled={!popoverOpen}
+      open={null}
+      onOpenChange={null}
+      testId={null}
+      className={null}
+    />
   );
 
   const folderRows = (
@@ -383,7 +363,7 @@ export function WorkspaceFolderSummaryControl(props: {
 
   const picker = (
     <Popover
-      open={overlayState.workspacePopoverOpen}
+      open={popoverOpen}
       onOpenChange={(next, details) => {
         if (
           !next &&
@@ -400,10 +380,7 @@ export function WorkspaceFolderSummaryControl(props: {
           details.cancel();
         if (details.isCanceled) return;
 
-        setOverlayState((current) => ({
-          workspacePopoverOpen: next,
-          summaryHoverOpen: next ? false : current.summaryHoverOpen,
-        }));
+        setPopoverOpen(next);
         // Opening the picker is an explicit intent edge - the user is about to
         // decide something per folder - so re-derive from disk once, here.
         // Without it the manual button would only ever repair a label the user
@@ -454,17 +431,9 @@ export function WorkspaceFolderSummaryControl(props: {
             rootRef={contentRef}
             onContinue={() => {
               confirmingSetupRef.current = true;
-              setOverlayState({
-                workspacePopoverOpen: false,
-                summaryHoverOpen: false,
-              });
+              setPopoverOpen(false);
             }}
-            onClose={() =>
-              setOverlayState({
-                workspacePopoverOpen: false,
-                summaryHoverOpen: false,
-              })
-            }
+            onClose={() => setPopoverOpen(false)}
           />
         ) : null}
         {props.refresh === null ? null : (

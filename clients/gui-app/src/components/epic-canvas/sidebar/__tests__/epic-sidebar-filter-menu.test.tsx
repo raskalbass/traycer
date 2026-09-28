@@ -38,7 +38,6 @@ describe("<ChatFilterMenu />", () => {
       <ChatFilterMenu
         epicId={EPIC_ID}
         tabId={TAB_ID}
-        collapsed={false}
         canArchive={canArchive}
       />,
     );
@@ -48,12 +47,7 @@ describe("<ChatFilterMenu />", () => {
 
   it("names the trigger for Agents, not chats", () => {
     render(
-      <ChatFilterMenu
-        epicId={EPIC_ID}
-        tabId={TAB_ID}
-        collapsed={false}
-        canArchive={false}
-      />,
+      <ChatFilterMenu epicId={EPIC_ID} tabId={TAB_ID} canArchive={false} />,
     );
     expect(screen.getByRole("button", { name: "Filter agents" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Filter chats" })).toBeNull();
@@ -99,33 +93,16 @@ describe("<ChatFilterMenu />", () => {
     ).toBe("others");
   });
 
-  it("expands a collapsed section before opening its view menu", () => {
-    useLeftPanelStore.getState().setPanelSectionCollapsed("chats", true);
-    render(
-      <ChatFilterMenu
-        epicId={EPIC_ID}
-        tabId={TAB_ID}
-        collapsed
-        canArchive={false}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Filter agents" }));
-
-    expect(
-      useLeftPanelStore.getState().panelSectionCollapsedByPanelId.chats,
-    ).toBe(false);
-    expect(screen.getByTestId("epic-sidebar-agent-view-menu")).toBeTruthy();
-  });
-
-  it("keeps the view menu open when expansion remounts its header", () => {
-    useLeftPanelStore.getState().setPanelSectionCollapsed("chats", true);
+  // The view menu no longer expands a collapsed section before opening
+  // (deleted with L-157). The per-member collapse that returned for stacked
+  // panels (L-166) keeps a collapsed member's header, menu included, so the
+  // menu opens without expanding it.
+  it("keeps the view menu open across a remount of its header", () => {
     const { rerender } = render(
       <ChatFilterMenu
-        key="collapsed"
+        key="first"
         epicId={EPIC_ID}
         tabId={TAB_ID}
-        collapsed
         canArchive={false}
       />,
     );
@@ -133,10 +110,9 @@ describe("<ChatFilterMenu />", () => {
     fireEvent.click(screen.getByRole("button", { name: "Filter agents" }));
     rerender(
       <ChatFilterMenu
-        key="expanded"
+        key="second"
         epicId={EPIC_ID}
         tabId={TAB_ID}
-        collapsed={false}
         canArchive={false}
       />,
     );
@@ -196,12 +172,7 @@ describe("<ChatFilterMenu />", () => {
     store.setChatOwnership(EPIC_ID, "mine");
 
     render(
-      <ChatFilterMenu
-        epicId={EPIC_ID}
-        tabId={TAB_ID}
-        collapsed={false}
-        canArchive={false}
-      />,
+      <ChatFilterMenu epicId={EPIC_ID} tabId={TAB_ID} canArchive={false} />,
     );
 
     expect(
@@ -259,7 +230,6 @@ describe("<ArtifactFilterMenu />", () => {
       <ArtifactFilterMenu
         epicId={EPIC_ID}
         tabId={TAB_ID}
-        collapsed={false}
         onMarkAllRead={() => undefined}
         markAllReadDisabled={false}
       />,

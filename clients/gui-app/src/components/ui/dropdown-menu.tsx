@@ -14,6 +14,7 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import { useDialogOverlayBoundaryEl } from "@/providers/dialog-overlay-boundary-context";
 
 import { useSafeAreaCollisionPadding } from "@/components/ui/safe-area-collision-padding";
+import { MenuOpenMarker } from "@/components/ui/open-menus";
 
 function DropdownMenu({
   open,
@@ -101,6 +102,7 @@ function DropdownMenuContent({
   collisionAvoidance,
   finalFocus,
   container,
+  children,
   ...props
 }: DropdownMenuContentProps) {
   const focus = useClosingOverlayFocus(finalFocus);
@@ -135,7 +137,11 @@ function DropdownMenuContent({
             )
           }
           {...props}
-        />
+        >
+          {/* Mounted with the open menu: no hover card opens meanwhile. */}
+          <MenuOpenMarker />
+          {children}
+        </DropdownMenuPrimitive.Popup>
       </DropdownMenuPrimitive.Positioner>
     </DropdownMenuPrimitive.Portal>
   );

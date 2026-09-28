@@ -106,6 +106,7 @@ const ROUTE_TEMPLATE_LABELS: Readonly<
   "/epics/$epicId/$tabId": "Epic tab",
   "/draft/new": "New chat draft",
   "/draft/$draftId": "Chat draft",
+  "/sample-workspace": "Sample workspace",
   "/home": "Home",
   "/onboarding": "Onboarding",
   "/settings": "Settings",
@@ -1582,6 +1583,9 @@ function EvidenceReviewDetails({
           ) : null}
         </div>
       ) : null}
+      {cause !== null ? (
+        <EvidenceMessageDetails message={cause.message} />
+      ) : null}
       {cause !== null && cause.sourceAction !== null ? (
         <ReviewRow label="Operation" value={cause.sourceAction} />
       ) : null}
@@ -1607,6 +1611,37 @@ function EvidenceReviewDetails({
         />
       ) : null}
     </dl>
+  );
+}
+
+/**
+ * The error message after its first line, as one read-only "Details" row -
+ * or nothing, when only blank lines follow (a single-line message renders
+ * exactly as it always has).
+ *
+ * The whole message rides the wire (a settled routing card's hops and detail
+ * rows follow its error), and Review is what the user consents against, so
+ * Review shows it whole. Only the blank lines at its edges are dropped.
+ * Unscrubbed, like the first line and the stack above it: desktop main
+ * scrubs on the way out, which redacts from this and never adds to it.
+ */
+function EvidenceMessageDetails({
+  message,
+}: {
+  readonly message: string;
+}): ReactNode {
+  const rest = message
+    .split("\n")
+    .slice(1)
+    .join("\n")
+    .replace(/^(?:[ \t]*\n)+/, "")
+    .trimEnd();
+  if (rest === "") return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <dt className="text-muted-foreground">Details</dt>
+      <dd className="whitespace-pre-wrap wrap-anywhere select-text">{rest}</dd>
+    </div>
   );
 }
 

@@ -17,7 +17,6 @@ import {
 } from "@/lib/terminals/epic-terminal-durable-create-coordinator";
 import { epicTerminalUiIdentityKey } from "@/lib/terminals/pending-create-identity";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
-import { useSettingsStore } from "@/stores/settings/settings-store";
 
 /**
  * The phone Terminals category over the SHARED panel layer, against the real
@@ -192,6 +191,12 @@ vi.mock("@/components/epic-canvas/mobile/switcher-create-actions", () => ({
     <button type="button" data-testid="switcher-new-terminal" />
   ),
 }));
+// The chips follow the Resource monitor's own Shown switch now (L-60), so the
+// row asks this hook rather than reading a settings field. Non-empty here,
+// which is what a shown monitor answers.
+vi.mock("@/hooks/resources/use-navigator-resource-metrics", () => ({
+  useNavigatorResourceMetrics: () => ["cpu", "memory", "processes"],
+}));
 vi.mock("@/components/resources/resource-usage-chip", () => ({
   OwnerResourceChip: (props: {
     readonly ownerId: string;
@@ -311,7 +316,6 @@ function renderList(tabId: string) {
 
 beforeEach(() => {
   useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
-  useSettingsStore.setState({ navigatorResourceMetrics: [] });
   resetEpicTerminalDurableCreatesForTests();
   durableCollection.value = undefined;
   listedSessions.value = [];
@@ -330,7 +334,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  useSettingsStore.setState({ navigatorResourceMetrics: [] });
   resetEpicTerminalDurableCreatesForTests();
 });
 
@@ -457,8 +460,7 @@ describe("<SwitcherTerminalsList /> rows", () => {
     expect(tiles[0]?.id).toBe("second-term");
   });
 
-  it("carries the resource chip for the row's owner host when a metric is picked", () => {
-    useSettingsStore.setState({ navigatorResourceMetrics: ["cpu"] });
+  it("carries the resource chip for the row's owner host", () => {
     durableCollection.value = completeFleet([
       durableTerminal({
         hostId: HOST_B,

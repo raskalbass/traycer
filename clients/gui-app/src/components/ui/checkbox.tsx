@@ -6,6 +6,14 @@ import { Check } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
+/**
+ * The unchecked box is outlined in `--muted-foreground` rather than `--input`:
+ * `--input` is a fill token, about 1.2:1 against the default light background
+ * and less on a tinted row (a selected layout row), where the box vanished.
+ * Every palette tunes `--muted-foreground` for text contrast, so it clears the
+ * 3:1 a control's boundary needs on every surface and tint in every palette;
+ * no foreground alpha did (`unchecked-control-border-contrast.test.ts`).
+ */
 function Checkbox({
   className,
   ...props
@@ -16,7 +24,7 @@ function Checkbox({
       nativeButton
       render={<button type="button" />}
       className={cn(
-        "peer size-4 shrink-0 rounded-sm border border-input shadow-xs transition-shadow outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-disabled:cursor-not-allowed data-disabled:opacity-50 data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground",
+        "peer size-4 shrink-0 rounded-sm border border-muted-foreground shadow-xs transition-shadow outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-disabled:cursor-not-allowed data-disabled:opacity-50 data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground",
         className,
       )}
       {...props}

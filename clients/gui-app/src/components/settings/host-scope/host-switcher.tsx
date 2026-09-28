@@ -582,6 +582,7 @@ function HostSwitcherRow(props: {
         intent={props.intent}
         surfaceState={surfaceState}
         updateView={props.updateView}
+        nameRef={null}
       />
     </CommandItem>
   );

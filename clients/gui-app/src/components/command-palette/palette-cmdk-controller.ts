@@ -24,6 +24,15 @@ export function buildCmdkValue(item: CommandItemShape): string {
   return `${item.id} ${item.label}`;
 }
 
+/**
+ * Rows that outrank every other match of a query they match (C15): typing
+ * "layout" means the two layout doors, not the tasks whose titles say it.
+ */
+const PRIMARY_ITEM_IDS: ReadonlyArray<string> = [
+  "customize:layout",
+  "customize:layout-settings",
+];
+
 export function paletteFilter(
   value: string,
   search: string,
@@ -35,6 +44,8 @@ export function paletteFilter(
   const parsed = parseScopePrefix(search);
   const query = parsed?.restQuery ?? search;
   const score = commandScore(value, query, keywords ?? []);
+  if (score > 0 && PRIMARY_ITEM_IDS.some((id) => value.startsWith(`${id} `)))
+    return 1 + score;
   if (score > 0 || keywords === undefined || !isPathLikeQuery(query)) {
     return score;
   }

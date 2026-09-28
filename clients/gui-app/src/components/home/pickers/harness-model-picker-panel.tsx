@@ -28,15 +28,22 @@ import {
   useCallback,
   useState,
   type KeyboardEvent,
+  type ReactNode,
   type RefObject,
 } from "react";
+import { cn } from "@/lib/utils";
 import {
   HarnessModelPickerModelSettingsFooter,
   type ReasoningFooterConfig,
   type ServiceTierFooterConfig,
 } from "@/components/home/pickers/harness-model-picker-footers";
 
-interface HarnessModelPickerPanelProps {
+/**
+ * What the picker's body draws from. Props only: the live picker feeds it from
+ * the host catalog, the layout editor's sample canvas from sample data
+ * (`sample-model-picker.tsx`).
+ */
+export interface HarnessModelPickerPanelBodyProps {
   readonly hasQuery: boolean;
   readonly listboxId: string;
   readonly idPrefix: string;
@@ -45,7 +52,6 @@ interface HarnessModelPickerPanelProps {
   readonly onQueryChange: (next: string) => void;
   readonly activeProviderLabel: string;
   readonly activeDescendant: string | undefined;
-  readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   readonly catalogHarnesses: ReadonlyArray<HarnessOption>;
   readonly fallbackHarnesses: ReadonlyArray<HarnessOption>;
   readonly profilesByHarnessId: ReadonlyMap<
@@ -118,17 +124,94 @@ interface HarnessModelPickerPanelProps {
     string | null,
     ProfileRowAdmission
   > | null;
+}
+
+interface HarnessModelPickerPanelProps extends HarnessModelPickerPanelBodyProps {
+  readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   /**
    * Hand focus to the active composer's editor on close. `false` for an
-   * embedded picker (`HarnessModelPickerEmbedding`): Radix's own restore
+   * embedded picker (`HarnessModelPickerEmbedding`): the popover's own restore
    * returns focus to the surface's face instead.
    */
   readonly closeFocusesComposer: boolean;
+  /** An embedding's own footer, under the effort footer; `null` for none. */
+  readonly footer: ReactNode | null;
 }
 
+/**
+ * The picker's own box: search, rail, list and effort footer. A composer's
+ * popover IS this box; an embedding's footer goes under it rather than inside
+ * it, so the popover grows by the footer and the list keeps the composer's
+ * height. Written once so the two can never disagree.
+ */
+const PICKER_BODY_HEIGHT = "h-[min(var(--available-height),23rem)]";
+
+/** The picker's popover: the body in its popover surface. */
 export function HarnessModelPickerPanel(props: HarnessModelPickerPanelProps) {
   const { contentRef, initialFocus: coarseInitialFocus } =
     useCoarsePointerOpenAutoFocus();
+  const { onQueryChange, onKeyDown, closeFocusesComposer, footer, ...body } =
+    props;
+
+  return (
+    <PopoverContent
+      side="bottom"
+      align="end"
+      sideOffset={8}
+      collisionPadding={12}
+      role="dialog"
+      aria-label="Select model"
+      // Opts this popover out of the keybinding provider's dialog block so the
+      // picker's leader-digit shortcuts fire while it's open (see
+      // `isAnyDialogOpen` in keybinding-provider.tsx).
+      data-leader-scope={LEADER_SCOPE_MODEL_PICKER}
+      layout="panel"
+      className={cn(
+        footer === null
+          ? PICKER_BODY_HEIGHT
+          : "max-h-[var(--available-height)]",
+        "w-[min(86vw,30rem)]",
+      )}
+      // Return focus to the composer editor (not the trigger pill) on close so
+      // the user can keep typing after picking a model. No-op on surfaces with
+      // no registered composer (e.g. the terminal launcher), where the
+      // popover's default focus restore stands. An embedded picker never asks:
+      // the registry falls back to ANY registered composer, which from outside
+      // one would pull an unrelated chat to the front.
+      finalFocus={() => !closeFocusesComposer || !focusActiveComposer()}
+      ref={contentRef}
+      // The search field is the first tabbable descendant, so the popover's
+      // own initial focus takes it whether or not the panel's search effect
+      // runs. Both halves have to move together or the gate is a no-op.
+      initialFocus={coarseInitialFocus}
+      onKeyDown={(event) => {
+        if (isInsideEmbeddingFooter(event.target)) return;
+        onKeyDown(event);
+      }}
+    >
+      {footer === null ? (
+        <HarnessModelPickerPanelBody {...body} onQueryChange={onQueryChange} />
+      ) : (
+        <>
+          <div className={cn("flex min-h-0 flex-col", PICKER_BODY_HEIGHT)}>
+            <HarnessModelPickerPanelBody
+              {...body}
+              onQueryChange={onQueryChange}
+            />
+          </div>
+          <div data-picker-embedding-footer="" className="shrink-0">
+            {footer}
+          </div>
+        </>
+      )}
+    </PopoverContent>
+  );
+}
+
+/** The search field, the provider rail, the account line, the list and the footer. */
+export function HarnessModelPickerPanelBody(
+  props: HarnessModelPickerPanelBodyProps,
+) {
   const {
     hasQuery,
     listboxId,
@@ -138,7 +221,6 @@ export function HarnessModelPickerPanel(props: HarnessModelPickerPanelProps) {
     onQueryChange,
     activeProviderLabel,
     activeDescendant,
-    onKeyDown,
     catalogHarnesses,
     fallbackHarnesses,
     profilesByHarnessId,
@@ -180,7 +262,6 @@ export function HarnessModelPickerPanel(props: HarnessModelPickerPanelProps) {
     createProfileDisabled,
     createProfileDisabledReason,
     profileAdmission,
-    closeFocusesComposer,
   } = props;
   const openAddProfile = useProviderProfileAddFlowStore(
     (state) => state.openForHarness,
@@ -195,33 +276,7 @@ export function HarnessModelPickerPanel(props: HarnessModelPickerPanelProps) {
   );
 
   return (
-    <PopoverContent
-      side="bottom"
-      align="end"
-      sideOffset={8}
-      collisionPadding={12}
-      role="dialog"
-      aria-label="Select model"
-      // Opts this popover out of the keybinding provider's dialog block so the
-      // picker's leader-digit shortcuts fire while it's open (see
-      // `isAnyDialogOpen` in keybinding-provider.tsx).
-      data-leader-scope={LEADER_SCOPE_MODEL_PICKER}
-      layout="panel"
-      className="h-[min(var(--available-height),23rem)] w-[min(86vw,30rem)]"
-      // Return focus to the composer editor (not the trigger pill) on close so
-      // the user can keep typing after picking a model. No-op on surfaces with
-      // no registered composer (e.g. the terminal launcher), where Radix's
-      // default focus restore stands. An embedded picker never asks: the
-      // registry falls back to ANY registered composer, which from outside
-      // one would pull an unrelated chat to the front.
-      finalFocus={() => !closeFocusesComposer || !focusActiveComposer()}
-      ref={contentRef}
-      // The search field is the first tabbable descendant, so Radix's own
-      // open-autofocus takes it whether or not the panel's search effect runs.
-      // Both halves have to move together or the gate is a no-op.
-      initialFocus={coarseInitialFocus}
-      onKeyDown={onKeyDown}
-    >
+    <>
       <HarnessModelPickerSearch
         inputRef={inputRef}
         value={query}
@@ -330,6 +385,16 @@ export function HarnessModelPickerPanel(props: HarnessModelPickerPanelProps) {
           />
         </div>
       </div>
-    </PopoverContent>
+    </>
+  );
+}
+
+/** The embedding footer's subtree, which the list key handling skips. */
+const EMBEDDING_FOOTER_SELECTOR = "[data-picker-embedding-footer]";
+
+function isInsideEmbeddingFooter(target: EventTarget): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(EMBEDDING_FOOTER_SELECTOR) !== null
   );
 }

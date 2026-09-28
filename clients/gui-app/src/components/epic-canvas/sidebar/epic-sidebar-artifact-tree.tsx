@@ -1,3 +1,4 @@
+import { useColumnOverlayPlacement } from "@/components/layout/column-edge-context";
 import { withoutTabRecovery } from "@/lib/tab-recovery/history";
 import { useSidebarCopyIdMenuEntry } from "@/components/epic-canvas/sidebar/use-sidebar-copy-id-menu-entry";
 /**
@@ -50,12 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ContextMenuContent } from "@/components/ui/context-menu";
 import { SidebarGroup, SidebarGroupContent } from "@/components/ui/sidebar";
-import { TreeChevron, TreeChevronSpacer } from "@/components/ui/tree-chevron";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TreeChevronSpacer } from "@/components/ui/tree-chevron";
 import {
   useAcknowledgedRootCreatePending,
   useArtifactSort,
@@ -130,15 +126,20 @@ import {
   EMPTY_PRE_ACK_LIST,
   INDENT_PX,
   SIDEBAR_REVEAL_HIGHLIGHT_CLASS,
-  STATUS_DOT_CLASSES,
-  STATUS_LABELS,
   computeArtifactNodeAddChildPending,
   computeArtifactNodeStatusDot,
+  artifactRowClassName,
   nodePadRightClass,
   revealSidebarNode,
   rowAddControlRevealClass,
 } from "./epic-sidebar-tree-shared";
 import { TreeGroupGuide } from "./epic-sidebar-tree-guide";
+import {
+  ArtifactNodeIcon,
+  ArtifactRowView,
+  ArtifactUnreadMarker,
+  type ArtifactUnreadMarkerVariant,
+} from "./artifact-row-view";
 import {
   applyVisibleFilter,
   collectWithAncestors,
@@ -205,8 +206,6 @@ interface ExpansionController {
   toggleExpanded: (id: string) => void;
   ensureExpanded: (id: string) => void;
 }
-
-type ArtifactUnreadMarkerVariant = "self" | "descendant";
 
 interface ArtifactReadSeedEntry {
   readonly id: string;
@@ -1397,12 +1396,10 @@ function ArtifactNodeShell(props: ArtifactNodeShellProps) {
       >
         {isRenaming ? (
           <ArtifactRenameRow
-            epicId={epicId}
             depth={depth}
             Icon={Icon}
             artifactIconColorMode={artifactIconColorMode}
             iconStyle={iconStyle}
-            artifactType={artifactType}
             renameInputRef={renameInputRef}
             renameValue={renameValue}
             onRenameValueChange={onRenameValueChange}
@@ -1493,18 +1490,6 @@ function ArtifactNodeShell(props: ArtifactNodeShellProps) {
   );
 }
 
-interface NodeChevronProps {
-  hasChildren: boolean;
-  expanded: boolean;
-  onToggle: (event: React.MouseEvent<HTMLSpanElement>) => void;
-}
-
-function NodeChevron(props: NodeChevronProps) {
-  const { hasChildren, expanded, onToggle } = props;
-  if (!hasChildren) return <TreeChevronSpacer />;
-  return <TreeChevron expanded={expanded} onToggle={onToggle} />;
-}
-
 interface ArtifactNodeChildrenProps {
   visible: boolean;
   childIds: readonly string[];
@@ -1591,12 +1576,10 @@ function SidebarRowCheckbox(props: {
 }
 
 interface ArtifactRenameRowProps {
-  readonly epicId: string;
   readonly depth: number;
   readonly Icon: LucideIcon;
   readonly artifactIconColorMode: "byType" | "none";
   readonly iconStyle: { color: string | undefined } | undefined;
-  readonly artifactType: EpicNodeKind;
   readonly renameInputRef: React.RefObject<HTMLInputElement | null>;
   readonly renameValue: string;
   readonly onRenameValueChange: (value: string) => void;
@@ -1609,12 +1592,10 @@ interface ArtifactRenameRowProps {
 
 function ArtifactRenameRow(props: ArtifactRenameRowProps) {
   const {
-    epicId,
     depth,
     Icon,
     artifactIconColorMode,
     iconStyle,
-    artifactType,
     renameInputRef,
     renameValue,
     onRenameValueChange,
@@ -1637,10 +1618,7 @@ function ArtifactRenameRow(props: ArtifactRenameRowProps) {
     >
       <TreeChevronSpacer />
       <ArtifactUnreadMarker nodeId={nodeId} variant={unreadMarkerVariant} />
-      <SidebarNodeIcon
-        epicId={epicId}
-        nodeId={nodeId}
-        artifactType={artifactType}
+      <ArtifactNodeIcon
         Icon={Icon}
         artifactIconColorMode={artifactIconColorMode}
         iconStyle={iconStyle}
@@ -1754,23 +1732,18 @@ function ArtifactRowButton(props: ArtifactRowButtonProps) {
     [onToggle],
   );
 
-  const rowClassName = cn(
-    "flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-ui-sm font-normal transition-colors",
-    "focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2",
-    isDragging && "cursor-grabbing opacity-60",
-    nodePadRightClass(
+  const rowClassName = artifactRowClassName({
+    isDragging,
+    padRightClass: nodePadRightClass(
       selectionMode ? false : canEdit,
       selectionMode ? false : showAdd,
       // The artifact tree has no touch surface of its own; its controls always
       // wait for hover.
       false,
     ),
-    selectionMode && "cursor-pointer",
-    isActive
-      ? "bg-accent text-accent-foreground"
-      : "text-foreground/75 hover:bg-accent/70 hover:text-accent-foreground",
-    SIDEBAR_REVEAL_HIGHLIGHT_CLASS,
-  );
+    selectionMode,
+    isActive,
+  });
   const selectionInputId = `epic-sidebar-select-input-${nodeId}`;
 
   if (selectionMode) {
@@ -1786,35 +1759,28 @@ function ArtifactRowButton(props: ArtifactRowButtonProps) {
           paddingLeft: `${depth * INDENT_PX + BASE_PAD_LEFT}px`,
         }}
       >
-        <NodeChevron
+        <ArtifactRowView
+          nodeId={nodeId}
+          nodeName={nodeName}
           hasChildren={hasChildren}
           expanded={expanded}
           onToggle={selectionChevronToggle}
+          selection={
+            <SidebarRowCheckbox
+              inputId={selectionInputId}
+              nodeId={nodeId}
+              nodeName={nodeName}
+              isSelected={isSelected}
+              onToggleSelection={onToggleSelection}
+            />
+          }
+          Icon={Icon}
+          artifactIconColorMode={artifactIconColorMode}
+          iconStyle={iconStyle}
+          statusValue={statusValue}
+          showStatusDot={showStatusDot}
+          unreadMarkerVariant={unreadMarkerVariant}
         />
-        <SidebarRowCheckbox
-          inputId={selectionInputId}
-          nodeId={nodeId}
-          nodeName={nodeName}
-          isSelected={isSelected}
-          onToggleSelection={onToggleSelection}
-        />
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <ArtifactUnreadMarker nodeId={nodeId} variant={unreadMarkerVariant} />
-          <SidebarNodeIcon
-            epicId={epicId}
-            nodeId={nodeId}
-            artifactType={artifactType}
-            Icon={Icon}
-            artifactIconColorMode={artifactIconColorMode}
-            iconStyle={iconStyle}
-          />
-          <span className="min-w-0 flex-1 truncate">{nodeName}</span>
-          <ArtifactStatusDot
-            nodeId={nodeId}
-            statusValue={statusValue}
-            showStatusDot={showStatusDot}
-          />
-        </span>
       </label>
     );
   }
@@ -1835,124 +1801,21 @@ function ArtifactRowButton(props: ArtifactRowButtonProps) {
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
-      <NodeChevron
+      <ArtifactRowView
+        nodeId={nodeId}
+        nodeName={nodeName}
         hasChildren={hasChildren}
         expanded={expanded}
         onToggle={onToggle}
+        selection={null}
+        Icon={Icon}
+        artifactIconColorMode={artifactIconColorMode}
+        iconStyle={iconStyle}
+        statusValue={statusValue}
+        showStatusDot={showStatusDot}
+        unreadMarkerVariant={unreadMarkerVariant}
       />
-      <span className="flex min-w-0 flex-1 items-center gap-1.5">
-        <ArtifactUnreadMarker nodeId={nodeId} variant={unreadMarkerVariant} />
-        <SidebarNodeIcon
-          epicId={epicId}
-          nodeId={nodeId}
-          artifactType={artifactType}
-          Icon={Icon}
-          artifactIconColorMode={artifactIconColorMode}
-          iconStyle={iconStyle}
-        />
-        <span className="min-w-0 flex-1 truncate">{nodeName}</span>
-        <ArtifactStatusDot
-          nodeId={nodeId}
-          statusValue={statusValue}
-          showStatusDot={showStatusDot}
-        />
-      </span>
     </button>
-  );
-}
-
-interface SidebarNodeIconProps {
-  readonly epicId: string;
-  readonly nodeId: string;
-  readonly artifactType: EpicNodeKind;
-  readonly Icon: LucideIcon;
-  readonly artifactIconColorMode: "byType" | "none";
-  readonly iconStyle: { color: string | undefined } | undefined;
-}
-
-function SidebarNodeIcon(props: SidebarNodeIconProps) {
-  return (
-    <StaticSidebarNodeIcon
-      Icon={props.Icon}
-      artifactIconColorMode={props.artifactIconColorMode}
-      iconStyle={props.iconStyle}
-    />
-  );
-}
-
-function StaticSidebarNodeIcon(props: {
-  readonly Icon: LucideIcon;
-  readonly artifactIconColorMode: "byType" | "none";
-  readonly iconStyle: { color: string | undefined } | undefined;
-}) {
-  const Icon = props.Icon;
-  return (
-    <Icon
-      className={cn(
-        "size-3.5 shrink-0",
-        props.artifactIconColorMode === "none" && "text-muted-foreground/70",
-      )}
-      style={props.iconStyle}
-    />
-  );
-}
-
-function ArtifactUnreadMarker(props: {
-  readonly nodeId: string;
-  readonly variant: ArtifactUnreadMarkerVariant | null;
-}) {
-  if (props.variant === null) {
-    // Reserve the bar's footprint so the icon column stays aligned and a row
-    // never shifts horizontally as it toggles read/unread.
-    return <span aria-hidden className="h-4 w-0.5 shrink-0" />;
-  }
-  const label =
-    props.variant === "self" ? "Unread artifact" : "Contains unread artifacts";
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            aria-label={label}
-            data-testid={`epic-sidebar-unread-${props.nodeId}`}
-            data-unread-marker={props.variant}
-            className={cn(
-              "h-4 w-0.5 shrink-0 rounded-full",
-              props.variant === "self" ? "bg-info" : "bg-info/50",
-            )}
-          />
-        }
-      />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-interface ArtifactStatusDotProps {
-  readonly nodeId: string;
-  readonly statusValue: number | null;
-  readonly showStatusDot: boolean;
-}
-
-function ArtifactStatusDot(props: ArtifactStatusDotProps) {
-  const { nodeId, statusValue, showStatusDot } = props;
-  if (statusValue === null || !showStatusDot) return null;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className={cn(
-              "size-2 shrink-0 rounded-full",
-              STATUS_DOT_CLASSES[statusValue] ?? "bg-muted-foreground",
-            )}
-            data-testid={`epic-sidebar-status-dot-${nodeId}`}
-            aria-hidden
-          />
-        }
-      />
-      <TooltipContent>{STATUS_LABELS[statusValue] ?? "Unknown"}</TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -2148,6 +2011,7 @@ function ArtifactMoreMenu(props: {
   readonly entries: ReadonlyArray<SidebarRowMenuEntry>;
 }) {
   const { nodeId, nodeName, entries } = props;
+  const placement = useColumnOverlayPlacement("row");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -2167,7 +2031,11 @@ function ArtifactMoreMenu(props: {
           </Button>
         }
       />
-      <DropdownMenuContent align="end" className="w-max">
+      <DropdownMenuContent
+        side={placement?.side}
+        align={placement?.align ?? "end"}
+        className="w-max"
+      >
         <SidebarDropdownMenuItems entries={entries} />
       </DropdownMenuContent>
     </DropdownMenu>
