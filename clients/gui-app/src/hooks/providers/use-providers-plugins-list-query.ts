@@ -7,14 +7,11 @@ import { useHostClient, type HostRpcRegistry } from "@/lib/host";
 import { useHostQueryWithResponseMap } from "@/hooks/host/use-host-query";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
 import {
-  isDocumentVisible,
-  subscribeDocumentVisibility,
-} from "@/lib/dom/document-visibility";
-import {
   mapProvidersListToPlugins,
   type PluginsListData,
 } from "@/hooks/providers/native-response-map";
 import { nativePluginsListParams } from "@/lib/query-keys/providers-native-query-keys";
+import { startVisibleInterval } from "@/lib/dom/visible-interval";
 
 /** Matches this query's `staleTime`: refresh exactly when it goes stale. */
 const PLUGINS_LIST_REFRESH_MS = 30_000;
@@ -73,16 +70,13 @@ export function useProvidersPluginsList(args: {
   const enabled = args.enabled;
   useEffect(() => {
     if (!enabled || !readiness.isReady) return;
-    const refresh = (): void => {
-      if (!isDocumentVisible()) return;
-      void refetch({ cancelRefetch: false });
-    };
-    const timer = setInterval(refresh, PLUGINS_LIST_REFRESH_MS);
-    const unsubscribe = subscribeDocumentVisibility(refresh);
-    return () => {
-      clearInterval(timer);
-      unsubscribe();
-    };
+    return startVisibleInterval({
+      tick: () => {
+        void refetch({ cancelRefetch: false });
+      },
+      intervalMs: PLUGINS_LIST_REFRESH_MS,
+      fireOnShow: true,
+    });
   }, [enabled, readiness.isReady, refetch]);
 
   return query;

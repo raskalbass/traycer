@@ -8,7 +8,7 @@ import {
   type Mock,
 } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
 import { COLD_ADMISSION_SETTLE_MS } from "@/lib/registries/cold-admission";
@@ -25,6 +25,7 @@ import {
   CHAT_A,
   SPEC_A,
 } from "@/stores/epics/canvas/__tests__/canvas-test-fixtures";
+import { getProcessMemoryRuntime } from "@/stores/replica-memory/process-memory-accountant";
 
 // W3-A cold-open admission timing. Reuses the lighter override-factory seam
 // (`__setChatStreamClientFactoryForTests`) rather than
@@ -84,13 +85,15 @@ vi.mock("@/lib/host", () => ({
 }));
 
 // Never called under the override; throwing turns a regression that bypasses
-// it into a hard failure instead of a silent real dial under jsdom.
+// it into a hard failure instead of a silent real dial under jsdom. A stable
+// module-level function: the real hook's factory is referentially stable and
+// the acquisition effect depends on it, so a fresh one per render would
+// re-run that effect on every render.
+function throwIfTransportOpened(): never {
+  throw new Error("test: openTransport must not be called under the override");
+}
 vi.mock("@/lib/host/use-durable-stream-transport", () => ({
-  useDurableStreamTransportFactory: () => () => {
-    throw new Error(
-      "test: openTransport must not be called under the override",
-    );
-  },
+  useDurableStreamTransportFactory: () => throwIfTransportOpened,
 }));
 
 import { useChatSessionHandle } from "@/lib/registries/chat-session-registry";
@@ -101,10 +104,16 @@ import {
 } from "@/lib/registries/chat-session-registry";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
-function wrapper(props: { readonly children: ReactNode }): ReactNode {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
+function QueryWrapper(props: { readonly children: ReactNode }): ReactNode {
+  // Stable across this component instance's rerenders, matching the real
+  // app's provider: a fresh client every render would also destabilize
+  // `useQueryClient()`, another of the acquisition effect's dependencies.
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      }),
+  );
   return (
     <QueryClientProvider client={queryClient}>
       {props.children}
@@ -112,8 +121,12 @@ function wrapper(props: { readonly children: ReactNode }): ReactNode {
   );
 }
 
-function strictWrapper(props: { readonly children: ReactNode }): ReactNode {
-  return <StrictMode>{wrapper(props)}</StrictMode>;
+function StrictWrapper(props: { readonly children: ReactNode }): ReactNode {
+  return (
+    <StrictMode>
+      <QueryWrapper {...props} />
+    </StrictMode>
+  );
 }
 
 describe("useChatSessionHandle cold-open admission (W3-A)", () => {
@@ -156,8 +169,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
       setTabCycleRepeating(true);
       const { rerender } = renderHook(
         ({ chatId }: { chatId: string }) =>
-          useChatSessionHandle(chatId, HOST_ID, true),
-        { wrapper, initialProps: { chatId: "chat-0" } },
+          useChatSessionHandle(chatId, HOST_ID, true, "surface"),
+        { wrapper: QueryWrapper, initialProps: { chatId: "chat-0" } },
       );
 
       for (let index = 1; index <= 9; index += 1) {
@@ -190,9 +203,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
 
   it("admits immediately on a single non-repeat open", () => {
     setTabCycleRepeating(false);
-    renderHook(() => useChatSessionHandle("chat-solo", HOST_ID, true), {
-      wrapper,
-    });
+    renderHook(
+      () => useChatSessionHandle("chat-solo", HOST_ID, true, "surface"),
+      {
+        wrapper: QueryWrapper,
+      },
+    );
 
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
     expect(streamFactorySpy).toHaveBeenCalledWith(
@@ -206,8 +222,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     setTabCycleRepeating(true);
     const { rerender } = renderHook(
       ({ chatId }: { chatId: string }) =>
-        useChatSessionHandle(chatId, HOST_ID, true),
-      { wrapper, initialProps: { chatId: "chat-a" } },
+        useChatSessionHandle(chatId, HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper, initialProps: { chatId: "chat-a" } },
     );
 
     act(() => {
@@ -232,8 +248,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
   it("reacquires a warm, already-presented chat on keyup after a repeat-time remount, without advancing the settle timer or rebuilding its transport", () => {
     setTabCycleRepeating(false);
     const first = renderHook(
-      () => useChatSessionHandle("chat-warm", HOST_ID, true),
-      { wrapper },
+      () => useChatSessionHandle("chat-warm", HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper },
     );
     expect(first.result.current).not.toBeNull();
     const handle = first.result.current;
@@ -252,8 +268,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     // not exempted by someone else's warmth.
     setTabCycleRepeating(true);
     const second = renderHook(
-      () => useChatSessionHandle("chat-warm", HOST_ID, true),
-      { wrapper },
+      () => useChatSessionHandle("chat-warm", HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper },
     );
     expect(second.result.current).toBeNull();
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
@@ -271,8 +287,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     setTabCycleRepeating(false);
     const { result, rerender } = renderHook(
       ({ chatId }: { chatId: string }) =>
-        useChatSessionHandle(chatId, HOST_ID, true),
-      { wrapper, initialProps: { chatId: "chat-x" } },
+        useChatSessionHandle(chatId, HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper, initialProps: { chatId: "chat-x" } },
     );
     expect(result.current).not.toBeNull();
     const handleX = result.current;
@@ -298,8 +314,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     try {
       setTabCycleRepeating(true);
       const { rerender } = renderHook(
-        () => useChatSessionHandle("chat-hidden", HOST_ID, true),
-        { wrapper },
+        () => useChatSessionHandle("chat-hidden", HOST_ID, true, "surface"),
+        { wrapper: QueryWrapper },
       );
 
       act(() => {
@@ -322,8 +338,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
   it("under StrictMode double-invoked effects, acquires exactly once", async () => {
     setTabCycleRepeating(false);
     const { result } = renderHook(
-      () => useChatSessionHandle("chat-strict", HOST_ID, true),
-      { wrapper: strictWrapper },
+      () => useChatSessionHandle("chat-strict", HOST_ID, true, "surface"),
+      { wrapper: StrictWrapper },
     );
 
     // The queued microtask decrement lets the surviving setup pass join.
@@ -335,13 +351,55 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     expect(result.current).not.toBeNull();
   });
 
+  it("a startup prewarm and a tile mounting the same chat/host key open exactly one stream, one registry entry, and one byte-accounting entry", () => {
+    // `registry.acquire`'s scope-key dedup must hold ACROSS demand kinds, not
+    // just between two "surface" mounts (already covered in
+    // chat-session-registry.test.tsx).
+    setTabCycleRepeating(false);
+    const chatWindows = getProcessMemoryRuntime().chatWindows;
+    const sessionCountBefore = chatWindows.sessionCount();
+    const startup = renderHook(
+      () =>
+        useChatSessionHandle("chat-startup-and-tile", HOST_ID, true, "startup"),
+      { wrapper: QueryWrapper },
+    );
+    expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+    const startupHandle = startup.result.current;
+    if (startupHandle === null) throw new Error("expected a handle");
+
+    const tile = renderHook(
+      () =>
+        useChatSessionHandle("chat-startup-and-tile", HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper },
+    );
+
+    // One stream, one registry entry, one new chatWindows accounting entry.
+    expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+    expect(tile.result.current).toBe(startupHandle);
+    expect(__getChatSessionRegistryForTests().size()).toBe(1);
+    expect(
+      __getChatSessionRegistryForTests().peek(
+        EPIC_ID,
+        "chat-startup-and-tile",
+        HOST_ID,
+      ),
+    ).toBe(startupHandle);
+    expect(chatWindows.sessionCount() - sessionCountBefore).toBe(1);
+  });
+
   it("earns presented status after 150ms continuously visible with a loaded snapshot, with no manual markPresented", () => {
     vi.useFakeTimers();
     try {
       setTabCycleRepeating(false);
       const { result } = renderHook(
-        () => useChatSessionHandle("chat-earns-presented", HOST_ID, true),
-        { wrapper },
+        () =>
+          useChatSessionHandle(
+            "chat-earns-presented",
+            HOST_ID,
+            true,
+            "surface",
+          ),
+        { wrapper: QueryWrapper },
       );
       const handle = result.current;
       if (handle === null) throw new Error("expected a handle");
@@ -372,8 +430,9 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         visibility.paneVisible = true;
         visibility.tabSelected = false; // retained sibling, not the pane's front tab
         const { result } = renderHook(
-          () => useChatSessionHandle("chat-hidden-cold", HOST_ID, true),
-          { wrapper },
+          () =>
+            useChatSessionHandle("chat-hidden-cold", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
 
         expect(result.current).toBeNull();
@@ -410,8 +469,9 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         visibility.paneVisible = true;
         visibility.tabSelected = true;
         const foreground = renderHook(
-          () => useChatSessionHandle("chat-foreground", HOST_ID, true),
-          { wrapper },
+          () =>
+            useChatSessionHandle("chat-foreground", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
         expect(streamFactorySpy).toHaveBeenCalledWith(
@@ -424,9 +484,10 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         // A retained sibling in the same, visible pane - merely queued.
         visibility.tabSelected = false;
         renderHook(
-          () => useChatSessionHandle("chat-neighbour", HOST_ID, true),
+          () =>
+            useChatSessionHandle("chat-neighbour", HOST_ID, true, "surface"),
           {
-            wrapper,
+            wrapper: QueryWrapper,
           },
         );
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
@@ -451,9 +512,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         setTabCycleRepeating(false);
         visibility.paneVisible = true;
         visibility.tabSelected = false;
-        renderHook(() => useChatSessionHandle("chat-repeat-a", HOST_ID, true), {
-          wrapper,
-        });
+        renderHook(
+          () => useChatSessionHandle("chat-repeat-a", HOST_ID, true, "surface"),
+          {
+            wrapper: QueryWrapper,
+          },
+        );
 
         // A repeat starting mid-settle cancels the pending timer synchronously.
         act(() => {
@@ -468,9 +532,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         expect(streamFactorySpy).not.toHaveBeenCalled();
 
         // A second retained body queues while still repeating - no timer starts.
-        renderHook(() => useChatSessionHandle("chat-repeat-b", HOST_ID, true), {
-          wrapper,
-        });
+        renderHook(
+          () => useChatSessionHandle("chat-repeat-b", HOST_ID, true, "surface"),
+          {
+            wrapper: QueryWrapper,
+          },
+        );
         act(() => {
           vi.advanceTimersByTime(500);
         });
@@ -504,23 +571,26 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         visibility.paneVisible = false;
         visibility.tabSelected = true;
         renderHook(
-          () => useChatSessionHandle("chat-other-pane", HOST_ID, true),
-          { wrapper },
+          () =>
+            useChatSessionHandle("chat-other-pane", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
 
         // Same-pane retained siblings, queued after.
         visibility.paneVisible = true;
         visibility.tabSelected = false;
         renderHook(
-          () => useChatSessionHandle("chat-sibling-1", HOST_ID, true),
+          () =>
+            useChatSessionHandle("chat-sibling-1", HOST_ID, true, "surface"),
           {
-            wrapper,
+            wrapper: QueryWrapper,
           },
         );
         renderHook(
-          () => useChatSessionHandle("chat-sibling-2", HOST_ID, true),
+          () =>
+            useChatSessionHandle("chat-sibling-2", HOST_ID, true, "surface"),
           {
-            wrapper,
+            wrapper: QueryWrapper,
           },
         );
 
@@ -569,8 +639,9 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         visibility.paneVisible = true;
         visibility.tabSelected = false;
         const hidden = renderHook(
-          () => useChatSessionHandle("chat-cancel-me", HOST_ID, true),
-          { wrapper },
+          () =>
+            useChatSessionHandle("chat-cancel-me", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
 
         act(() => {
@@ -600,8 +671,9 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         visibility.paneVisible = true;
         visibility.tabSelected = false;
         renderHook(
-          () => useChatSessionHandle("chat-logout-race", HOST_ID, true),
-          { wrapper },
+          () =>
+            useChatSessionHandle("chat-logout-race", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
 
         act(() => {
@@ -633,8 +705,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         visibility.paneVisible = true;
         visibility.tabSelected = false;
         const { result, rerender } = renderHook(
-          () => useChatSessionHandle("chat-reuse", HOST_ID, true),
-          { wrapper },
+          () => useChatSessionHandle("chat-reuse", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
 
         act(() => {
@@ -671,6 +743,74 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
 
         expect(result.current).toBe(prewarmedHandle);
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("clears a hidden neighbour's retained handle when the registry evicts it under byte pressure, and only requeues on the next repeat-settle edge, not immediately", () => {
+      vi.useFakeTimers();
+      try {
+        visibility.paneVisible = true;
+        visibility.tabSelected = false;
+        const { result, rerender } = renderHook(
+          () =>
+            useChatSessionHandle(
+              "chat-neighbour-evict",
+              HOST_ID,
+              true,
+              "surface",
+            ),
+          { wrapper: QueryWrapper },
+        );
+
+        act(() => {
+          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+        });
+        expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+        const prewarmedHandle = result.current;
+        if (prewarmedHandle === null) throw new Error("expected a handle");
+
+        // Hidden acquires are marked presented and released immediately, so
+        // this is a lease-free warm entry - evictable like any other.
+        const registry = __getChatSessionRegistryForTests();
+        expect(registry.isTransient(prewarmedHandle)).toBe(false);
+
+        act(() => {
+          expect(registry.evictOldestEligibleForByteBudget()).toBe(true);
+        });
+        expect(
+          registry.peek(EPIC_ID, "chat-neighbour-evict", HOST_ID),
+        ).toBeNull();
+        expect(result.current).toBeNull();
+
+        // Not immediate: nothing re-queues until an effect dependency changes.
+        act(() => {
+          vi.advanceTimersByTime(5_000);
+        });
+        expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+
+        // A repeat-settle edge re-runs the effect and requeues it.
+        act(() => {
+          setTabCycleRepeating(true);
+          rerender();
+        });
+        act(() => {
+          setTabCycleRepeating(false);
+          rerender();
+        });
+        expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+        });
+        expect(streamFactorySpy).toHaveBeenCalledTimes(2);
+        expect(streamFactorySpy).toHaveBeenLastCalledWith(
+          EPIC_ID,
+          "chat-neighbour-evict",
+          expect.anything(),
+        );
+        expect(result.current).not.toBeNull();
       } finally {
         vi.useRealTimers();
       }
@@ -889,8 +1029,9 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         visibility.paneVisible = true;
         visibility.tabSelected = true;
         const visibleMount = renderHook(
-          () => useChatSessionHandle("chat-warm-remount", HOST_ID, true),
-          { wrapper },
+          () =>
+            useChatSessionHandle("chat-warm-remount", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
         const warmHandle = visibleMount.result.current;
@@ -924,8 +1065,9 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         // window, even though it needs no second transport.
         visibility.tabSelected = false;
         const hiddenMount = renderHook(
-          () => useChatSessionHandle("chat-warm-remount", HOST_ID, true),
-          { wrapper },
+          () =>
+            useChatSessionHandle("chat-warm-remount", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
         );
         expect(hiddenMount.result.current).toBeNull();
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);

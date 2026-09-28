@@ -402,6 +402,10 @@ export function KeybindingProvider(props: KeybindingProviderProps) {
       return true;
     };
 
+    const spendModifiedHintSession = (event: KeyboardEvent): void => {
+      if (hasLeaderModifier(event)) spendHintSession();
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (allLeaderModifiersReleased(event)) {
         resetHintSession();
@@ -415,18 +419,23 @@ export function KeybindingProvider(props: KeybindingProviderProps) {
       const cleanModifier = cleanLeaderModifierFromEvent(event);
       if (isBareModifierEvent(event)) {
         if (cleanModifier === null) {
-          if (hasLeaderModifier(event)) spendHintSession();
+          spendModifiedHintSession(event);
           return;
         }
         transitionLeaderSession(cleanModifier);
         return;
       }
 
-      if (hasLeaderModifier(event)) spendHintSession();
+      spendModifiedHintSession(event);
       if (event.defaultPrevented) {
         resetTabCycle(adapter);
         return;
       }
+      // AltGr is Ctrl+Alt to the event on Windows and Linux, and it types a
+      // character (AltGr+N is ń on a Polish layout, AltGr+2 is @ on a German
+      // one). The key is the text's, so no chord or digit action sees it,
+      // whatever the binding - a user's rebind included.
+      if (event.getModifierState("AltGraph")) return;
       // A Diffs editor boundary claims bare typing plus its native history
       // commands. Other modified chords (⌘1, a reserved shortcut, ...) still
       // resolve as app actions below. Undo/redo are different: Diffs owns a

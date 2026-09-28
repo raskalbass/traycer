@@ -58,7 +58,10 @@ import {
 } from "@/components/epic-canvas/surface-host/hosted-tile-dom";
 import { evictChatTabPersistenceForEpic } from "@/stores/chats/chat-tab-persistence-eviction";
 import { getOrCreateActivityGroupOpenStore } from "@/stores/chats/activity-group-open-store-core";
-import type { ActivityGroupOpenState } from "@/stores/chats/activity-group-open-store-context";
+import type {
+  ActivityGroupOpenChoices,
+  ActivityGroupOpenState,
+} from "@/stores/chats/activity-group-open-store-context";
 import { getOrCreateA2AOpenStore } from "@/stores/chats/a2a-open-store-context";
 import { useToolOpenStore } from "@/stores/chats/tool-open-store";
 import { useSubagentOpenStore } from "@/stores/chats/subagent-open-store";
@@ -67,6 +70,10 @@ import { deriveActivityGroupRenderId } from "@/components/chat/chat-collapsible-
 import { getDefaultBindings } from "@/lib/keybindings/actions";
 import { useKeybindingStore } from "@/stores/settings/keybinding-store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
+import {
+  DEFAULT_LAYOUT_SNAPSHOT,
+  useLayoutStore,
+} from "@/stores/layout/layout-store";
 import type { ChatMessage as ChatMessageModel } from "@/stores/composer/chat-store";
 import type { InterviewSegment } from "@/stores/composer/chat-store";
 import type { TileFindAdapter } from "@/stores/tile-find";
@@ -91,6 +98,10 @@ const LEGEND_LIST_HEADER_PX = 40;
 const DEFAULT_COMPOSER_OVERLAY_HEIGHT_PX = 80;
 
 function noOpOnVisibleOrdinalRangeChange(_range: OrdinalRange | null): void {
+  return undefined;
+}
+
+function noOpOnFindReadOrdinalChange(_ordinal: number | null): void {
   return undefined;
 }
 
@@ -257,10 +268,10 @@ vi.mock(
     return {
       ...actual,
       createActivityGroupOpenStore: (
-        initialOpenIds: ReadonlySet<string> | null,
+        initialChoices: ActivityGroupOpenChoices | null,
       ) =>
         wrapWithSetOpenTracking(
-          actual.createActivityGroupOpenStore(initialOpenIds),
+          actual.createActivityGroupOpenStore(initialChoices),
         ),
       getOrCreateActivityGroupOpenStore: (
         identity: ChatTabPersistenceIdentity,
@@ -982,6 +993,7 @@ function renderChatMessages(options: RenderChatMessagesOptions) {
           composerOverlayHeight={state.composerOverlayHeight}
           transcriptWindow={state.transcriptWindow}
           onVisibleOrdinalRangeChange={state.onVisibleOrdinalRangeChange}
+          onFindReadOrdinalChange={noOpOnFindReadOrdinalChange}
           coldRewrittenMessageIds={state.coldRewrittenMessageIds}
         />
       </div>
@@ -1072,9 +1084,9 @@ describe("ChatMessages scroll policy", () => {
     installLegendListViewportMetrics();
     vi.useRealTimers();
     useSettingsStore.setState({
-      chatTurnMinimapSide: "right",
       quoteReplyEnabled: false,
     });
+    useLayoutStore.setState({ ...DEFAULT_LAYOUT_SNAPSHOT });
     useKeybindingStore.setState({ bindings: getDefaultBindings() });
   });
 
@@ -1086,7 +1098,7 @@ describe("ChatMessages scroll policy", () => {
     tileLiveness.live = false;
     useKeybindingStore.setState({ bindings: getDefaultBindings() });
     setLegendListScrollContainerScrollHeightOverride(null);
-    useSettingsStore.setState({ chatTurnMinimapSide: "right" });
+    useLayoutStore.setState({ ...DEFAULT_LAYOUT_SNAPSHOT });
     // Ticket 15: dual-key durable entries survive tab-key cleanup - clear the
     // harness default epic so later tests' freshOpen paths see a true empty
     // chat-key cache rather than a leftover following-end/free-scrolling seed.
@@ -2695,7 +2707,7 @@ describe("ChatMessages scroll policy", () => {
       expect(screen.getByTestId("chat-turn-minimap-card")).toBeTruthy();
     });
     it("does not mount the minimap when its placement is hidden", async () => {
-      useSettingsStore.setState({ chatTurnMinimapSide: "hide" });
+      useLayoutStore.getState().setRegionValues("minimap", { shown: "hidden" });
       renderChatMessages({
         messages: makeTranscript(20),
         scrollStateKey: "hidden-minimap",
@@ -4684,6 +4696,7 @@ describe("ChatMessages scroll policy", () => {
             composerOverlayHeight={80}
             transcriptWindow={null}
             onVisibleOrdinalRangeChange={noOpOnVisibleOrdinalRangeChange}
+            onFindReadOrdinalChange={noOpOnFindReadOrdinalChange}
             coldRewrittenMessageIds={new Set()}
           />
         </Parent>
@@ -7782,6 +7795,7 @@ describe("ChatMessages scroll policy", () => {
               composerOverlayHeight={composerOverlayHeight}
               transcriptWindow={null}
               onVisibleOrdinalRangeChange={noOpOnVisibleOrdinalRangeChange}
+              onFindReadOrdinalChange={noOpOnFindReadOrdinalChange}
               coldRewrittenMessageIds={new Set()}
             />
             <div ref={setElement} data-testid="measured-dock" />

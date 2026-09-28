@@ -260,6 +260,56 @@ describe("ChatSessionRegistry transient retention", () => {
     expect(registry.peek("epic-1", "chat-presented", HOST)).toBeNull();
   });
 
+  it("protects a transient handle mid checkpoint-restore from byte-budget eviction that chatCapHasActiveWork alone would miss", () => {
+    // `evictOldestEligibleForByteBudget` has no prior direct coverage; the
+    // hold here is `hasUnsettledChatWork` (restore.kind "in-flight"), the
+    // same predicate the eligibility filter itself reads.
+    const registry = new ChatSessionRegistry({
+      idleTtlMs: TTL_MS,
+      maxWarmSessions: WARM_CAP,
+    });
+    const restoring = createHandle("epic-1", "chat-restoring-budget");
+    const acquiredRestoring = registry.acquire(
+      {
+        epicId: "epic-1",
+        chatId: "chat-restoring-budget",
+        hostId: HOST,
+        scopeKey: SCOPE,
+      },
+      () => restoring.handle,
+    );
+    registry.markTransient(acquiredRestoring);
+    markRestoring(acquiredRestoring);
+
+    // Still held (not yet released): the visible-transit shape a mounted
+    // `useChatSessionHandle` produces mid cold-admission. Nothing else is
+    // acquired yet, so there is no eligible candidate at all.
+    expect(registry.evictOldestEligibleForByteBudget()).toBe(false);
+    expect(restoring.closeCount()).toBe(0);
+
+    const presented = createHandle("epic-1", "chat-presented-budget");
+    registry.acquire(
+      {
+        epicId: "epic-1",
+        chatId: "chat-presented-budget",
+        hostId: HOST,
+        scopeKey: SCOPE,
+      },
+      () => presented.handle,
+    );
+
+    registry.release("epic-1", "chat-restoring-budget", HOST);
+    registry.release("epic-1", "chat-presented-budget", HOST);
+
+    expect(registry.evictOldestEligibleForByteBudget()).toBe(true);
+    expect(restoring.closeCount()).toBe(0);
+    expect(registry.peek("epic-1", "chat-restoring-budget", HOST)).toBe(
+      acquiredRestoring,
+    );
+    expect(presented.closeCount()).toBe(1);
+    expect(registry.peek("epic-1", "chat-presented-budget", HOST)).toBeNull();
+  });
+
   // A freshly cold-acquired transient handle has not loaded its own snapshot
   // yet, so `access` is `null` - not "viewer", not "owner", genuinely
   // unresolved. `hasActiveChatWork`'s host-activity-plane fallback currently

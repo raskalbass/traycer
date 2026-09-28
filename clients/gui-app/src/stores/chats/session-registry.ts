@@ -174,7 +174,7 @@ export class ChatSessionRegistry {
           !this.transientHandles.has(handle) ||
           this.hasUnclassifiedTransientTurn(handle) ||
           hasUnsettledChatWork(handle) ||
-          hasActiveChatWork(handle, this.hostIdByHandle.get(handle) ?? null),
+          chatCapHasActiveWork(handle, this.hostIdByHandle.get(handle) ?? null),
         hasActiveWork: (handle) =>
           chatCapHasActiveWork(
             handle,
@@ -322,6 +322,11 @@ export class ChatSessionRegistry {
     return this.sessions.subscribe(listener);
   }
 
+  /** The host bound to this handle from its acquisition onward. */
+  hostIdForHandle(handle: ChatSessionStoreHandle): string | null {
+    return this.hostIdByHandle.get(handle) ?? null;
+  }
+
   acquire(
     target: ChatSessionTarget,
     factory: (epicId: string, chatId: string) => ChatSessionStoreHandle,
@@ -365,6 +370,22 @@ export class ChatSessionRegistry {
 
   forceRelease(epicId: string, chatId: string, hostId: string): void {
     this.sessions.forceRelease(chatSessionKey(epicId, chatId, hostId));
+  }
+
+  /** Byte pressure uses the same active-work hold as the count cap. */
+  evictOldestEligibleForByteBudget(): boolean {
+    return this.sessions.evictOldestEligible(
+      (entry) =>
+        !chatCapHasActiveWork(
+          entry.session,
+          this.hostIdByHandle.get(entry.session) ?? null,
+        ) &&
+        !this.hasUnclassifiedTransientTurn(entry.session) &&
+        !(
+          this.transientHandles.has(entry.session) &&
+          hasUnsettledChatWork(entry.session)
+        ),
+    );
   }
 
   /**

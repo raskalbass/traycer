@@ -19,12 +19,12 @@
  * tile today, so that choice stays one place.
  */
 import { useSyncExternalStore } from "react";
+import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
+import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 import {
   isDocumentVisible,
   subscribeDocumentVisibility,
 } from "@/lib/dom/document-visibility";
-import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
-import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 
 export interface OfficeEligibilityInput {
   /** The canvas element's own intersection state, from its observer. */

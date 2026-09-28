@@ -20,7 +20,7 @@ import {
   resolveMinimapWindow,
 } from "@/components/minimap/minimap-track-geometry";
 import { cn } from "@/lib/utils";
-import type { MinimapPlacement } from "@/stores/settings/settings-store";
+import type { EdgeSide } from "@/lib/layout/layout-arrangement";
 import { useArtifactHeadingMetrics } from "./use-artifact-heading-metrics";
 
 const ARTIFACT_HEADING_TRACK_MAX_HEIGHT_CSS = "max(1px, calc(100cqh - 2rem))";
@@ -29,8 +29,9 @@ export interface ArtifactHeadingMinimapProps {
   readonly editor: Editor;
   readonly scroller: HTMLElement | null;
   readonly refreshRef: RefObject<() => void>;
-  /** `hide` keeps the outline published for the tile bar, rail and all. */
-  readonly side: MinimapPlacement;
+  /** False keeps the outline published for the tile bar, rail and all. */
+  readonly shown: boolean;
+  readonly side: EdgeSide;
 }
 
 function clampIndex(index: number, itemCount: number): number {
@@ -39,20 +40,20 @@ function clampIndex(index: number, itemCount: number): number {
 
 /** A document outline with the same open, select, and keyboard model as chat. */
 export function ArtifactHeadingMinimap(props: ArtifactHeadingMinimapProps) {
-  const { editor, refreshRef, scroller, side } = props;
+  const { editor, refreshRef, scroller, shown, side } = props;
   const {
     outline,
     activeIndex,
     hitStripWidth,
     maxVisibleItems,
     scrollToIndex,
-  } = useArtifactHeadingMetrics({ editor, refreshRef, scroller, side });
+  } = useArtifactHeadingMetrics({ editor, refreshRef, scroller, side, shown });
   const [open, setOpen] = useState(false);
   const [cursorIndex, setCursorIndex] = useState(0);
   const regionRef = useRef<HTMLDivElement | null>(null);
   const hitStripRef = useRef<HTMLButtonElement | null>(null);
   const visible = outline.length > 0;
-  const railHidden = side === "hide";
+  const railHidden = !shown;
   const isInert = hitStripWidth <= 0;
   const currentIndex = clampIndex(activeIndex ?? 0, outline.length);
   const resolvedCursorIndex = clampIndex(cursorIndex, outline.length);

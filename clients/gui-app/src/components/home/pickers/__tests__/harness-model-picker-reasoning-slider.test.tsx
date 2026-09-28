@@ -8,9 +8,10 @@ import {
 import type { ReasoningLevelOption } from "@/components/home/data/landing-options";
 import { stubSliderGeometry } from "@/components/home/pickers/__tests__/slider-pointer-geometry";
 import {
-  DEFAULT_COMPOSER_LAYOUT,
+  DEFAULT_LAYOUT_SNAPSHOT,
   useLayoutStore,
-} from "@/stores/settings/layout-store";
+} from "@/stores/layout/layout-store";
+import { PRESET_VALUES } from "@/lib/layout/layout-presets";
 import {
   LeaderHeldContext,
   type LeaderState,
@@ -109,16 +110,16 @@ function stops(): ReadonlyArray<HTMLElement> {
 
 describe("<HarnessModelPickerModelSettingsFooter /> reasoning slider", () => {
   beforeEach(() => {
-    useLayoutStore.setState({ composer: DEFAULT_COMPOSER_LAYOUT });
+    useLayoutStore.setState({ ...DEFAULT_LAYOUT_SNAPSHOT });
   });
 
   afterEach(() => {
     cleanup();
-    useLayoutStore.setState({ composer: DEFAULT_COMPOSER_LAYOUT });
+    useLayoutStore.setState({ ...DEFAULT_LAYOUT_SNAPSHOT });
   });
 
   it("is what the footer draws with no setting touched", () => {
-    expect(DEFAULT_COMPOSER_LAYOUT.reasoningFooterControl).toBe("slider");
+    expect(PRESET_VALUES.default.model.reasoningControl).toBe("slider");
 
     renderFooter(reasoningConfig("high", FOUR_OPTIONS, vi.fn()));
 
@@ -319,12 +320,9 @@ describe("<HarnessModelPickerModelSettingsFooter /> reasoning slider", () => {
     });
 
     it("leaves the list control without a label at all", () => {
-      useLayoutStore.setState({
-        composer: {
-          ...DEFAULT_COMPOSER_LAYOUT,
-          reasoningFooterControl: "list",
-        },
-      });
+      useLayoutStore
+        .getState()
+        .setRegionValues("model", { reasoningControl: "list" });
 
       renderFooter(reasoningConfig("high", FOUR_OPTIONS, vi.fn()));
 
@@ -517,9 +515,9 @@ describe("<HarnessModelPickerModelSettingsFooter /> reasoning slider", () => {
   });
 
   it("renders the list, and no slider, under the `list` setting", () => {
-    useLayoutStore.setState({
-      composer: { ...DEFAULT_COMPOSER_LAYOUT, reasoningFooterControl: "list" },
-    });
+    useLayoutStore
+      .getState()
+      .setRegionValues("model", { reasoningControl: "list" });
 
     renderFooter(reasoningConfig("high", FOUR_OPTIONS, vi.fn()));
 

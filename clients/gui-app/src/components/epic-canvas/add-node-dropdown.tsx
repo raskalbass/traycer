@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { useColumnOverlayPlacement } from "@/components/layout/column-edge-context";
 import {
   useCallback,
   useEffect,
@@ -122,6 +123,11 @@ export interface AddArtifactDropdownProps {
  * sidebar header "+", per-row inline "+", and other add-node entry points.
  */
 export function AddNodeDropdown(props: AddArtifactDropdownProps) {
+  const placement =
+    useColumnOverlayPlacement("row") ??
+    (props.menuPlacement === "header"
+      ? ({ side: "right", align: "start" } as const)
+      : ({ side: "bottom", align: "end" } as const));
   const {
     children,
     open,
@@ -184,8 +190,8 @@ export function AddNodeDropdown(props: AddArtifactDropdownProps) {
 
   const content = (
     <DropdownMenuContent
-      side={menuPlacement === "header" ? "right" : "bottom"}
-      align={menuPlacement === "header" ? "start" : "end"}
+      side={placement.side}
+      align={placement.align}
       sideOffset={menuPlacement === "header" ? 8 : 4}
       avoidCollisions={menuPlacement !== "header"}
       className="w-[min(90vw,11rem)]"

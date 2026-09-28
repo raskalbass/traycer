@@ -1,7 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { useCoarsePointer } from "@/hooks/ui/use-coarse-pointer";
-import type { MinimapPlacement } from "@/stores/settings/settings-store";
+import type { EdgeSide } from "@/lib/layout/layout-arrangement";
 import { resolveMinimapVisibleItemCapacity } from "@/components/minimap/minimap-track-geometry";
 import {
   useCallback,
@@ -61,13 +61,15 @@ export function useArtifactHeadingMetrics(input: {
   readonly scroller: HTMLElement | null;
   /** Invoked by the tile's own scroll handler - no second scroll listener. */
   readonly refreshRef: RefObject<() => void>;
+  /** Which gutter to measure. */
+  readonly side: EdgeSide;
   /** Hidden rails keep only the picker outline current. */
-  readonly side: MinimapPlacement;
+  readonly shown: boolean;
 }): ArtifactHeadingMetrics {
-  const { editor, refreshRef, scroller, side } = input;
+  const { editor, refreshRef, scroller, side, shown } = input;
   const visible = useTileBodyVisible();
   const coarsePointer = useCoarsePointer();
-  const measureRail = visible && side !== "hide" && !coarsePointer;
+  const measureRail = visible && shown && !coarsePointer;
   const dirtyRef = useRef(false);
   const [outline, setOutline] = useState<
     ReadonlyArray<ArtifactHeadingOutlineEntry>

@@ -20,26 +20,13 @@ import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-co
 import { useOfficeEligibility } from "@/components/epic-canvas/comm-graph/office/use-office-eligibility";
 import {
   __resetDocumentVisibilitySubscribersForTests,
+  __setBrowserDocumentHiddenForTests,
   setDesktopWindowOnScreen,
 } from "@/lib/dom/document-visibility";
 
-/**
- * The hook's shared `isDocumentVisible()` reads `document.visibilityState`,
- * not `document.hidden` - a real browser keeps the two in lockstep, but a
- * jsdom test only gets that for free if it stubs the property the production
- * code actually reads.
- */
-function setDocumentHidden(hidden: boolean): void {
-  Object.defineProperty(document, "visibilityState", {
-    configurable: true,
-    get: () => (hidden ? "hidden" : "visible"),
-  });
-  document.dispatchEvent(new Event("visibilitychange"));
-}
-
 afterEach(() => {
   cleanup();
-  setDocumentHidden(false);
+  __setBrowserDocumentHiddenForTests(false);
   __resetDocumentVisibilitySubscribersForTests();
 });
 
@@ -104,18 +91,18 @@ describe("useOfficeEligibility", () => {
   });
 
   it("is ineligible while the document itself is hidden", () => {
-    setDocumentHidden(true);
+    __setBrowserDocumentHiddenForTests(true);
     const result = renderProbe({ intersecting: true });
     expect(eligibleText(result)).toBe("false");
   });
 
   it("becomes eligible when visibilitychange reports the document visible again", () => {
-    setDocumentHidden(true);
+    __setBrowserDocumentHiddenForTests(true);
     const result = renderProbe({ intersecting: true });
     expect(eligibleText(result)).toBe("false");
 
     act(() => {
-      setDocumentHidden(false);
+      __setBrowserDocumentHiddenForTests(false);
     });
 
     expect(eligibleText(result)).toBe("true");

@@ -1,4 +1,5 @@
 import { setTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
+import { cssEscape } from "@/lib/dom/css-escape";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { requestPaneOpenerFocus } from "@/lib/canvas/focus-pane-opener";
 import { reopenClosedTab } from "@/lib/tab-recovery/reopen";
@@ -14,6 +15,7 @@ import { openActiveTileFindWithReplace } from "@/lib/commands/tile-find";
 import { toggleActiveModelPicker } from "@/lib/commands/active-model-picker-registry";
 import { openActiveDraftsControl } from "@/lib/commands/active-drafts-control-registry";
 import { focusActiveComposer } from "@/lib/composer/composer-focus-registry";
+import { closeLayoutEditorForCloseTabChord } from "@/lib/layout/editor-session";
 import { tabResolveIntent } from "@/stores/tabs/registry";
 import { tabRefKey } from "@/stores/tabs/layout";
 import {
@@ -21,7 +23,7 @@ import {
   selectHostRouteBackingRef,
 } from "@/stores/tabs/selectors";
 import { useTabsStore } from "@/stores/tabs/store";
-import { isHomeTabEnabled } from "@/stores/settings/settings-store";
+import { isHomeTabEnabled } from "@/stores/layout/layout-store";
 import type { TabActivationIntent } from "@/lib/tab-navigation/intents";
 import type {
   NavigateNestedFocus,
@@ -460,6 +462,11 @@ export function dispatchKeydownAction(
   router: KeybindingRouter,
   repeat: boolean,
 ): boolean {
+  if (
+    (id === "tab.close" || id === "epic.close") &&
+    closeLayoutEditorForCloseTabChord()
+  )
+    return true;
   const dynamic = dynamicHandlerRegistry.get(id);
   if (dynamic !== undefined) {
     resetTabCycle(router);
@@ -510,6 +517,11 @@ const REPEAT_SENSITIVE_ACTIONS: ReadonlySet<ActionId> = new Set([
   // Unbound by default, so only a user-chosen chord can be held - and holding
   // it would walk the status bar between header and footer once per repeat.
   "app.status-bar.toggle",
+  // Unbound by default too; a held chord would flip the tabs between the top
+  // and the side once per repeat.
+  "app.tabs.vertical.toggle",
+  // A held chord would walk the strip between the rail and expanded.
+  "app.tabs.vertical.collapse",
 ]);
 
 export function isRepeatSensitiveAction(id: ActionId): boolean {
@@ -1028,14 +1040,7 @@ function focusActiveGroupEditor(router: KeybindingRouter): boolean {
 }
 
 function groupIdSelector(groupId: string): string {
-  return `[data-group-id="${escapeAttributeSelectorValue(groupId)}"]`;
-}
-
-function escapeAttributeSelectorValue(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `[data-group-id="${cssEscape(groupId)}"]`;
 }
 
 export function isKeybindingDialogOpen(target: EventTarget | null): boolean {

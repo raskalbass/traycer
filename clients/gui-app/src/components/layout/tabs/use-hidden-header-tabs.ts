@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import type { TaskTabLayout } from "@/stores/settings/settings-store";
+import type { TaskTabLayout } from "@/lib/layout/layout-arrangement";
+import { HORIZONTAL_STRIP_AXIS } from "@/components/epic-canvas/dnd/strip-axis";
 import { readHeaderStripLayoutRect } from "./header-strip-geometry";
 
 const TAB_SELECTOR = "[data-header-tab-key]";
@@ -48,11 +49,11 @@ export function useHiddenHeaderTabs(layout: TaskTabLayout) {
       bounds.clear();
       for (const tab of element.querySelectorAll<HTMLElement>(TAB_SELECTOR)) {
         const key = tab.dataset.headerTabKey;
-        const rect = readHeaderStripLayoutRect(tab);
-        if (key === undefined || rect.width <= 0) continue;
+        const rect = readHeaderStripLayoutRect(tab, HORIZONTAL_STRIP_AXIS);
+        if (key === undefined || rect.extent <= 0) continue;
         bounds.set(key, {
-          left: rect.left - viewportLeft + scrollLeft,
-          right: rect.right - viewportLeft + scrollLeft,
+          left: rect.start - viewportLeft + scrollLeft,
+          right: rect.end - viewportLeft + scrollLeft,
         });
       }
       geometryDirty = false;

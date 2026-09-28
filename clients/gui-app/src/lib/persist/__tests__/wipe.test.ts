@@ -316,6 +316,10 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
     "traycer-gui-app:window-7:landing-images",
     "traycer-gui-app:default:file-edit-recovery",
     "traycer-gui-app:window-7:file-edit-recovery",
+    "traycer-gui-app:anon:transcript-images",
+    "traycer-gui-app:user-1:transcript-images",
+    "traycer-gui-app:anon:transcript-image-meta",
+    "traycer-gui-app:user-1:transcript-image-meta",
     "traycer-gui-app:some-other-store",
     "unrelated-app-db",
   ];
@@ -344,7 +348,7 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
     return { deleted };
   }
 
-  it("deletes only known renderer dbs (landing-image, file-edit-recovery, legacy stash, tab-recovery); same-prefix + unrelated dbs survive", async () => {
+  it("deletes only known renderer dbs (landing-image, file-edit-recovery, transcript-images, legacy stash, tab-recovery); same-prefix + unrelated dbs survive", async () => {
     const { deleted } = installIndexedDB({
       databases: () => Promise.resolve(DB_NAMES.map((name) => ({ name }))),
     });
@@ -362,6 +366,10 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
         "traycer-gui-app:window-7:landing-images",
         "traycer-gui-app:default:file-edit-recovery",
         "traycer-gui-app:window-7:file-edit-recovery",
+        "traycer-gui-app:anon:transcript-images",
+        "traycer-gui-app:user-1:transcript-images",
+        "traycer-gui-app:anon:transcript-image-meta",
+        "traycer-gui-app:user-1:transcript-image-meta",
         "traycer-gui-app:tab-recovery",
       ].sort(),
     );
@@ -524,6 +532,12 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
     // db on disk untouched while all of them still agreed with each other.
     expect(deleteDatabase).toHaveBeenCalledWith("traycer-gui-app:prompt-stash");
     expect(STASH_DB_NAME).toBe("traycer-gui-app:prompt-stash");
+    expect(deleteDatabase).toHaveBeenCalledWith(
+      "traycer-gui-app:anon:transcript-images",
+    );
+    expect(deleteDatabase).toHaveBeenCalledWith(
+      "traycer-gui-app:anon:transcript-image-meta",
+    );
     expect(reloadSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -547,6 +561,9 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
     ).resolves.toBeUndefined();
 
     expect(deleteDatabase).toHaveBeenCalledWith(STASH_DB_NAME);
+    expect(deleteDatabase).toHaveBeenCalledWith(
+      "traycer-gui-app:anon:transcript-images",
+    );
     expect(reloadSpy).toHaveBeenCalledTimes(1);
   });
 

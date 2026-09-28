@@ -45,7 +45,8 @@ import {
   type HeaderStripHandoffReport,
 } from "../header-strip-commit-handoff";
 import { HEADER_STRIP_SCROLL_TEST_ID } from "../header-strip-geometry";
-import { useHeaderTabDisplacement } from "../use-header-tab-displacement";
+import { useStripItemDisplacement } from "../use-strip-item-displacement";
+import { HORIZONTAL_STRIP_AXIS } from "@/components/epic-canvas/dnd/strip-axis";
 
 /**
  * Unequal widths on purpose: a fixture of equal tabs cannot tell a correct
@@ -128,9 +129,9 @@ const values = new Map<string, () => number>();
 
 function StripItem(props: { readonly item: ItemState }) {
   const frameRef = useRef<HTMLElement | null>(null);
-  const x = useHeaderTabDisplacement({
+  const x = useStripItemDisplacement({
     nodeRef: frameRef,
-    offsetX: props.item.offsetX,
+    offset: props.item.offsetX,
     transition: { duration: 0 },
   });
   values.set(props.item.id, () => x.get());
@@ -173,7 +174,7 @@ function Strip(props: {
   readonly nodeEpoch: number;
 }) {
   useLayoutEffect(() => {
-    report = runHeaderStripCommitHandoff();
+    report = runHeaderStripCommitHandoff(HORIZONTAL_STRIP_AXIS);
   });
   return (
     // The pass walks the DOM scoped to the strip container, so the harness has
@@ -243,7 +244,7 @@ function driveCommit(input: {
   // The commit: DOM order changes and the drag model's offsets drop to zero on
   // the same pass, which is the whole difficulty.
   act(() => {
-    armHeaderStripCommitHandoff();
+    armHeaderStripCommitHandoff(HORIZONTAL_STRIP_AXIS);
     slots = endSlots;
     view.rerender(
       <Strip
@@ -426,7 +427,7 @@ describe("header strip commit handoff", () => {
     // The actual commit: displaced against the post-resize slots, matching
     // how the drag model re-syncs targetX on the render right before a drop.
     act(() => {
-      armHeaderStripCommitHandoff();
+      armHeaderStripCommitHandoff(HORIZONTAL_STRIP_AXIS);
       slots = endSlots;
       view.rerender(<Strip nodeEpoch={0} items={itemsAt(["b", "c", "a"])} />);
     });
@@ -505,7 +506,7 @@ describe("header strip commit handoff", () => {
     for (const id of ["a", "b", "c"]) before[id] = renderedLeft(id);
 
     act(() => {
-      armHeaderStripCommitHandoff();
+      armHeaderStripCommitHandoff(HORIZONTAL_STRIP_AXIS);
       slots = endSlots;
       view.rerender(
         <Strip items={mk(["b", "c", "a"], {}, "span")} nodeEpoch={0} />,
@@ -519,24 +520,11 @@ describe("header strip commit handoff", () => {
     }
   });
 
-  it("reproduces the observed defect from the probe's own numbers", () => {
-    // The model, stated as arithmetic against the pre-fix trace: slot 613.75
-    // with transform -400.45 renders at 213.30, and the stale transform -351.50
-    // against the new slot 213.30 renders at -138.20.
-    expect(613.75 + -400.45).toBeCloseTo(213.3, 2);
-    expect(213.3 + -351.5).toBeCloseTo(-138.2, 2);
-    // And the correction that makes it continuous is zero, not merely small.
-    expect(
-      handoffTransformFor({
-        previousBaselineLeft: 613.75,
-        nextBaselineLeft: 213.3,
-        appliedTransformX: -400.45,
-      }),
-    ).toBeCloseTo(0, 2);
-  });
-
   it("handoffTransformFor preserves rendered position for any baseline move", () => {
     const cases = [
+      // The probe's own pre-fix trace: slot 613.75 with transform -400.45
+      // renders at 213.30, so the continuous correction onto the new slot
+      // 213.30 is zero.
       { previous: 613.75, next: 213.3, applied: -400.45 },
       { previous: 100, next: 460.52, applied: 360.52 },
       { previous: 0, next: 0, applied: -12.5 },
@@ -544,9 +532,9 @@ describe("header strip commit handoff", () => {
     ] as const;
     for (const c of cases) {
       const carried = handoffTransformFor({
-        previousBaselineLeft: c.previous,
-        nextBaselineLeft: c.next,
-        appliedTransformX: c.applied,
+        previousBaseline: c.previous,
+        nextBaseline: c.next,
+        appliedTransform: c.applied,
       });
       expect(c.next + carried).toBeCloseTo(c.previous + c.applied, 6);
     }

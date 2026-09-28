@@ -1,5 +1,6 @@
 import { animate, type MotionValue, type Transition } from "motion/react";
 import { appLogger } from "@/lib/logger";
+import type { StripAxis } from "@/components/epic-canvas/dnd/strip-axis";
 import { HEADER_STRIP_SCROLL_TEST_ID } from "./header-strip-geometry";
 
 /**
@@ -43,8 +44,9 @@ import { HEADER_STRIP_SCROLL_TEST_ID } from "./header-strip-geometry";
  * on any of those would be a check whose outcome differs across cases that are
  * the same case.
  *
- * Baselines are measured with `offsetLeft`, never `getBoundingClientRect()`.
- * `offsetLeft` excludes transforms by definition, so it reads the slot without
+ * Baselines are measured with the axis's layout offset (`offsetLeft` or
+ * `offsetTop`), never `getBoundingClientRect()`. A layout offset excludes
+ * transforms by definition, so it reads the slot without
  * having to subtract the very transform being corrected, and it is immune to a
  * scroll landing on the same frame.
  */
@@ -52,7 +54,7 @@ import { HEADER_STRIP_SCROLL_TEST_ID } from "./header-strip-geometry";
 /**
  * One strip item's participation in the pass.
  *
- * `targetX` and `transition` are re-published by the item on every layout pass
+ * `target` and `transition` are re-published by the item on every layout pass
  * so the re-base can restart the spring toward the CURRENT target: `jump`
  * cancels the animation in flight, so a jump without a restart would park the
  * item at the re-based value instead of settling it.
@@ -60,16 +62,16 @@ import { HEADER_STRIP_SCROLL_TEST_ID } from "./header-strip-geometry";
 interface HeaderStripItemEntry {
   readonly value: MotionValue<number>;
   node: HTMLElement | null;
-  targetX: number;
+  target: number;
   transition: Transition;
-  lastBaselineLeft: number | null;
+  lastBaseline: number | null;
 }
 
 /**
  * Keyed by the item's MotionValue, which is stable for the life of the item -
  * NOT by its DOM node, which is not. Keying by node captured once at mount left
- * a recreated element stranded under a detached key, where `offsetLeft` reads 0
- * forever and the item is silently exempt from every commit.
+ * a recreated element stranded under a detached key, where its layout offset
+ * reads 0 forever and the item is silently exempt from every commit.
  *
  * The mutable bookkeeping lives here rather than on an object the component
  * owns: a component cannot hold a mutable handle without either reading a ref
@@ -85,9 +87,9 @@ export function registerHeaderStripItem(
   entries.set(value, {
     value,
     node: null,
-    targetX: value.get(),
+    target: value.get(),
     transition: { duration: 0 },
-    lastBaselineLeft: null,
+    lastBaseline: null,
   });
   return () => {
     entries.delete(value);
@@ -104,13 +106,13 @@ export function registerHeaderStripItem(
 export function syncHeaderStripItem(input: {
   readonly value: MotionValue<number>;
   readonly node: HTMLElement | null;
-  readonly targetX: number;
+  readonly target: number;
   readonly transition: Transition;
 }): void {
   const entry = entries.get(input.value);
   if (entry === undefined) return;
   entry.node = input.node;
-  entry.targetX = input.targetX;
+  entry.target = input.target;
   entry.transition = input.transition;
 }
 
@@ -123,11 +125,12 @@ export function syncHeaderStripItem(input: {
  */
 let armed = false;
 
-export function armHeaderStripCommitHandoff(): void {
+export function armHeaderStripCommitHandoff(axis: StripAxis): void {
   // Called synchronously before the reorder write. Capture the current slots
   // here so intervening resizes need no bookkeeping on ordinary commits.
   for (const entry of entries.values()) {
-    entry.lastBaselineLeft = entry.node?.offsetLeft ?? null;
+    entry.lastBaseline =
+      entry.node === null ? null : axis.layoutOffset(entry.node);
   }
   armed = true;
 }
@@ -143,20 +146,16 @@ export function disarmHeaderStripCommitHandoff(): void {
 /**
  * The transform that leaves rendered position unchanged across a baseline move.
  *
- * `previousBaselineLeft + appliedTransformX` is where the item is rendered right
+ * `previousBaseline + appliedTransform` is where the item is rendered right
  * now; subtracting the new baseline gives the transform that reproduces that
  * exact position from the new slot.
  */
 export function handoffTransformFor(input: {
-  readonly previousBaselineLeft: number;
-  readonly nextBaselineLeft: number;
-  readonly appliedTransformX: number;
+  readonly previousBaseline: number;
+  readonly nextBaseline: number;
+  readonly appliedTransform: number;
 }): number {
-  return (
-    input.previousBaselineLeft +
-    input.appliedTransformX -
-    input.nextBaselineLeft
-  );
+  return input.previousBaseline + input.appliedTransform - input.nextBaseline;
 }
 
 /**
@@ -184,7 +183,9 @@ export interface HeaderStripHandoffReport {
  * the DOM on that commit is deliberate - it notices an on-screen item that is
  * NOT registered, including a split group.
  */
-export function runHeaderStripCommitHandoff(): HeaderStripHandoffReport {
+export function runHeaderStripCommitHandoff(
+  axis: StripAxis,
+): HeaderStripHandoffReport {
   if (!armed) return { rebased: [], moved: [], uncorrected: [] };
   const byNode = new Map<HTMLElement, HeaderStripItemEntry>();
   for (const entry of entries.values()) {
@@ -199,7 +200,7 @@ export function runHeaderStripCommitHandoff(): HeaderStripHandoffReport {
   const measurements: Array<{
     id: string;
     entry: HeaderStripItemEntry;
-    nextBaselineLeft: number;
+    nextBaseline: number;
   }> = [];
   for (const node of nodes) {
     if (!(node instanceof HTMLElement)) continue;
@@ -212,28 +213,28 @@ export function runHeaderStripCommitHandoff(): HeaderStripHandoffReport {
       uncorrected.push(id);
       continue;
     }
-    measurements.push({ id, entry, nextBaselineLeft: node.offsetLeft });
+    measurements.push({ id, entry, nextBaseline: axis.layoutOffset(node) });
   }
-  for (const { id, entry, nextBaselineLeft } of measurements) {
-    const previousBaselineLeft = entry.lastBaselineLeft;
-    entry.lastBaselineLeft = nextBaselineLeft;
-    if (previousBaselineLeft === null) {
+  for (const { id, entry, nextBaseline } of measurements) {
+    const previousBaseline = entry.lastBaseline;
+    entry.lastBaseline = nextBaseline;
+    if (previousBaseline === null) {
       // No pre-commit snapshot: an item joined after arming and is reported.
       uncorrected.push(id);
       continue;
     }
-    if (previousBaselineLeft === nextBaselineLeft) continue;
+    if (previousBaseline === nextBaseline) continue;
     moved.push(id);
     entry.value.jump(
       handoffTransformFor({
-        previousBaselineLeft,
-        nextBaselineLeft,
-        appliedTransformX: entry.value.get(),
+        previousBaseline,
+        nextBaseline,
+        appliedTransform: entry.value.get(),
       }),
     );
     // `jump` cancels the in-flight animation, so the settle has to be restarted
     // explicitly or the item parks at the re-based value.
-    animate(entry.value, entry.targetX, entry.transition);
+    animate(entry.value, entry.target, entry.transition);
     rebased.push(id);
   }
   if (uncorrected.length > 0) {

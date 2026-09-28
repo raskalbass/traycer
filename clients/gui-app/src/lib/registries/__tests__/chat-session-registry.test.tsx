@@ -319,7 +319,7 @@ describe("useChatSessionHandle owner identity (R-1)", () => {
     hostEntryRef.value = remoteTarget("pubkey-a");
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-1", REMOTE_HOST_ID, true),
+      () => useChatSessionHandle("chat-1", REMOTE_HOST_ID, true, "surface"),
       { wrapper },
     );
 
@@ -361,7 +361,8 @@ describe("useChatSessionHandle owner identity (R-1)", () => {
     hostEntryRef.value = remoteTarget("pubkey-a");
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-relay-1", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle("chat-relay-1", REMOTE_HOST_ID, true, "surface"),
       { wrapper },
     );
     await waitFor(() => {
@@ -447,7 +448,8 @@ describe("a live chat session survives a degraded liveness read", () => {
     hostEntryRef.value = mappedEntry("connectable");
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-unknown-1", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle("chat-unknown-1", REMOTE_HOST_ID, true, "surface"),
       { wrapper },
     );
 
@@ -494,7 +496,8 @@ describe("a live chat session survives a degraded liveness read", () => {
     hostEntryRef.value = mappedEntry("connectable");
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-offline-1", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle("chat-offline-1", REMOTE_HOST_ID, true, "surface"),
       { wrapper },
     );
 
@@ -535,7 +538,13 @@ describe("a live chat session survives a degraded liveness read", () => {
     readySessionHosts.value = new Set([REMOTE_HOST_ID]);
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-offline-live-1", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle(
+          "chat-offline-live-1",
+          REMOTE_HOST_ID,
+          true,
+          "surface",
+        ),
       { wrapper },
     );
 
@@ -573,7 +582,8 @@ describe("a live chat session survives a degraded liveness read", () => {
     hostEntryRef.value = mappedEntry("connectable");
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-restart-1", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle("chat-restart-1", REMOTE_HOST_ID, true, "surface"),
       { wrapper },
     );
     await waitFor(() => {
@@ -613,7 +623,8 @@ describe("a live chat session survives a degraded liveness read", () => {
     hostEntryRef.value = mappedEntry("connectable");
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-restart-2", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle("chat-restart-2", REMOTE_HOST_ID, true, "surface"),
       { wrapper },
     );
     await waitFor(() => {
@@ -681,7 +692,8 @@ describe("useChatSessionHandle through a local host restart (G1)", () => {
       hostEntryRef.value = localEntry(FIRST_URL, "1.0.0");
 
       const { result, rerender } = renderHook(
-        () => useChatSessionHandle("chat-local-1", LOCAL_HOST_ID, true),
+        () =>
+          useChatSessionHandle("chat-local-1", LOCAL_HOST_ID, true, "surface"),
         { wrapper },
       );
       await waitFor(() => {
@@ -710,7 +722,7 @@ describe("useChatSessionHandle through a local host restart (G1)", () => {
     hostEntryRef.value = localEntry(FIRST_URL, "1.0.0");
 
     const { result, rerender } = renderHook(
-      () => useChatSessionHandle("chat-boot-1", LOCAL_HOST_ID, true),
+      () => useChatSessionHandle("chat-boot-1", LOCAL_HOST_ID, true, "surface"),
       { wrapper },
     );
     await waitFor(() => {
@@ -760,7 +772,13 @@ describe("useChatSessionHandle through a local host restart (G1)", () => {
       hostEntryRef.value = localEntry(FIRST_URL, "1.0.0");
 
       const { result, rerender } = renderHook(
-        () => useChatSessionHandle("chat-boot-lost-1", LOCAL_HOST_ID, true),
+        () =>
+          useChatSessionHandle(
+            "chat-boot-lost-1",
+            LOCAL_HOST_ID,
+            true,
+            "surface",
+          ),
         { wrapper },
       );
       await waitFor(() => {
@@ -817,7 +835,8 @@ describe("useChatSessionHandle retryFromUser silence gate", () => {
     signInAndBind(fake);
 
     const { result } = renderHook(
-      () => useChatSessionHandle("chat-silence-1", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle("chat-silence-1", REMOTE_HOST_ID, true, "surface"),
       { wrapper },
     );
     await waitFor(() => {
@@ -883,7 +902,8 @@ describe("useChatSessionHandle provider-auth-error invalidation", () => {
     );
 
     const { result } = renderHook(
-      () => useChatSessionHandle("chat-auth-1", REMOTE_HOST_ID, true),
+      () =>
+        useChatSessionHandle("chat-auth-1", REMOTE_HOST_ID, true, "surface"),
       { wrapper: testWrapper },
     );
     await waitFor(() => {

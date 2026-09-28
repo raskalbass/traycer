@@ -1,9 +1,9 @@
+import { useLayoutEffect, useSyncExternalStore, type RefObject } from "react";
+import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 import {
   isDocumentVisible,
   subscribeDocumentVisibility,
 } from "@/lib/dom/document-visibility";
-import { useLayoutEffect, useSyncExternalStore, type RefObject } from "react";
-import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 
 /**
  * One shared 25 Hz clock for every long-lived status animation: the run

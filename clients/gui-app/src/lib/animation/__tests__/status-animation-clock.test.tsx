@@ -111,6 +111,7 @@ afterEach(() => {
   cleanup();
   resetStatusAnimationClockForTests();
   setDocumentHidden(false);
+  setDesktopWindowOnScreen(true);
   __resetDocumentVisibilitySubscribersForTests();
   vi.unstubAllGlobals();
   vi.useRealTimers();

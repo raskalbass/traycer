@@ -60,7 +60,6 @@ export function TerminalAgentProgressIcon(props: {
       style={props.style}
       runningTitle="Agent in progress"
       defaultIcon={props.idleIcon}
-      statusPresentation="message"
       agentSurface="tui"
     />
   );

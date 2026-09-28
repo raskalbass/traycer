@@ -451,10 +451,7 @@ describe.each([CHAT_FIXTURE, ARTIFACT_FIXTURE])(
       render(
         <QueryClientProvider client={new QueryClient()}>
           <EpicSessionContext.Provider value={handle}>
-            <SidebarBulkSelectionProvider
-              panelId={fixture.panelId}
-              collapsed={false}
-            >
+            <SidebarBulkSelectionProvider panelId={fixture.panelId}>
               <SelectionModeEntry
                 onReady={(controls) => (selectionRef.current = controls)}
               />
@@ -539,10 +536,7 @@ describe.each([CHAT_FIXTURE, ARTIFACT_FIXTURE])(
       render(
         <QueryClientProvider client={new QueryClient()}>
           <EpicSessionContext.Provider value={handle}>
-            <SidebarBulkSelectionProvider
-              panelId={fixture.panelId}
-              collapsed={false}
-            >
+            <SidebarBulkSelectionProvider panelId={fixture.panelId}>
               <SelectionModeEntry
                 onReady={(controls) => (selectionRef.current = controls)}
               />

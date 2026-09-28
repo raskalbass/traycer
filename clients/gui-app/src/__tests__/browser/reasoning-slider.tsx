@@ -5,11 +5,8 @@ import { ThemeProvider } from "@/providers/theme-provider";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import { useThemeLibraryStore } from "@/stores/settings/theme-library-store";
 import { THEME_PRESETS, type ThemePreset } from "@/lib/theme-presets";
-import {
-  DEFAULT_COMPOSER_LAYOUT,
-  useLayoutStore,
-  type ComposerReasoningFooterControl,
-} from "@/stores/settings/layout-store";
+import type { ReasoningControl } from "@/lib/layout/layout-values";
+import { LayoutOverrideProvider } from "@/providers/layout-override-provider";
 import {
   HarnessModelPickerModelSettingsFooter,
   type ReasoningFooterConfig,
@@ -52,9 +49,7 @@ function themePresetFromSelect(value: string): ThemePreset {
   return found === undefined ? DEFAULT_PRESET : found.id;
 }
 
-function reasoningControlFromSelect(
-  value: string,
-): ComposerReasoningFooterControl {
+function reasoningControlFromSelect(value: string): ReasoningControl {
   return value === "list" ? "list" : "slider";
 }
 
@@ -128,8 +123,8 @@ interface ControlsProps {
   readonly onModeChange: (mode: ThemeModeChoice) => void;
   readonly preset: ThemePreset;
   readonly onPresetChange: (preset: ThemePreset) => void;
-  readonly control: ComposerReasoningFooterControl;
-  readonly onControlChange: (control: ComposerReasoningFooterControl) => void;
+  readonly control: ReasoningControl;
+  readonly onControlChange: (control: ReasoningControl) => void;
   readonly optionCount: ReasoningOptionCount;
   readonly onOptionCountChange: (count: ReasoningOptionCount) => void;
   readonly fastPresent: boolean;
@@ -237,8 +232,7 @@ function Controls(props: ControlsProps): ReactNode {
 export function Fixture(): ReactNode {
   const [mode, setMode] = useState<ThemeModeChoice>("dark");
   const [preset, setPreset] = useState<ThemePreset>(DEFAULT_PRESET);
-  const [control, setControl] =
-    useState<ComposerReasoningFooterControl>("slider");
+  const [control, setControl] = useState<ReasoningControl>("slider");
   const [optionCount, setOptionCount] = useState<ReasoningOptionCount>(4);
   const [narrow, setNarrow] = useState(false);
   const [fastPresent, setFastPresent] = useState(true);
@@ -263,10 +257,6 @@ export function Fixture(): ReactNode {
     });
     useSettingsStore.setState({ themePreset: preset });
   }, [preset]);
-
-  useEffect(() => {
-    useLayoutStore.getState().setComposerReasoningFooterControl(control);
-  }, [control]);
 
   const reasoning: ReasoningFooterConfig = {
     value: reasoningValue,
@@ -340,13 +330,21 @@ export function Fixture(): ReactNode {
                 <span aria-hidden="true">✓</span>
               </div>
             </div>
-            <LeaderHeldContext.Provider value={leaderState}>
-              <HarnessModelPickerModelSettingsFooter
-                pickerOpen
-                reasoning={reasoning}
-                serviceTier={serviceTier}
-              />
-            </LeaderHeldContext.Provider>
+            {/* Layout > Composer > Model > Reasoning control, through the
+                same override seam the editor's examples use, so the
+                fixture's own select is the single source of truth and no
+                stored preference leaks in. */}
+            <LayoutOverrideProvider
+              value={{ values: { model: { reasoningControl: control } } }}
+            >
+              <LeaderHeldContext.Provider value={leaderState}>
+                <HarnessModelPickerModelSettingsFooter
+                  pickerOpen
+                  reasoning={reasoning}
+                  serviceTier={serviceTier}
+                />
+              </LeaderHeldContext.Provider>
+            </LayoutOverrideProvider>
           </div>
         </div>
         <p className="mt-8 text-ui-xs text-muted-foreground">
@@ -358,11 +356,6 @@ export function Fixture(): ReactNode {
     </div>
   );
 }
-
-// Layout ▸ Composer ▸ Reasoning control persists across sessions via
-// localStorage - start every load from the documented default so the
-// fixture's own "Reasoning control" select is the single source of truth.
-useLayoutStore.setState({ composer: DEFAULT_COMPOSER_LAYOUT });
 
 const root = document.getElementById("root");
 if (root === null) throw new Error("Missing fixture root");

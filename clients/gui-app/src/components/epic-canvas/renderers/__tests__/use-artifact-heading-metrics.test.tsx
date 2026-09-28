@@ -6,7 +6,7 @@ import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { buildArtifactExtensions, deriveCollabUser } from "@/editor-core";
 import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
-import type { MinimapPlacement } from "@/stores/settings/settings-store";
+import type { EdgeSide } from "@/lib/layout/layout-arrangement";
 import { ARTIFACT_HEADING_SCROLL_PADDING } from "../artifact-heading-items";
 import { useArtifactHeadingMetrics } from "../use-artifact-heading-metrics";
 
@@ -127,7 +127,8 @@ function stubCoarsePointer(coarse: boolean): void {
 function renderMetrics(input: {
   readonly editor: Editor;
   readonly scroller: HTMLElement;
-  readonly side: MinimapPlacement;
+  readonly side: EdgeSide;
+  readonly shown: boolean;
   readonly visible?: boolean;
 }) {
   // A plain mutable holder, not React state: the wrapper re-reads it on every
@@ -147,6 +148,7 @@ function renderMetrics(input: {
         scroller: input.scroller,
         refreshRef,
         side: input.side,
+        shown: input.shown,
       }),
     { wrapper },
   );
@@ -174,6 +176,7 @@ describe("useArtifactHeadingMetrics", () => {
       editor,
       scroller: scroller.element,
       side: "left",
+      shown: true,
     });
 
     expect(result.current.outline.map((entry) => entry.label)).toEqual([
@@ -213,6 +216,7 @@ describe("useArtifactHeadingMetrics", () => {
       editor,
       scroller: scroller.element,
       side: "left",
+      shown: true,
       visible: false,
     });
 
@@ -253,7 +257,8 @@ describe("useArtifactHeadingMetrics", () => {
     const { result } = renderMetrics({
       editor,
       scroller: scroller.element,
-      side: "hide",
+      side: "left",
+      shown: false,
     });
 
     expect(result.current.outline.map((entry) => entry.label)).toEqual([
@@ -292,6 +297,7 @@ describe("useArtifactHeadingMetrics", () => {
       editor,
       scroller: scroller.element,
       side: "left",
+      shown: true,
     });
 
     expect(result.current.outline.map((entry) => entry.label)).toEqual([
@@ -323,7 +329,8 @@ describe("useArtifactHeadingMetrics", () => {
     const { result } = renderMetrics({
       editor,
       scroller: scroller.element,
-      side: "hide",
+      side: "left",
+      shown: false,
     });
 
     expect(result.current.outline.map((entry) => entry.label)).toEqual([

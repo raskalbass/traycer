@@ -1,7 +1,3 @@
-import {
-  isDocumentVisible,
-  subscribeDocumentVisibility,
-} from "@/lib/dom/document-visibility";
 import type {
   BrowserScreencastServerFrame,
   BrowserVideoPlaneFailureReason,
@@ -16,6 +12,11 @@ import { mapWebrtcVideoStats } from "@/lib/browser-view/sessions/webrtc-video-st
 import { createVideoFrameLatencyWindow } from "@/lib/browser-view/sessions/video-frame-latency";
 import { deriveSpecDeadlineMs } from "@traycer/protocol/host-transport/rtt-deadlines";
 import { VIEWER_CONTROL_PLANE_DEADLINES } from "@/lib/browser-view/sessions/control-plane-deadlines";
+import {
+  isDocumentVisible,
+  subscribeDocumentVisibility,
+} from "@/lib/dom/document-visibility";
+import { startVisibleInterval } from "@/lib/dom/visible-interval";
 
 /**
  * `muted` + `playsInline` autoplay is allowed, but a source attached after
@@ -123,7 +124,7 @@ export function createVideoPlaneSession(options: {
   let lastFrameAt: number | null = null;
   let deadlineRound: number | null = null;
   let cancelDeadline: (() => void) | null = null;
-  let statsTimer: number | null = null;
+  let statsTimer: (() => void) | null = null;
   let closed = false;
   /** The round the per-round measurements below belong to; see `sdpOffer`. */
   let measuredRound: number | null = null;
@@ -211,7 +212,7 @@ export function createVideoPlaneSession(options: {
 
   const stopStatsTimer = (): void => {
     if (statsTimer === null) return;
-    window.clearInterval(statsTimer);
+    statsTimer();
     statsTimer = null;
   };
 
@@ -290,7 +291,11 @@ export function createVideoPlaneSession(options: {
     }
     if (statsTimer !== null) return;
     sampleStats();
-    statsTimer = window.setInterval(sampleStats, STATS_SAMPLE_INTERVAL_MS);
+    statsTimer = startVisibleInterval({
+      tick: sampleStats,
+      intervalMs: STATS_SAMPLE_INTERVAL_MS,
+      fireOnShow: true,
+    });
   };
 
   const publish = (): void => {

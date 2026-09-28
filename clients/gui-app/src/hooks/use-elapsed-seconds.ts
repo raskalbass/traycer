@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
+import { startVisibleInterval } from "@/lib/dom/visible-interval";
 
 /**
  * Ticks once per second while visible and running so a caller can show a constantly
@@ -22,8 +23,11 @@ export function useElapsedSeconds(
   }, [visible, pausedSinceMs]);
   useEffect(() => {
     if (!visible || pausedSinceMs !== null) return;
-    const intervalId = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(intervalId);
+    return startVisibleInterval({
+      tick: () => setNowMs(Date.now()),
+      intervalMs: 1000,
+      fireOnShow: true,
+    });
   }, [visible, pausedSinceMs]);
   const activePausedMs =
     pausedSinceMs === null ? 0 : Math.max(0, nowMs - pausedSinceMs);

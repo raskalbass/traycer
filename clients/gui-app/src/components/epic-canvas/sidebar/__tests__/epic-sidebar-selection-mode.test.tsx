@@ -23,6 +23,7 @@ import type {
   AgentSessionLastExit,
   AgentSessionState,
 } from "@traycer/protocol/host/agent-session-state";
+import type { HoverCardProps } from "@/components/ui/hover-card";
 import {
   createChatSessionStore,
   type ChatSessionStoreHandle,
@@ -45,6 +46,7 @@ import {
   requestSidebarNodeReveal,
   useSidebarNodeRevealStore,
 } from "@/stores/epics/sidebar-node-reveal-store";
+import { RAIL_REGION_BY_PANEL } from "@/lib/layout/rail";
 
 const writeText = vi.hoisted(() =>
   vi.fn((_value: string) => Promise.resolve()),
@@ -129,7 +131,6 @@ interface TestState {
   artifactFilterKinds: ReadonlyArray<string>;
   chatFilterOrigin: "all" | "gui" | "tui";
   chatFilterOwnership: "all" | "mine" | "others";
-  collapsedPanelIds: ReadonlySet<string>;
   expandedIds: ReadonlySet<string>;
   unreadArtifactIds: ReadonlySet<string>;
   tree: {
@@ -245,7 +246,6 @@ const testState = vi.hoisted<TestState>(() => ({
   artifactFilterKinds: [],
   chatFilterOrigin: "all",
   chatFilterOwnership: "all",
-  collapsedPanelIds: new Set<string>(),
   expandedIds: new Set<string>(),
   unreadArtifactIds: new Set<string>(),
   tree: {
@@ -509,6 +509,32 @@ vi.mock("@/components/ui/tooltip", () => ({
     <div role="tooltip">{props.children}</div>
   ),
 }));
+
+vi.mock("@/components/ui/hover-card", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/components/ui/hover-card")>();
+  return {
+    ...actual,
+    // The label-chip appearance (`AgentHoverTooltip`'s fallback, the rail's
+    // tile labels) is the plain-tooltip case this suite's rows exercise
+    // without hovering, same as the `ui/tooltip` mock above and for the same
+    // reason: mounted eagerly here so a query can find it, where the real
+    // primitive mounts content only while open. The preview-card appearance
+    // (worktree owner metadata) keeps the real component - this file already
+    // short-circuits that path via its own `worktree-owner-metadata` mock, so
+    // nothing here depends on it, and other suites in this tree do rely on its
+    // real hover/floating behaviour.
+    HoverCard: (props: HoverCardProps) =>
+      props.appearance === "tooltip" ? (
+        <>
+          {props.trigger}
+          <div role="tooltip">{props.content}</div>
+        </>
+      ) : (
+        <actual.HoverCard {...props} />
+      ),
+  };
+});
 
 vi.mock("@/components/ui/sidebar", () => ({
   Sidebar: (props: {
@@ -875,6 +901,15 @@ vi.mock("@/stores/epics/epic-sidebar-expansion-store", () => ({
     }),
 }));
 
+// The rail's shape and its per-panel Hide/Show live beside the bijection
+// now, not on the panel store (G1-09), so the sidebar's two reads are
+// stubbed where they are actually imported from.
+vi.mock("@/lib/layout/rail-view", () => ({
+  useLayoutRail: () => [
+    { kind: "panel", id: RAIL_REGION_BY_PANEL[testState.activePanelId] },
+  ],
+  usePanelVisibilityOverrides: () => ({}),
+}));
 vi.mock("@/stores/epics/left-panel-store", () => ({
   CHAT_ARCHIVE_VISIBILITY: {
     Unarchived: "unarchived",
@@ -917,21 +952,14 @@ vi.mock("@/stores/epics/left-panel-store", () => ({
   useChatArchiveVisibility: () => testState.archiveVisibility,
   useChatSort: () => ({ field: "updated", direction: "desc" }),
   useCommentsPanelRevealed: () => false,
-  usePanelVisibilityOverrides: () => ({}),
   useEpicLeftPanelStore: (selector: (state: unknown) => unknown) =>
     selector({
       clearAcknowledgedRootCreatePending: vi.fn(),
       clearLocalRootCreatePending: vi.fn(),
-      panelSectionCollapsedByPanelId: {},
       setAcknowledgedRootCreatePending: vi.fn(),
       setActivePanelId: vi.fn(),
       setLocalRootCreatePending: vi.fn(),
-      setPanelSectionWeights: vi.fn(),
-      togglePanelSectionCollapsed: vi.fn(),
     }),
-  useLeftPanelGroups: () => [{ panelIds: [testState.activePanelId] }],
-  useLeftPanelSectionCollapsed: (panelId: string) =>
-    testState.collapsedPanelIds.has(panelId),
   useLocalRootCreatePending: () => null,
 }));
 
@@ -1262,16 +1290,16 @@ vi.mock("@/stores/settings/settings-store", async (importOriginal) => {
       "terminal-agent": undefined,
     },
     tilePlacement: actual.DEFAULT_TILE_PLACEMENT_SETTINGS,
-    // The chat tree reads this to decide whether a row carries a resource
-    // chip at all. The mock is a hand-built state, so a key the tree starts
-    // reading has to be added here or every row throws on it.
-    navigatorResourceMetrics: actual.DEFAULT_NAVIGATOR_RESOURCE_METRICS,
   };
   return {
     ...actual,
     useSettingsStore: Object.assign(
       (selector: (settingsState: typeof state) => unknown) => selector(state),
-      { getState: () => state },
+      {
+        getState: () => state,
+        // `theme-applier` subscribes at module load, and this graph reaches it.
+        subscribe: () => () => undefined,
+      },
     ),
   };
 });
@@ -1353,7 +1381,6 @@ describe("epic sidebar selection mode", () => {
     testState.artifactFilterKinds = [];
     testState.chatFilterOrigin = "all";
     testState.chatFilterOwnership = "all";
-    testState.collapsedPanelIds = new Set<string>();
     testState.expandedIds = new Set<string>();
     testState.unreadArtifactIds = new Set<string>();
     testState.tree = {
@@ -1405,7 +1432,7 @@ describe("epic sidebar selection mode", () => {
       .mockImplementation(() => undefined);
     requestSidebarNodeReveal(TAB_ID, "agent-root");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByTestId("epic-sidebar-item-agent-root");
     await waitFor(() => {
@@ -1433,7 +1460,7 @@ describe("epic sidebar selection mode", () => {
       .mockImplementation(() => undefined);
     requestSidebarNodeReveal(TAB_ID, "ticket-child");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByRole("button", { name: /^Child ticket/ });
     await waitFor(() => {
@@ -1454,7 +1481,7 @@ describe("epic sidebar selection mode", () => {
   it("flash-highlights an artifact row while it is being renamed", async () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-rename-ticket-child"));
 
     act(() => requestSidebarNodeReveal(TAB_ID, "ticket-child"));
@@ -1469,7 +1496,7 @@ describe("epic sidebar selection mode", () => {
 
   it("flash-highlights a chat row while it is being renamed", async () => {
     seedChatTree();
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-rename-chat-child"));
 
     act(() => requestSidebarNodeReveal(TAB_ID, "chat-child"));
@@ -1485,7 +1512,7 @@ describe("epic sidebar selection mode", () => {
   it("selects chat rows explicitly and bulk-deletes topmost selected chat roots", async () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const startSelectionButton = screen.getByRole("menuitem", {
       name: "Select agents",
@@ -1556,7 +1583,7 @@ describe("epic sidebar selection mode", () => {
     };
     testState.records = [{ ...recordFromNode(agentShared), hostId: "host-B" }];
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-agent-shared"));
@@ -1604,7 +1631,7 @@ describe("epic sidebar selection mode", () => {
   it("archives the topmost selected agents and exits selection mode", async () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByRole("button", { name: "Select all" }));
@@ -1647,18 +1674,14 @@ describe("epic sidebar selection mode", () => {
     testState.archiveMutateAsync.mockReturnValue(archivePromise);
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-selected-chats"));
 
     testState.archivedIds = ["chat-root"];
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     await waitFor(() => {
       expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
       expect(
@@ -1687,16 +1710,12 @@ describe("epic sidebar selection mode", () => {
     testState.archiveMutateAsync.mockReturnValue(archivePromise);
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-selected-chats"));
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByRole("button", { name: "Select all" }).matches(":disabled"),
     ).toBe(true);
@@ -1741,9 +1760,7 @@ describe("epic sidebar selection mode", () => {
     testState.archiveMutateAsync.mockReturnValue(archivePromise);
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -1759,9 +1776,7 @@ describe("epic sidebar selection mode", () => {
     });
 
     testState.archivedIds = ["chat-root"];
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     await waitFor(() => {
       expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
       expect(
@@ -1782,9 +1797,7 @@ describe("epic sidebar selection mode", () => {
     testState.archiveMutateAsync.mockReturnValue(archivePromise);
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -1808,9 +1821,7 @@ describe("epic sidebar selection mode", () => {
       },
     };
     testState.records = [...testState.records, recordFromNode(addedChild)];
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId(`epic-sidebar-select-${addedChild.id}`));
 
     resolveArchive({ updated: true });
@@ -1822,9 +1833,7 @@ describe("epic sidebar selection mode", () => {
     });
 
     testState.archivedIds = ["chat-root"];
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByRole("button", { name: "Cancel selection" }),
     ).toBeNull();
@@ -1842,9 +1851,7 @@ describe("epic sidebar selection mode", () => {
     testState.archiveMutateAsync.mockReturnValue(archivePromise);
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -1865,9 +1872,7 @@ describe("epic sidebar selection mode", () => {
         ? recordFromNode(reparentedChild)
         : record,
     );
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     resolveArchive({ updated: true });
 
@@ -1886,9 +1891,7 @@ describe("epic sidebar selection mode", () => {
     ).toBeTruthy();
 
     testState.archivedIds = ["chat-root"];
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
     expect(
       screen.getByTestId("epic-sidebar-select-chat-child").matches(":checked"),
@@ -1899,7 +1902,7 @@ describe("epic sidebar selection mode", () => {
     seedChatTree();
     testState.archiveSupport = false;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -1913,7 +1916,7 @@ describe("epic sidebar selection mode", () => {
     seedChatTree();
     testState.activeAgentIds = new Set(["chat-root"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -1930,7 +1933,7 @@ describe("epic sidebar selection mode", () => {
     testState.expandedIds = new Set<string>();
     testState.activeAgentIds = new Set(["chat-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -1946,7 +1949,7 @@ describe("epic sidebar selection mode", () => {
   it("toggles the Select all button to Deselect all once everything is selected", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
 
@@ -1980,7 +1983,7 @@ describe("epic sidebar selection mode", () => {
   it("gives selection controls the full header row without changing its height", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const section = screen.getByTestId("epic-left-panel-section-chats");
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
@@ -2005,7 +2008,7 @@ describe("epic sidebar selection mode", () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const section = screen.getByTestId("epic-left-panel-section-artifacts");
     expect(section.firstElementChild?.className).toContain("@container");
@@ -2032,7 +2035,7 @@ describe("epic sidebar selection mode", () => {
   it("keeps the communication graph available in the Agents overflow", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.getByRole("menuitem", { name: "Agent office" }),
@@ -2042,9 +2045,7 @@ describe("epic sidebar selection mode", () => {
   it("renders loading chat and artifact panels before the epic session handle exists", () => {
     testState.sessionReady = false;
 
-    render(
-      <EpicLeftPanelLoadingHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    render(<EpicLeftPanelLoadingHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-sidebar")).not.toBeNull();
   });
@@ -2052,7 +2053,7 @@ describe("epic sidebar selection mode", () => {
   it("names the primary panel Agents and offers an interface choice when empty", () => {
     testState.activePanelId = "chats";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByText("Agents")).not.toBeNull();
     expect(screen.getByTestId("epic-chat-sidebar-empty")).not.toBeNull();
@@ -2067,7 +2068,7 @@ describe("epic sidebar selection mode", () => {
     seedChatTree();
     testState.rowHostId = null;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByRole("tooltip", { name: "Root chat" })).toBeTruthy();
     expect(
@@ -2079,7 +2080,7 @@ describe("epic sidebar selection mode", () => {
     seedGuiChatTree();
     testState.chatFilterOrigin = "tui";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-chat-sidebar-filter-empty")).not.toBeNull();
     // The Task HAS agents - they just use the other interface. The empty state
@@ -2097,7 +2098,7 @@ describe("epic sidebar selection mode", () => {
     seedChatTree();
     testState.chatFilterOwnership = "others";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
     expect(screen.queryByTestId("epic-sidebar-item-agent-root")).toBeNull();
@@ -2110,7 +2111,7 @@ describe("epic sidebar selection mode", () => {
   it("shows the empty artifact panel state when there are no artifacts", () => {
     testState.activePanelId = "artifacts";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-artifact-sidebar-empty")).not.toBeNull();
     expect(screen.getByText("No artifacts yet.")).not.toBeNull();
@@ -2122,7 +2123,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
     testState.artifactFilterKinds = ["review"];
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.getByTestId("epic-artifact-sidebar-filter-empty"),
@@ -2137,7 +2138,7 @@ describe("epic sidebar selection mode", () => {
     seedChatTree();
     testState.permissionRole = "viewer";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.queryByRole("menuitem", { name: "Select agents" }),
@@ -2148,7 +2149,7 @@ describe("epic sidebar selection mode", () => {
   it("uses the shared chat menu for terminal-agent row actions", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-sidebar-more-agent-root")).not.toBeNull();
     expect(screen.getByTestId("epic-sidebar-rename-agent-root")).not.toBeNull();
@@ -2164,7 +2165,7 @@ describe("epic sidebar selection mode", () => {
     };
     testState.tuiHarnessIds = { "agent-root": "codex" };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // Chat rows deliberately keep the plain chat glyph even when a harness id
     // is known - brand marks are a TUI-only leading-icon affordance.
@@ -2188,7 +2189,7 @@ describe("epic sidebar selection mode", () => {
       .getState()
       .setComposerMode(EPIC_ID, "terminal");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // The standalone hover "+" is gone; "New child agent" now lives in the
     // consolidated row menu, reachable via the ⋯ dropdown...
@@ -2231,7 +2232,7 @@ describe("epic sidebar selection mode", () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-sidebar-add-spec-root")).not.toBeNull();
     fireEvent.contextMenu(screen.getByTestId("epic-sidebar-item-spec-root"));
@@ -2246,7 +2247,7 @@ describe("epic sidebar selection mode", () => {
   it("enters chat selection mode from cmd-click on a row", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.queryByTestId("epic-sidebar-select-chat-root")).toBeNull();
 
@@ -2264,85 +2265,11 @@ describe("epic sidebar selection mode", () => {
     ).toBe(false);
   });
 
-  it("clears chat selection when the section collapses", async () => {
-    seedChatTree();
-
-    const { rerender } = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
-
-    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
-    fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
-    expect(
-      screen
-        .getByTestId("epic-sidebar-delete-selected-chats")
-        .matches(":disabled"),
-    ).toBe(false);
-
-    testState.collapsedPanelIds = new Set(["chats"]);
-    rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
-
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId("epic-sidebar-delete-selected-chats"),
-      ).toBeNull();
-    });
-    expect(
-      screen
-        .getByRole("menuitem", { name: "Select agents" })
-        .matches(":disabled"),
-    ).toBe(true);
-  });
-
-  it("keeps collapsed chat header entry points available", () => {
-    seedChatTree();
-    testState.collapsedPanelIds = new Set(["chats"]);
-
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
-
-    expect(
-      screen.getByRole("button", { name: "Chat filter" }).matches(":disabled"),
-    ).toBe(false);
-    expect(
-      screen
-        .getByRole("button", { name: "More agent actions" })
-        .matches(":disabled"),
-    ).toBe(false);
-    expect(
-      screen.getByRole("button", { name: "Add agent" }).matches(":disabled"),
-    ).toBe(false);
-    expect(screen.getByRole("menuitem", { name: "Collapse all" })).toBeTruthy();
-  });
-
-  it("keeps collapsed artifact header entry points available", () => {
-    seedArtifactTree();
-    testState.activePanelId = "artifacts";
-    testState.collapsedPanelIds = new Set(["artifacts"]);
-    testState.unreadArtifactIds = new Set(["ticket-child"]);
-
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
-
-    expect(
-      screen
-        .getByRole("button", { name: "Artifact filter" })
-        .matches(":disabled"),
-    ).toBe(false);
-    expect(
-      screen
-        .getByRole("button", { name: "More artifact actions" })
-        .matches(":disabled"),
-    ).toBe(false);
-    expect(
-      screen.getByRole("button", { name: "Add artifact" }).matches(":disabled"),
-    ).toBe(false);
-    expect(screen.getByRole("menuitem", { name: "Collapse all" })).toBeTruthy();
-  });
-
   it("keeps the Agents overflow actions available during search", () => {
     seedChatTree();
     usePanelHeaderSearchStore.getState().openSearch(TAB_ID, "chats", "agent");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.getByRole("button", { name: "More agent actions" }),
@@ -2360,7 +2287,7 @@ describe("epic sidebar selection mode", () => {
       .getState()
       .openSearch(TAB_ID, "artifacts", "spec");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.getByRole("button", { name: "More artifact actions" }),
@@ -2404,7 +2331,7 @@ describe("epic sidebar selection mode", () => {
     it("moves focus from the Agents overflow menu into chat search", async () => {
       seedChatTree();
 
-      render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+      render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
       await selectOverflowEntry("More agent actions", "Search agents");
 
@@ -2417,7 +2344,7 @@ describe("epic sidebar selection mode", () => {
       seedArtifactTree();
       testState.activePanelId = "artifacts";
 
-      render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+      render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
       await selectOverflowEntry("More artifact actions", "Search artifacts");
 
@@ -2430,7 +2357,7 @@ describe("epic sidebar selection mode", () => {
   it("hides artifact selection when there are no artifacts to select", () => {
     testState.activePanelId = "artifacts";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen
@@ -2447,7 +2374,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
 
     const { rerender } = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
+      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />,
     );
 
     const markAllReadButton = screen.getByRole("button", {
@@ -2457,7 +2384,7 @@ describe("epic sidebar selection mode", () => {
     expect(markAllReadButton.matches(":disabled")).toBe(true);
 
     testState.unreadArtifactIds = new Set(["ticket-child"]);
-    rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen
@@ -2468,7 +2395,7 @@ describe("epic sidebar selection mode", () => {
     ).toBe(false);
 
     testState.unreadArtifactIds = new Set<string>();
-    rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen
@@ -2484,7 +2411,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
     testState.unreadArtifactIds = new Set(["spec-root", "ticket-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -2501,7 +2428,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
     testState.permissionRole = "viewer";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(
       screen.getByTestId("epic-sidebar-export-markdown-spec-root"),
@@ -2526,7 +2453,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
     testState.permissionRole = "viewer";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select artifacts" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-spec-root"));
@@ -2565,7 +2492,7 @@ describe("epic sidebar selection mode", () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select artifacts" }));
     expect(
@@ -2599,7 +2526,7 @@ describe("epic sidebar selection mode", () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.queryByTestId("epic-sidebar-select-spec-root")).toBeNull();
 
@@ -2622,7 +2549,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
     testState.unreadArtifactIds = new Set(["ticket-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByTestId("epic-sidebar-item-ticket-child");
     const marker = screen.getByTestId("epic-sidebar-unread-ticket-child");
@@ -2642,7 +2569,7 @@ describe("epic sidebar selection mode", () => {
     testState.expandedIds = new Set<string>();
     testState.unreadArtifactIds = new Set(["ticket-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.queryByTestId("epic-sidebar-item-ticket-child")).toBeNull();
     const marker = screen.getByTestId("epic-sidebar-unread-spec-root");
@@ -2660,7 +2587,7 @@ describe("epic sidebar selection mode", () => {
     testState.expandedIds = new Set(["spec-root"]);
     testState.unreadArtifactIds = new Set(["ticket-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // Expanded: the child is visible with its own marker and the parent shows
     // none (no double-signal of the same unread artifact).
@@ -2674,7 +2601,7 @@ describe("epic sidebar selection mode", () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(seedEpicArtifacts).toHaveBeenCalledWith(
       EPIC_ID,
@@ -2690,7 +2617,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
     testState.snapshotLoaded = false;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(seedEpicArtifacts).not.toHaveBeenCalled();
   });
@@ -2700,7 +2627,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "artifacts";
     testState.activeArtifactId = "ticket-child";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(markRead).toHaveBeenCalledWith(EPIC_ID, "ticket-child", 1);
   });
@@ -2710,7 +2637,7 @@ describe("epic sidebar selection mode", () => {
     testState.activePanelId = "chats";
     testState.activeArtifactId = "chat-root";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(markRead).not.toHaveBeenCalled();
   });
@@ -2745,6 +2672,20 @@ function leadingStatusKinds(nodeId: string): readonly string[] {
   return LEADING_STATUS_KINDS.filter(
     (kind) =>
       screen.queryByTestId(`chat-sidebar-spinner-${kind}-${nodeId}`) !== null,
+  );
+}
+
+/**
+ * The `data-status-glyph` kind drawn inside a leading status testid, for the
+ * sidebar tree's rows (D12's shared vocabulary, which every surface now
+ * draws - only a tone the glyph set has no shape for keeps a lucide icon).
+ */
+function statusGlyphKind(testId: string): string | null {
+  return (
+    screen
+      .getByTestId(testId)
+      .closest("[data-status-glyph]")
+      ?.getAttribute("data-status-glyph") ?? null
   );
 }
 
@@ -2855,7 +2796,7 @@ describe("chat descendant status rollup", () => {
       "chat-root": indicator({ pendingFork: true }),
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const glyph = screen.getByTestId("chat-sidebar-spinner-fork-chat-root");
     // The indicator survives - an open episode is real state and worth showing
@@ -2877,9 +2818,7 @@ describe("chat descendant status rollup", () => {
     seedNestedChatTree();
     seedLocalChatFailure("chat-grandchild");
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // The grandchild's row is not even mounted, yet its status reaches the
     // collapsed root as the rollup badge.
@@ -2892,9 +2831,7 @@ describe("chat descendant status rollup", () => {
 
     // Expanding the root moves the rollup down to the still-collapsed child.
     testState.expandedIds = new Set(["chat-root"]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-failure-chat-root"),
     ).toBeNull();
@@ -2904,9 +2841,7 @@ describe("chat descendant status rollup", () => {
 
     // Fully expanded: the grandchild presents its own status, no rollups left.
     testState.expandedIds = new Set(["chat-root", "chat-child"]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-failure-chat-child"),
     ).toBeNull();
@@ -2922,9 +2857,7 @@ describe("chat descendant status rollup", () => {
       "chat-grandchild": indicator({ unreadDone: true }),
     };
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // Running outranks unread completion...
     expect(
@@ -2938,9 +2871,7 @@ describe("chat descendant status rollup", () => {
     act(() => {
       seedLocalChatFailure("chat-child");
     });
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-running-chat-root"),
     ).toBeNull();
@@ -2958,9 +2889,7 @@ describe("chat descendant status rollup", () => {
       "agent-child": indicator({ unreadDone: true }),
     };
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // Hidden behind the collapsed root, the agent's completion rolls up.
     expect(
@@ -2970,9 +2899,7 @@ describe("chat descendant status rollup", () => {
     // Expanded, the agent row wears its own done indicator instead of the
     // harness brand mark.
     testState.expandedIds = new Set(["chat-root"]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-done-chat-root"),
     ).toBeNull();
@@ -2992,7 +2919,7 @@ describe("chat descendant status rollup", () => {
       "chat-child": indicator({ unreadDone: true }),
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // The parent is running (rank below failure), so the nested failure owns
     // the icon slot - rendered as the muted variant in place of the parent's
@@ -3013,9 +2940,7 @@ describe("chat descendant status rollup", () => {
     testState.activeAgentIds = new Set(["agent-child"]);
     seedLocalChatFailure("chat-root");
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-running-chat-root"),
     ).toBeNull();
@@ -3031,9 +2956,7 @@ describe("chat descendant status rollup", () => {
       "chat-root": indicator({ pendingApproval: true }),
       "chat-grandchild": indicator({ pendingApproval: true }),
     };
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-approval-chat-root"),
     ).toBeNull();
@@ -3049,16 +2972,14 @@ describe("chat descendant status rollup", () => {
     testState.activeAgentIds = new Set(["chat-grandchild"]);
     testState.activityTierById = new Map([["chat-grandchild", "background"]]);
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     const backgroundIcon = screen.getByTestId(
       "chat-descendant-status-background-chat-root",
     );
     expect(backgroundIcon).toBeTruthy();
     expect(backgroundIcon.getAttribute("class")).toContain("opacity-60");
     expect(
-      backgroundIcon.querySelector(".lucide-message-square-clock"),
+      backgroundIcon.querySelector('[data-status-glyph="background"]'),
     ).not.toBeNull();
     expect(
       screen.queryByTestId("chat-descendant-status-running-chat-root"),
@@ -3066,9 +2987,7 @@ describe("chat descendant status rollup", () => {
 
     // Same descendant, now genuinely mid-turn: the busier tier takes the slot.
     testState.activityTierById = new Map([["chat-grandchild", "turn"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId("chat-descendant-status-running-chat-root"),
     ).toBeTruthy();
@@ -3085,7 +3004,7 @@ describe("chat descendant status rollup", () => {
       ["chat-grandchild", "turn"],
     ]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     const icon = screen.getByTestId("chat-descendant-status-running-chat-root");
     expect(icon).toBeTruthy();
     // The tooltip breaks the aggregate down across both tiers.
@@ -3104,7 +3023,7 @@ describe("chat descendant status rollup", () => {
       ["chat-grandchild", "turn"],
     ]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId("chat-descendant-status-running-chat-root"),
     ).toBeTruthy();
@@ -3116,17 +3035,13 @@ describe("chat descendant status rollup", () => {
       "chat-child": indicator({ unreadDone: true }),
     };
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId("chat-descendant-status-done-chat-root"),
     ).toBeTruthy();
 
     testState.indicatorChats = {};
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-done-chat-root"),
     ).toBeNull();
@@ -3139,9 +3054,7 @@ describe("chat descendant status rollup", () => {
       "chat-grandchild": indicator({ pendingInterview: true }),
     };
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId("chat-descendant-status-interview-chat-root"),
     ).toBeTruthy();
@@ -3149,9 +3062,7 @@ describe("chat descendant status rollup", () => {
     act(() => {
       seedLocalChatFailure("chat-child");
     });
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-interview-chat-root"),
     ).toBeNull();
@@ -3169,7 +3080,7 @@ describe("chat descendant status rollup", () => {
     testState.activeAgentIds = new Set(["agent-child"]);
     seedLocalChatFailure("chat-grandchild");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-descendant-status-running-chat-root"),
     ).toBeNull();
@@ -3217,7 +3128,7 @@ describe("chat row leading status icon", () => {
       },
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(leadingStatusKinds("chat-child")).toEqual(["done"]);
   });
@@ -3225,9 +3136,7 @@ describe("chat row leading status icon", () => {
   it("walks a leaf chat row through every leading status icon in precedence order", () => {
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     // Idle: no attention state, no activity tier - the icon falls back to the
     // plain chat glyph and the trailing slot carries the relative time.
     expect(leadingStatusKinds("chat-child")).toEqual([]);
@@ -3237,34 +3146,40 @@ describe("chat row leading status icon", () => {
     testState.indicatorChats = {
       "chat-child": indicator({ unreadDone: true }),
     };
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["done"]);
+    // The tree draws every state through the shared D12 glyph vocabulary,
+    // not a surface-specific tone icon.
+    expect(statusGlyphKind("chat-sidebar-spinner-done-chat-child")).toBe(
+      "done",
+    );
 
     // Background activity outranks unread-done.
     testState.activeAgentIds = new Set(["chat-child"]);
     testState.activityTierById = new Map([["chat-child", "background"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["background-activity"]);
+    expect(
+      statusGlyphKind("chat-sidebar-spinner-background-activity-chat-child"),
+    ).toBe("background");
 
     // A running turn outranks background activity.
     testState.activityTierById = new Map([["chat-child", "turn"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["activity"]);
+    expect(statusGlyphKind("chat-sidebar-spinner-activity-chat-child")).toBe(
+      "running",
+    );
 
     // A pending approval outranks a running turn.
     testState.indicatorChats = {
       "chat-child": indicator({ pendingApproval: true }),
     };
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["approval"]);
+    expect(statusGlyphKind("chat-sidebar-spinner-approval-chat-child")).toBe(
+      "approval",
+    );
 
     // A pending interview outranks a pending approval.
     testState.indicatorChats = {
@@ -3273,10 +3188,11 @@ describe("chat row leading status icon", () => {
         pendingInterview: true,
       }),
     };
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["interview"]);
+    expect(statusGlyphKind("chat-sidebar-spinner-interview-chat-child")).toBe(
+      "interview",
+    );
 
     // A failure outranks everything, including a pending interview.
     testState.indicatorChats = {
@@ -3287,10 +3203,11 @@ describe("chat row leading status icon", () => {
     act(() => {
       seedLocalChatFailure("chat-child");
     });
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["failure"]);
+    expect(statusGlyphKind("chat-sidebar-spinner-failure-chat-child")).toBe(
+      "failure",
+    );
 
     // Through all of it the trailing slot keeps the relative time: the icon
     // carries status, the slot carries time, and neither displaces the other.
@@ -3300,9 +3217,7 @@ describe("chat row leading status icon", () => {
   it("splits a TUI terminal-agent row's own icon by activity tier, as the rollup already does", () => {
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     // With no notification state for this agent the icon only reaches the
     // tier / idle arms: idle wears the harness brand.
     const agentRow = screen.getByTestId("epic-sidebar-item-agent-root");
@@ -3314,9 +3229,7 @@ describe("chat row leading status icon", () => {
     expect(idleTime("agent-root")).toBeTruthy();
 
     testState.activeAgentIds = new Set(["agent-root"]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId("terminal-agent-sidebar-activity-agent-root"),
     ).toBeTruthy();
@@ -3326,9 +3239,7 @@ describe("chat row leading status icon", () => {
     // background glyph for that same agent - two surfaces disagreeing about one
     // fact. The trailing chip used to carry the tier; the icon carries it now.
     testState.activityTierById = new Map([["agent-root", "background"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId(
         "terminal-agent-sidebar-background-activity-agent-root",
@@ -3363,7 +3274,7 @@ describe("unreachable-owner chat rows (tree lock + published-copy routing)", () 
     testState.rowHostId = "host-dead";
     testState.rowHostReachability = "unreachable";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-sidebar-tree-lock-chat-root")).toBeTruthy();
   });
@@ -3373,7 +3284,7 @@ describe("unreachable-owner chat rows (tree lock + published-copy routing)", () 
     testState.rowHostId = "host-1";
     testState.rowHostReachability = "reachable";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.queryByTestId("epic-sidebar-tree-lock-chat-root")).toBeNull();
   });
@@ -3383,7 +3294,7 @@ describe("unreachable-owner chat rows (tree lock + published-copy routing)", () 
     testState.rowHostId = "host-dead";
     testState.rowHostReachability = "unreachable";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-item-chat-root"));
 
     expect(testState.preparedOpenRefs).toHaveLength(1);
@@ -3395,7 +3306,7 @@ describe("unreachable-owner chat rows (tree lock + published-copy routing)", () 
     testState.rowHostId = "host-b";
     testState.rowHostReachability = "reachable";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-item-chat-root"));
 
     expect(testState.preparedOpenRefs).toHaveLength(1);
@@ -3435,7 +3346,7 @@ describe("chat row read-only arm", () => {
     seedChatTree();
     testState.permissionRole = "viewer";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const lock = readOnlyLock("chat-child");
     expect(lock).toBeTruthy();
@@ -3453,9 +3364,7 @@ describe("chat row read-only arm", () => {
 
     // A running turn outranks read-only.
     testState.activeAgentIds = new Set(["chat-child"]);
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["activity"]);
     expect(readOnlyLock("chat-child")).toBeNull();
 
@@ -3464,9 +3373,7 @@ describe("chat row read-only arm", () => {
     act(() => {
       seedLocalChatFailure("chat-child");
     });
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["failure"]);
     expect(readOnlyLock("chat-child")).toBeNull();
 
@@ -3477,9 +3384,7 @@ describe("chat row read-only arm", () => {
     testState.indicatorChats = {
       "chat-child": indicator({ unreadDone: true }),
     };
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["done"]);
     expect(readOnlyLock("chat-child")).toBeNull();
   });
@@ -3488,7 +3393,7 @@ describe("chat row read-only arm", () => {
     seedChatTree();
     testState.permissionRole = "viewer";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(idleTime("agent-root")).toBeTruthy();
     expect(readOnlyLock("agent-root")).toBeNull();
@@ -3542,7 +3447,7 @@ describe("status survives selection mode and rename", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     seedLocalChatFailure("chat-grandchild");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     // Sanity check before entering selection mode: chat-root shows its own
     // turn spinner and chat-child shows the hidden grandchild's rollup.
     expect(leadingStatusKinds("chat-root")).toEqual(["activity"]);
@@ -3564,7 +3469,7 @@ describe("status survives selection mode and rename", () => {
     seedSelectionParityTree();
     seedLocalChatFailure("chat-grandchild");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     // Sanity check: chat-child is collapsed and rolls the grandchild's
     // failure up while not being renamed.
     expect(
@@ -3681,17 +3586,13 @@ describe("chat status icon session authority (open session vs awareness)", () =>
     });
     testState.sessionHandleByChatId = { "chat-child": handle };
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(leadingStatusKinds("chat-child")).toEqual(["background-activity"]);
 
     // No open session any more - falls back to the awareness tier ("turn").
     testState.sessionHandleByChatId = {};
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["activity"]);
   });
 
@@ -3700,7 +3601,7 @@ describe("chat status icon session authority (open session vs awareness)", () =>
     const handle = createSessionHandle("chat-child");
     testState.sessionHandleByChatId = { "chat-child": handle };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     // Access snapshot not arrived yet (null) - must not flash the lock.
     expect(leadingStatusKinds("chat-child")).toEqual([]);
     expect(readOnlyLock("chat-child")).toBeNull();
@@ -3719,7 +3620,7 @@ describe("chat status icon session authority (open session vs awareness)", () =>
     });
     testState.sessionHandleByChatId = { "chat-child": handle };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(readOnlyLock("chat-child")).toBeTruthy();
     // Exactly ONE announced read-only status in the whole tree. There used to
@@ -3762,36 +3663,26 @@ describe("chat row idle-time compact format", () => {
     const now = Date.now();
 
     seedIdleTimeTree(now);
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(idleTime("chat-root")?.textContent).toBe("now");
 
     seedIdleTimeTree(now - 23 * 60_000);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(idleTime("chat-root")?.textContent).toBe("23m");
 
     seedIdleTimeTree(now - 3 * 60 * 60_000);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(idleTime("chat-root")?.textContent).toBe("3h");
 
     seedIdleTimeTree(now - 6 * 24 * 60 * 60_000);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     const sixDays = idleTime("chat-root");
     expect(sixDays?.textContent).toBe("6d");
     expect(sixDays?.textContent).not.toContain("ago");
 
     const farPast = now - 40 * 24 * 60 * 60_000;
     seedIdleTimeTree(farPast);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     const shortDate = idleTime("chat-root");
     expect(shortDate?.textContent).toBe(
       new Date(farPast).toLocaleDateString(undefined, {
@@ -3873,7 +3764,7 @@ describe("sidebar leading identity icon", () => {
       "chat-child": "claude",
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expectChatGlyphWithoutHarness("chat-root");
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
@@ -3885,7 +3776,7 @@ describe("sidebar leading identity icon", () => {
       "chat-root": "codex",
       "chat-child": "claude",
     };
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-rename-chat-root"));
     expect(
       screen.getByTestId("epic-sidebar-rename-input-chat-root"),
@@ -3897,7 +3788,7 @@ describe("sidebar leading identity icon", () => {
     seedChatTree();
     testState.tuiHarnessIds = { "agent-root": "codex" };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expectTuiHarness("agent-root");
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
@@ -3906,7 +3797,7 @@ describe("sidebar leading identity icon", () => {
     cleanup();
     seedChatTree();
     testState.tuiHarnessIds = { "agent-root": "codex" };
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-rename-agent-root"));
     expect(
       screen.getByTestId("epic-sidebar-rename-input-agent-root"),
@@ -3933,7 +3824,7 @@ describe("sidebar leading identity icon", () => {
       },
     ];
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expectTuiHarness("agent-root");
     expect(
       screen.getByTestId("sidebar-agent-profile-mark-agent-root"),
@@ -3964,7 +3855,7 @@ describe("sidebar leading identity icon", () => {
       },
     ];
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expectTuiHarness("agent-root");
     expect(screen.getByRole("img", { name: "claude" })).toBeTruthy();
     const mark = screen.getByTestId("sidebar-agent-profile-mark-agent-root");
@@ -3974,7 +3865,7 @@ describe("sidebar leading identity icon", () => {
   it("falls back to the bot glyph when a TUI row has no harness id", () => {
     seedChatTree();
     // tuiHarnessIds stays empty → useMaybeEpicTuiAgentHarnessId returns null.
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const tuiRow = screen.getByTestId("epic-sidebar-item-agent-root");
     expect(tuiRow.querySelector(".lucide-bot")).not.toBeNull();
@@ -3987,7 +3878,7 @@ describe("sidebar leading identity icon", () => {
     testState.tuiHarnessIds = { "agent-root": "codex" };
     testState.activeAgentIds = new Set(["agent-root"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.getByTestId("terminal-agent-sidebar-activity-agent-root"),
@@ -4000,7 +3891,7 @@ describe("sidebar leading identity icon", () => {
     seedChatTree();
     testState.tuiHarnessIds = { "agent-root": "codex" };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // jsdom has no layout, so assert the structural contract instead: the row
     // is a horizontal flex with items-center; the chevron and the leading icon
@@ -4050,7 +3941,7 @@ describe("sidebar leading identity icon", () => {
     testState.tuiHarnessIds = { "agent-root": "codex" };
     testState.activeAgentIds = new Set(["chat-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // Idle chat: leading chat glyph, trailing relative time.
     const chatRoot = screen.getByTestId("epic-sidebar-item-chat-root");
@@ -4078,7 +3969,7 @@ describe("sidebar leading identity icon", () => {
     testState.tuiHarnessIds = { "agent-root": "codex" };
     testState.activeAgentIds = new Set(["chat-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // The slot was `aria-hidden` while a trailing status chip existed, because
     // the two said the same thing and a read-only row announced "Read-only
@@ -4131,7 +4022,7 @@ describe("terminal-agent row session-state badge", () => {
       },
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const badge = screen.getByTestId("chat-row-session-state-agent-root");
     expect(badge.textContent).toBe("Asleep");
@@ -4178,7 +4069,7 @@ describe("terminal-agent row session-state badge", () => {
           lastExit,
         },
       };
-      render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+      render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
       const rowBadge = screen.getByTestId("chat-row-session-state-agent-root");
       expect(rowBadge.textContent).toBe("Asleep");
       fireEvent.focus(rowBadge);
@@ -4203,7 +4094,7 @@ describe("terminal-agent row session-state badge", () => {
       },
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
 
     expect(
@@ -4233,7 +4124,7 @@ describe("terminal-agent row session-state badge", () => {
       },
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const badge = screen.getByTestId("chat-row-session-state-agent-root");
     expect(badge.textContent).toBe("Stopped");
@@ -4257,7 +4148,7 @@ describe("terminal-agent row session-state badge", () => {
       },
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // The prefix still renders - suppressing the badge must not cost the row
     // the state it does still need to show.
@@ -4283,7 +4174,7 @@ describe("terminal-agent row session-state badge", () => {
     testState.tuiAgentById = {
       "agent-root": { hostId: "host-1", profileId: null, sessionState: null },
     };
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-row-session-state-agent-root"),
     ).toBeNull();
@@ -4296,7 +4187,7 @@ describe("terminal-agent row session-state badge", () => {
         sessionState: "running",
       },
     };
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("chat-row-session-state-agent-root"),
     ).toBeNull();
@@ -4322,7 +4213,6 @@ describe("chat row archive", () => {
     testState.activePanelId = "chats";
     testState.artifactFilterKinds = [];
     testState.chatFilterOrigin = "all";
-    testState.collapsedPanelIds = new Set<string>();
     testState.expandedIds = new Set<string>();
     testState.unreadArtifactIds = new Set<string>();
     testState.tree = { rootIds: [], childrenByParent: {}, nodeById: {} };
@@ -4411,7 +4301,7 @@ describe("chat row archive", () => {
     // Only the parent carries the flag - descendants are not in archivedIds.
     testState.archivedIds = ["chat-root"];
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
     expect(screen.queryByTestId("epic-sidebar-item-chat-child")).toBeNull();
@@ -4431,7 +4321,7 @@ describe("chat row archive", () => {
     // clears; the descendant's flag keeps its subtree hidden.
     testState.archivedIds = ["chat-child"];
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-sidebar-item-chat-root")).toBeTruthy();
     expect(screen.queryByTestId("epic-sidebar-item-chat-child")).toBeNull();
@@ -4447,16 +4337,12 @@ describe("chat row archive", () => {
     seedArchiveSubtree();
     testState.archivedIds = ["chat-root"];
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
     expect(screen.queryByTestId("epic-sidebar-item-chat-child")).toBeNull();
 
     testState.archiveVisibility = "all";
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const rootRow = screen.getByTestId("epic-sidebar-item-chat-root");
     const childRow = screen.getByTestId("epic-sidebar-item-chat-child");
@@ -4466,9 +4352,7 @@ describe("chat row archive", () => {
     expect(childRow.className).not.toContain("opacity-55");
 
     testState.archiveVisibility = "unarchived";
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
     expect(screen.queryByTestId("epic-sidebar-item-chat-child")).toBeNull();
   });
@@ -4478,7 +4362,7 @@ describe("chat row archive", () => {
     testState.archivedIds = ["chat-child"];
     testState.archiveVisibility = "archived";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const ancestor = screen.getByTestId("epic-sidebar-item-chat-root");
     const archived = screen.getByTestId("epic-sidebar-item-chat-child");
@@ -4497,7 +4381,7 @@ describe("chat row archive", () => {
     testState.openTileContentIds = new Set(["agent-root"]);
     testState.activityTierById = new Map([["agent-root", "turn"]]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-sidebar-item-chat-child")).toBeTruthy();
     expect(screen.queryByTestId("epic-sidebar-item-agent-root")).toBeNull();
@@ -4509,7 +4393,7 @@ describe("chat row archive", () => {
     seedChatTree();
     testState.archiveSupport = false;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // Hover button absent (not disabled).
     expect(screen.queryByTestId("epic-sidebar-archive-chat-root")).toBeNull();
@@ -4534,7 +4418,7 @@ describe("chat row archive", () => {
     seedChatTree();
     testState.archiveSupport = true;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-sidebar-archive-chat-root")).toBeTruthy();
     expect(
@@ -4555,24 +4439,18 @@ describe("chat row archive", () => {
   it("shows the hover archive button only on idle rows (B5)", () => {
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.getByTestId("epic-sidebar-archive-chat-child")).toBeTruthy();
 
     // Working (turn).
     testState.activeAgentIds = new Set(["chat-child"]);
     testState.activityTierById = new Map([["chat-child", "turn"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.queryByTestId("epic-sidebar-archive-chat-child")).toBeNull();
 
     // Background activity.
     testState.activityTierById = new Map([["chat-child", "background"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.queryByTestId("epic-sidebar-archive-chat-child")).toBeNull();
 
     // Attention states: failure / interview / approval / unread-done.
@@ -4587,9 +4465,7 @@ describe("chat row archive", () => {
       testState.indicatorChats = {
         "chat-child": indicator(attention),
       };
-      view.rerender(
-        <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-      );
+      view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
       expect(
         screen.queryByTestId("epic-sidebar-archive-chat-child"),
       ).toBeNull();
@@ -4597,16 +4473,14 @@ describe("chat row archive", () => {
 
     // Back to idle: button returns.
     testState.indicatorChats = {};
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.getByTestId("epic-sidebar-archive-chat-child")).toBeTruthy();
   });
 
   it("hides the hover archive button in bulk-selection mode and while renaming (B5)", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.getByTestId("epic-sidebar-archive-chat-root")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
@@ -4616,7 +4490,7 @@ describe("chat row archive", () => {
     // fresh for the rename case.
     cleanup();
     seedChatTree();
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-rename-chat-root"));
     expect(
       screen.getByTestId("epic-sidebar-rename-input-chat-root"),
@@ -4628,7 +4502,7 @@ describe("chat row archive", () => {
 
   it("closes the rename input on commit while the rename RPC is still in flight", async () => {
     seedChatTree();
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-rename-chat-root"));
     const input = screen.getByTestId("epic-sidebar-rename-input-chat-root");
@@ -4662,7 +4536,7 @@ describe("chat row archive", () => {
 
   it("issues a second rename committed while the first is still in flight", async () => {
     seedChatTree();
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const commitRename = (value: string): void => {
       fireEvent.click(screen.getByTestId("epic-sidebar-rename-chat-root"));
@@ -4713,9 +4587,7 @@ describe("chat row archive", () => {
   it("puts Archive/Unarchive in both the ⋯ menu and the right-click menu for non-running rows (B6)", async () => {
     seedChatTree();
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const archiveItem = screen.getByTestId(
       "epic-sidebar-archive-item-chat-root",
@@ -4738,9 +4610,7 @@ describe("chat row archive", () => {
     // itself - see the keyboard-reachability test below.
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "turn"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       isMenuItemUnavailable(
         screen.getByTestId("epic-sidebar-archive-item-chat-root"),
@@ -4752,9 +4622,7 @@ describe("chat row archive", () => {
     testState.activityTierById = new Map();
     testState.archivedIds = ["chat-root"];
     testState.archiveVisibility = "all";
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId("epic-sidebar-archive-item-chat-root").textContent,
     ).toContain("Unarchive");
@@ -4770,7 +4638,7 @@ describe("chat row archive", () => {
     seedChatTree();
     testState.permissionRole = "viewer";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // Hover button absent for viewers (requires canMutate).
     expect(screen.queryByTestId("epic-sidebar-archive-chat-child")).toBeNull();
@@ -4804,7 +4672,7 @@ describe("chat row archive", () => {
     seedChatTree();
     testState.activeAgentIds = new Set(["chat-child"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(leadingStatusKinds("chat-child")).toEqual(["activity"]);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
@@ -4817,7 +4685,7 @@ describe("chat row archive", () => {
     testState.indicatorChats = {
       "chat-child": indicator({ unreadDone: true }),
     };
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.click(screen.getByTestId("epic-sidebar-rename-chat-child"));
     expect(
       screen.getByTestId("epic-sidebar-rename-input-chat-child"),
@@ -4830,7 +4698,7 @@ describe("chat row archive", () => {
   it("calls the archive mutation without optimistically hiding the row (B9)", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-chat-root"));
 
@@ -4847,7 +4715,7 @@ describe("chat row archive", () => {
   it("uses the same archive mutation for a terminal-agent row (B9)", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-agent-root"));
 
@@ -4861,9 +4729,7 @@ describe("chat row archive", () => {
 
   it("shows a visible archive loader until a delayed request settles", () => {
     seedChatTree();
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-chat-root"));
     expect(testState.archiveMutate).toHaveBeenCalledWith({
@@ -4877,9 +4743,7 @@ describe("chat row archive", () => {
     ).toBeNull();
 
     testState.archiveRowPending = true;
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const pendingButton = screen.getByTestId("epic-sidebar-archive-chat-root");
     expect(pendingButton.matches(":disabled")).toBe(true);
@@ -4890,9 +4754,7 @@ describe("chat row archive", () => {
     expect(pendingButton.className).toContain("opacity-100");
 
     testState.archiveRowPending = false;
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("epic-sidebar-archive-pending-chat-root"),
     ).toBeNull();
@@ -4906,22 +4768,16 @@ describe("chat row archive", () => {
     testState.archiveMutate.mockImplementation(() => {
       testState.archiveRowPending = true;
     });
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-chat-root"));
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.getByTestId("epic-sidebar-archive-pending-chat-root"),
     ).toBeTruthy();
 
     testState.archiveRowPending = false;
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       screen.queryByTestId("epic-sidebar-archive-pending-chat-root"),
     ).toBeNull();
@@ -4931,16 +4787,12 @@ describe("chat row archive", () => {
     seedGuiChatTree();
     testState.expandedIds = new Set<string>();
     seedLocalChatFailure("chat-child");
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(screen.queryByTestId("epic-sidebar-archive-chat-root")).toBeNull();
 
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-item-chat-root"));
     testState.archiveRowPending = true;
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const pendingButton = screen.getByTestId("epic-sidebar-archive-chat-root");
     expect(
@@ -4954,15 +4806,11 @@ describe("chat row archive", () => {
     seedChatTree();
     testState.archivedIds = ["chat-root"];
     testState.archiveVisibility = "all";
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-item-chat-root"));
     testState.archiveRowPending = true;
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.getByTestId("epic-sidebar-archive-pending-chat-root"),
@@ -4975,7 +4823,7 @@ describe("chat row archive", () => {
   it("removes the idle-time slot from layout when row controls are revealed", () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const idleTimeSlot = idleTime("chat-root")?.parentElement;
     expect(idleTimeSlot).toBeTruthy();
@@ -4997,7 +4845,7 @@ describe("chat row archive", () => {
     seedChatTree();
     testState.activeArtifactId = "chat-root";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByTestId("epic-sidebar-archive-chat-root"));
 
@@ -5010,7 +4858,7 @@ describe("chat row archive", () => {
     testState.archivedIds = ["chat-root"];
     testState.openTileContentIds = new Set(["chat-root"]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByTestId("epic-sidebar-item-chat-root");
     expect(row.className).toContain("opacity-55");
@@ -5030,7 +4878,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "turn"]]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByTestId("epic-sidebar-item-chat-root");
     expect(within(row).getByTestId("chat-row-archived-label")).toBeTruthy();
@@ -5044,7 +4892,7 @@ describe("chat row archive", () => {
       "chat-root": indicator({ unreadDone: true }),
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByTestId("epic-sidebar-item-chat-root");
     expect(within(row).getByTestId("chat-row-archived-label")).toBeTruthy();
@@ -5062,7 +4910,7 @@ describe("chat row archive", () => {
       },
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByTestId("epic-sidebar-item-chat-root");
     expect(within(row).getByTestId("chat-row-archived-label")).toBeTruthy();
@@ -5077,7 +4925,7 @@ describe("chat row archive", () => {
     };
     const panel = () => (
       <LazyMotion features={domMax}>
-        <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />
+        <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />
       </LazyMotion>
     );
     const view = render(panel());
@@ -5099,16 +4947,12 @@ describe("chat row archive", () => {
     seedGuiChatTree();
     testState.archivedIds = ["chat-root"];
     testState.openTileContentIds = new Set(["chat-root"]);
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("chat-row-archived-label")).toBeTruthy();
 
     testState.archivedIds = [];
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const row = screen.getByTestId("epic-sidebar-item-chat-root");
     expect(within(row).queryByTestId("chat-row-archived-label")).toBeNull();
@@ -5118,7 +4962,7 @@ describe("chat row archive", () => {
   it("leaves the bulk-selection delete flow intact alongside archive (B10)", async () => {
     seedChatTree();
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -5146,7 +4990,7 @@ describe("chat row archive", () => {
       "chat-root": { paneId: "pane-1", instanceId: "peer-same-id" },
     };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
     fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
@@ -5167,7 +5011,7 @@ describe("chat row archive", () => {
     seedGuiChatTree();
     testState.archivedIds = ["chat-root"];
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-chat-sidebar-archived-empty")).toBeTruthy();
     expect(screen.getByText("Every agent here is archived.")).toBeTruthy();
@@ -5183,7 +5027,7 @@ describe("chat row archive", () => {
     seedGuiChatTree();
     testState.archiveVisibility = "archived";
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.getByTestId("epic-chat-sidebar-archived-empty")).toBeTruthy();
     expect(
@@ -5202,7 +5046,7 @@ describe("chat row archive", () => {
     testState.expandedIds = new Set<string>();
     seedLocalChatFailure("chat-child");
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(
       screen.getByTestId("chat-descendant-status-failure-chat-root"),
@@ -5223,7 +5067,7 @@ describe("chat row archive", () => {
     testState.archivedIds = ["chat-root"];
     testState.archiveSupport = false;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // The invariant: an archived record must never become unreachable. Every
     // route back to one - the archive visibility filter, Unarchive entry, the
@@ -5246,7 +5090,7 @@ describe("chat row archive", () => {
     // a positive "known absent" reveals.
     testState.archiveSupport = null;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(screen.queryByTestId("epic-sidebar-item-chat-root")).toBeNull();
   });
@@ -5265,9 +5109,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "turn"]]);
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     for (const attention of [
       { pendingApproval: true },
@@ -5276,9 +5118,7 @@ describe("chat row archive", () => {
       { unreadDone: true },
     ] as const) {
       testState.indicatorChats = { "chat-root": indicator(attention) };
-      view.rerender(
-        <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-      );
+      view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
       expect(
         isMenuItemUnavailable(
           screen.getByTestId("epic-sidebar-archive-item-chat-root"),
@@ -5293,9 +5133,7 @@ describe("chat row archive", () => {
     testState.indicatorChats = {
       "chat-root": indicator({ pendingApproval: true }),
     };
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     expect(
       isMenuItemUnavailable(
         screen.getByTestId("epic-sidebar-archive-item-chat-root"),
@@ -5325,9 +5163,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "turn"]]);
 
-    const view = render(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const turnItem = screen.getByTestId("epic-sidebar-archive-item-chat-root");
     expect(isMenuItemUnavailable(turnItem)).toBe(true);
@@ -5342,9 +5178,7 @@ describe("chat row archive", () => {
     expect(tooltipTextIn(turnItem)).toContain("not a detached subagent");
 
     testState.activityTierById = new Map([["chat-root", "background"]]);
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     const bgItem = screen.getByTestId("epic-sidebar-archive-item-chat-root");
     expect(tooltipTextIn(bgItem)).toBe(
       "Can't archive while this agent has background items running. Stopping the agent won't clear them — wait for them to finish, or stop them from its chat.",
@@ -5370,9 +5204,7 @@ describe("chat row archive", () => {
     // make this pass for the wrong reason.
     testState.activeAgentIds = new Set<string>();
     testState.activityTierById = new Map();
-    view.rerender(
-      <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />,
-    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     const idleItem = screen.getByTestId("epic-sidebar-archive-item-chat-root");
     expect(isMenuItemUnavailable(idleItem)).toBe(false);
     expect(tooltipTextIn(idleItem)).toBeNull();
@@ -5390,7 +5222,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "turn"]]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const entry = screen.getByTestId("epic-sidebar-archive-item-chat-root");
     expect(entry.textContent).toContain("Unarchive");
@@ -5408,7 +5240,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "turn"]]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const item = screen.getByTestId("epic-sidebar-archive-item-chat-root");
     expect(item.getAttribute("aria-disabled")).toBe("true");
@@ -5429,7 +5261,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "turn"]]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const busyItem = screen.getByTestId("epic-sidebar-archive-item-chat-root");
     // Same parent as an entry that has no tooltip: no extra level was
@@ -5448,7 +5280,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "background"]]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.contextMenu(screen.getByTestId("epic-sidebar-item-chat-root"));
 
     const item = screen.getByTestId("epic-sidebar-context-archive-chat-root");
@@ -5482,7 +5314,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set(["chat-root"]);
     testState.activityTierById = new Map([["chat-root", "background"]]);
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
     fireEvent.contextMenu(screen.getByTestId("epic-sidebar-item-chat-root"));
 
     const item = screen.getByTestId("epic-sidebar-context-archive-chat-root");
@@ -5515,7 +5347,7 @@ describe("chat row archive", () => {
     testState.activeAgentIds = new Set();
     testState.archiveRowPending = true;
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     const item = screen.getByTestId("epic-sidebar-archive-item-chat-root");
     // Genuinely unavailable...
@@ -5537,7 +5369,7 @@ describe("chat row archive", () => {
     handle.store.setState({ managedCommands: [runningShell("chat-child")] });
     testState.sessionHandleByChatId = { "chat-child": handle };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     // The leading icon has always read the shell; the gate must agree with it,
     // or the row shows "working" beside an Archive that says it is idle.
@@ -5570,7 +5402,7 @@ describe("chat row archive", () => {
     });
     testState.sessionHandleByChatId = { "chat-child": handle };
 
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />);
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
 
     expect(leadingStatusKinds("chat-child")).toEqual([]);
     const entry = screen.getByTestId("epic-sidebar-archive-item-chat-child");
@@ -5717,7 +5549,7 @@ describe("chat tree on a mounting surface", () => {
   function renderOnSurface(surface: ChatTreeSurface | null) {
     return render(
       <ChatTreeSurfaceContext.Provider value={surface}>
-        <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} side="left" />
+        <EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />
       </ChatTreeSurfaceContext.Provider>,
     );
   }

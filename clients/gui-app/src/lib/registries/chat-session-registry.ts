@@ -50,6 +50,7 @@ import {
 import {
   ChatSessionRegistry,
   DEFAULT_CHAT_IDLE_TTL_MS,
+  chatCapHasActiveWork,
 } from "@/stores/chats/session-registry";
 import {
   BROWSER_STREAM_FLUSH_TIMERS,
@@ -57,7 +58,15 @@ import {
 } from "@/stores/chats/stream-flush-coordinator";
 import { createRendererRuntimeEnvironment } from "@/stores/epics/open-epic/runtime/runtime-environment";
 import { setEpicChatWorkProbe } from "@/stores/epics/open-epic/session-registry";
+import { subscribeAgentActivity } from "@/stores/agent-activity-store";
 import { getRetentionProfile } from "@/stores/replica-memory/retention-profile";
+import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
+import { createManagedDataByteBudget } from "@/stores/replica-memory/managed-data-byte-budget";
+import {
+  readProcessMemoryRuntime,
+  subscribeProcessMemorySettlements,
+  subscribeProcessMemoryProvisionalCharges,
+} from "@/stores/replica-memory/process-memory-accountant";
 
 const registry = new ChatSessionRegistry({
   idleTtlMs: DEFAULT_CHAT_IDLE_TTL_MS,
@@ -65,6 +74,49 @@ const registry = new ChatSessionRegistry({
   // read on every cap walk so the phone's smaller pool applies whenever its
   // bootstrap selected it.
   maxWarmSessions: () => getRetentionProfile().maxWarmChatSessions,
+});
+
+const managedDataByteBudget = createManagedDataByteBudget({
+  readAccountedBytes: () =>
+    readProcessMemoryRuntime()?.accountant.snapshot().totalChargedBytes ?? null,
+  readLimitBytes: () => getRetentionProfile().maxManagedDataBytes,
+  evictOldestChat: () => registry.evictOldestEligibleForByteBudget(),
+  evictOldestTask: () =>
+    getOpenEpicRegistry().evictOldestEligibleForByteBudget(),
+  scheduleMicrotask: (callback) => queueMicrotask(callback),
+});
+let byteGraceTimer: number | null = null;
+let byteGraceDeadlineMs: number | null = null;
+function scheduleByteGraceWake(): void {
+  const deadlineMs = getOpenEpicRegistry().nextByteEvictionGraceDeadlineMs();
+  if (deadlineMs === byteGraceDeadlineMs) return;
+  if (byteGraceTimer !== null) clearTimeout(byteGraceTimer);
+  byteGraceTimer = null;
+  byteGraceDeadlineMs = deadlineMs;
+  if (deadlineMs === null) return;
+  byteGraceTimer = window.setTimeout(
+    () => {
+      byteGraceTimer = null;
+      byteGraceDeadlineMs = null;
+      managedDataByteBudget.noteEligibilityChange();
+      scheduleByteGraceWake();
+    },
+    Math.max(0, deadlineMs - performance.now()),
+  );
+}
+subscribeProcessMemorySettlements(() => {
+  managedDataByteBudget.noteSettlement();
+  scheduleByteGraceWake();
+});
+subscribeProcessMemoryProvisionalCharges(() => {
+  // The budget coalesces a burst into one microtask. Grace eligibility did
+  // not change, so avoid scanning task sessions on every hot-doc edit.
+  managedDataByteBudget.noteSettlement();
+});
+registry.subscribe(() => managedDataByteBudget.noteEligibilityChange());
+getOpenEpicRegistry().subscribe(() => {
+  managedDataByteBudget.noteEligibilityChange();
+  scheduleByteGraceWake();
 });
 
 /**
@@ -83,8 +135,6 @@ const CHAT_SESSION_SCOPE_SEPARATOR = "\u0000";
 
 /** Passed to `reconnectAll` so a hand-driven wake is distinguishable in logs. */
 const CHAT_SESSION_WAKE_REASON = "user-retry";
-
-const handleHostIds = new WeakMap<ChatSessionStoreHandle, string | null>();
 
 let streamClientFactoryOverride: ChatStreamClientFactory | null = null;
 
@@ -142,23 +192,46 @@ setEpicChatWorkProbe((epicId) => registry.unsettledWorkForEpic(epicId));
  * this window's open-tab entries and returns immediately for every epic not
  * sitting on a refused park, which is all of them almost all of the time.
  */
-const chatStoreWatches = new Map<ChatSessionStoreHandle, () => void>();
+interface ChatStoreWatch {
+  unsubscribe: () => void;
+  capHasActiveWork: boolean;
+}
+
+const chatStoreWatches = new Map<ChatSessionStoreHandle, ChatStoreWatch>();
+
+function refreshChatCapEligibility(
+  handle: ChatSessionStoreHandle,
+  watch: ChatStoreWatch,
+): boolean {
+  const next = chatCapHasActiveWork(handle, registry.hostIdForHandle(handle));
+  if (next === watch.capHasActiveWork) return false;
+  watch.capHasActiveWork = next;
+  return true;
+}
 
 function rebindChatStoreWatches(): void {
   const live = new Set(registry.listHandles());
-  for (const [handle, unsubscribe] of Array.from(chatStoreWatches)) {
+  for (const [handle, watch] of Array.from(chatStoreWatches)) {
     if (live.has(handle)) continue;
-    unsubscribe();
+    watch.unsubscribe();
     chatStoreWatches.delete(handle);
   }
   for (const handle of live) {
     if (chatStoreWatches.has(handle)) continue;
-    chatStoreWatches.set(
-      handle,
-      handle.store.subscribe(() => {
-        retryDeferredEpicParks();
-      }),
-    );
+    const watch: ChatStoreWatch = {
+      capHasActiveWork: chatCapHasActiveWork(
+        handle,
+        registry.hostIdForHandle(handle),
+      ),
+      unsubscribe: () => undefined,
+    };
+    watch.unsubscribe = handle.store.subscribe(() => {
+      retryDeferredEpicParks();
+      if (refreshChatCapEligibility(handle, watch)) {
+        managedDataByteBudget.noteEligibilityChange();
+      }
+    });
+    chatStoreWatches.set(handle, watch);
   }
 }
 
@@ -168,10 +241,21 @@ registry.subscribe(() => {
 });
 rebindChatStoreWatches();
 
+// Agent turns are reported on a separate stream. A warm chat can become
+// evictable when that stream removes its turn without a chat-store write or a
+// live epic session to relay the change. Wake the byte budget on that edge.
+subscribeAgentActivity(() => {
+  let changed = false;
+  for (const [handle, watch] of chatStoreWatches) {
+    if (refreshChatCapEligibility(handle, watch)) changed = true;
+  }
+  if (changed) managedDataByteBudget.noteEligibilityChange();
+});
+
 export function getChatSessionHandleHostId(
   handle: ChatSessionStoreHandle,
 ): string | null {
-  return handleHostIds.get(handle) ?? null;
+  return registry.hostIdForHandle(handle);
 }
 
 export function disposeAllChatSessions(): void {
@@ -205,11 +289,14 @@ export function useChatSessionHandle(
   chatId: string,
   hostId: string,
   enabled: boolean,
+  demand: "surface" | "startup",
 ): ChatSessionStoreHandle | null {
   const epicId = useOpenEpicId();
   const paneVisible = usePaneVisible();
   const tabSelected = useTabBodySelected();
-  const visible = paneVisible && tabSelected;
+  // Startup demand survives a hide until its tile handoff or timeout.
+  const visible = demand === "startup" || (paneVisible && tabSelected);
+  const prewarmPriority = demand === "startup" || paneVisible;
   const repeating = useTabCycleRepeating();
   const hostEntry = useHostDirectoryEntry(hostId);
   const lease = useHostLease(hostId);
@@ -363,6 +450,8 @@ export function useChatSessionHandle(
           result.client.interviewSettlementActionsProtocolSupported(),
         autoPermissionModeProtocolSupported: () =>
           result.client.autoPermissionModeProtocolSupported(),
+        queuePauseReasonProtocolSupported: () =>
+          result.client.queuePauseReasonProtocolSupported(),
       };
     };
 
@@ -391,6 +480,7 @@ export function useChatSessionHandle(
     // skips transit admission, so retained bodies stay intact during a hold.
     const mounted = warm !== null && isMountedHandle(warm);
     if (!mounted) setHandle(null);
+    const speculative = !visible;
     const acquire = (): (() => void) | void => {
       if (!visible && isEpicParked(epicId)) return;
       const next = registry.acquire(
@@ -428,16 +518,22 @@ export function useChatSessionHandle(
             transportSilentFor: (ms) =>
               boundStreamClient?.isSilentFor?.(ms) ?? false,
           });
-          if (visible) registry.markTransient(created);
+          if (visible && demand === "surface") registry.markTransient(created);
           return created;
         },
       );
       acquiredHandle = next;
-      // An intentional settled prewarm keeps its lease across later cycles.
-      // Foreground transit still has to earn retention after snapshot load.
-      if (!visible) registry.markPresented(next);
-      handleHostIds.set(next, hostId);
-      setHandle(next);
+      // Hidden neighbours share the normal warm pool and byte accountant.
+      // Only startup and visible (including transit) demand pin a session.
+      if (speculative || demand === "startup") registry.markPresented(next);
+      if (speculative) registry.releaseHandle(epicId, chatId, hostId, next);
+      const refreshRetainedHandle = (): void => {
+        if (registry.peek(epicId, chatId, hostId) !== next) setHandle(null);
+      };
+      const unsubscribeRetention = speculative
+        ? registry.subscribe(refreshRetainedHandle)
+        : () => {};
+      setHandle(registry.peek(epicId, chatId, hostId) === next ? next : null);
 
       // A slow snapshot is never "presented" merely because its skeleton was
       // visible. Shared holders can independently promote the same handle.
@@ -462,12 +558,15 @@ export function useChatSessionHandle(
       return () => {
         unsubscribe();
         if (presentedTimer !== null) clearTimeout(presentedTimer);
-        registry.releaseHandle(epicId, chatId, hostId, next);
+        unsubscribeRetention();
+        if (!speculative) registry.releaseHandle(epicId, chatId, hostId, next);
       };
     };
-    if (!visible && (!mounted || registry.isTransient(warm))) {
+    // Eviction clears the retained handle without an immediate reacquisition
+    // loop under byte pressure. A later selection or repeat-settle requeues it.
+    if (speculative && (!mounted || registry.isTransient(warm))) {
       setHandle(null);
-      return prewarmRetainedChat(paneVisible, acquire);
+      return prewarmRetainedChat(prewarmPriority, acquire);
     }
     return admitColdResource(mounted, repeating, acquire);
     // `openTransport` is referentially stable and reads its deps (auth, runner
@@ -486,8 +585,9 @@ export function useChatSessionHandle(
     ownerIdentityKey,
     userId,
     enabled,
+    demand,
     visible,
-    paneVisible,
+    prewarmPriority,
     repeating,
     openTransport,
     queryClient,
