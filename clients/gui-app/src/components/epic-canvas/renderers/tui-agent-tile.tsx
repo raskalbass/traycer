@@ -1700,8 +1700,12 @@ function TerminalAgentLive(props: TerminalAgentLiveProps) {
       // A live PTY (fresh spawn or completed revive) re-arms the one-shot so
       // a later reap - after another long unwatched stretch - revives again.
       reapedReviveRequestedRef.current = false;
+      // The same handle outlives a restart or a revive in place, so its exit
+      // toast has to re-arm here too: a running session that exits again is
+      // a new exit, and the handle alone would say it was already reported.
+      exitToastShownForHandle.delete(handle);
     }
-  }, [status]);
+  }, [handle, status]);
   useEffect(() => {
     if (status !== "exited") return;
     // Don't close the tab on the kill we issued for a restart - the bootstrap is

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { create, type StoreApi } from "zustand";
 import type { TerminalSessionExitReason } from "@traycer/protocol/host/terminal/unary-schemas";
@@ -35,9 +35,9 @@ const testState = vi.hoisted(() => ({
 }));
 
 type ExitedStoreState = {
-  readonly status: "exited";
+  readonly status: "exited" | "running";
   readonly connectionStatus: "open";
-  readonly exitCode: number;
+  readonly exitCode: number | null;
   readonly exitReason: TerminalSessionExitReason | null;
   readonly effectiveCols: number;
   readonly effectiveRows: number;
@@ -338,6 +338,41 @@ describe("<TuiAgentTile /> exit toast dedupe", () => {
         />,
       ),
     );
+
+    await waitFor(() => {
+      expect(reportableErrorToast).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("re-arms when the same handle returns to running and exits again", async () => {
+    const fixture = openAgentFixture();
+    const handle = createExitedHandle("agent-1");
+    handleState.current = handle;
+
+    render(
+      withQueryClient(
+        <TuiAgentTile
+          viewTabId={fixture.viewTabId}
+          node={fixture.closingNode}
+          tileId={fixture.paneId}
+          isActive
+        />,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(reportableErrorToast).toHaveBeenCalledTimes(1);
+    });
+
+    // A restart or a revive in place: the SAME handle goes back to running,
+    // then the relaunched process fails as well. That second exit is a new
+    // one and must not be swallowed by the first exit's entry.
+    act(() => {
+      handle.store.setState({ status: "running", exitCode: null });
+    });
+    act(() => {
+      handle.store.setState({ status: "exited", exitCode: 1 });
+    });
 
     await waitFor(() => {
       expect(reportableErrorToast).toHaveBeenCalledTimes(2);
