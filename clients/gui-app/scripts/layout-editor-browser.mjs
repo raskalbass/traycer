@@ -1890,6 +1890,10 @@ async function runLiveSwitchPhase(client, pageUrl, pageLoads) {
       if (group === null) return null;
       const left = [...group.querySelectorAll('[role="radio"]')].find((node) => (node.textContent ?? "").trim() === "Left") ?? null;
       if (left === null) return null;
+      // Tagged for the measurement below: Base renders a hidden form input
+      // beside each radio, so the radio's position among its siblings is no
+      // longer its position in the control.
+      left.setAttribute("data-gate-placement-left", "");
       left.scrollIntoView({ block: "center" });
       return true;
     })()`,
@@ -1906,7 +1910,7 @@ async function runLiveSwitchPhase(client, pageUrl, pageLoads) {
     await flush(client);
     const left = await rectOf(
       client,
-      '[data-layout-inspector] [role="radiogroup"][aria-label="Tab placement"] [role="radio"]:nth-child(2)',
+      "[data-layout-inspector] [data-gate-placement-left]",
     );
     const depthBefore = await evaluate(
       client,
