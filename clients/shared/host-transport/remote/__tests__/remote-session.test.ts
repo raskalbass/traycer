@@ -6862,6 +6862,7 @@ describe("RemoteSession pending-unary FATAL rejection (S3)", () => {
   const statusRegistry: VersionedRpcRegistry =
     defineFloorAwareVersionedRpcRegistry(["host.status"] as const, {
       "host.status": {
+        cancelAfterDispatch: true,
         1: {
           latestMinor: 0,
           versions: {
@@ -7273,6 +7274,53 @@ describe("RemoteSession pending-unary FATAL rejection (S3)", () => {
         expect(session.isClosed()).toBe(false);
         expect(session.isReady()).toBe(true);
         expect(relay.errors).toEqual([]);
+      } finally {
+        session.close();
+      }
+    },
+    TEST_BUDGET_MS,
+  );
+
+  it(
+    "does not cancel a dispatched unary when the registry does not permit it, even when the caller opts in",
+    async () => {
+      // host.usage.summary is unmarked in usageSummaryRegistry, on purpose.
+      const relay = new FakeRelayHost();
+      relay.sendOptionalRpc = true;
+      relay.optionalRpcManifest = {
+        "host.usage.summary": { major: 1, minor: 0 },
+      };
+      relay.skipUnaryAutoRespond = true;
+      const lease = new MutableBearerLease("valid-token", "user-1");
+      const session = new RemoteSession({
+        ...buildSessionOptions(relay, lease, null),
+        rpcRegistry: usageSummaryRegistry,
+      });
+      const controller = new AbortController();
+      try {
+        session.start();
+        await vi.waitFor(() => expect(session.isReady()).toBe(true), WAIT);
+
+        const pending = session.sendUnary(
+          "host.usage.summary",
+          {},
+          null,
+          { signal: controller.signal, cancelAfterDispatch: true },
+          null,
+          undefined,
+          false,
+          null,
+        );
+        const outcome = captureSettlement(pending);
+        await vi.waitFor(
+          () => expect(relay.unaryRequests).toHaveLength(1),
+          WAIT,
+        );
+
+        controller.abort();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        expect(outcome.settled).toBe(false);
       } finally {
         session.close();
       }

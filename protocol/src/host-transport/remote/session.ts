@@ -1384,7 +1384,9 @@ export class RemoteSession<
         ? cancellation.signal
         : cancellation;
     const postDispatchSignal =
-      cancellation !== null && "signal" in cancellation
+      cancellation !== null &&
+      "signal" in cancellation &&
+      this.options.rpcRegistry[method]?.cancelAfterDispatch === true
         ? cancellation.signal
         : null;
     this.start();
@@ -1722,6 +1724,8 @@ export class RemoteSession<
         }),
       );
     }
+    const postDispatchSignal =
+      methodRegistry.cancelAfterDispatch === true ? abortSignal : null;
     const streamId = this.allocateStreamId();
     const replaySafe = wireIdempotencyKey !== null;
     return new Promise<unknown>((resolve, reject) => {
@@ -1762,9 +1766,9 @@ export class RemoteSession<
           reject,
           timer,
           disposeAbort: () =>
-            abortSignal?.removeEventListener("abort", onAbort),
+            postDispatchSignal?.removeEventListener("abort", onAbort),
         });
-        abortSignal?.addEventListener("abort", onAbort, { once: true });
+        postDispatchSignal?.addEventListener("abort", onAbort, { once: true });
         if (abortSignal?.aborted) {
           onAbort();
           return;

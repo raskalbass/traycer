@@ -88,48 +88,58 @@ function stabilizeRecordSlices(
 }
 
 /** Per worker lifetime; references are compared before structured clone erases them. */
-export function createProjectionEncoder(): (
-  patch: Partial<EpicRuntimeProjection>,
-) => EpicProjectionPatch {
+export function createProjectionEncoder(): {
+  encode(patch: Partial<EpicRuntimeProjection>): EpicProjectionPatch;
+  snapshot(): Partial<EpicRuntimeProjection>;
+} {
   const previous: Partial<EpicRuntimeProjection> = {};
-  return (patch) => {
-    const next: Partial<EpicRuntimeProjection> = { ...patch };
-    stabilizeRecordSlices(next, previous);
-    const sliceDeltas: SliceDelta[] = [];
-    const aliases = new Map<object, string[]>();
-    for (const key of Object.keys(patch)) {
-      const value: unknown = Reflect.get(patch, key);
-      if (typeof value !== "object" || value === null) continue;
-      const group = aliases.get(value);
-      if (group === undefined) aliases.set(value, [key]);
-      else group.push(key);
-    }
-    for (const key of KEYED_SLICES) {
-      const incoming = next[key];
-      if (incoming === undefined) continue;
-      const held = previous[key];
-      Reflect.set(previous, key, incoming);
-      if (held === undefined) continue;
-      const fields: Record<string, unknown> = {};
-      const tables: Record<string, TableDelta> = {};
-      for (const field of Object.keys(incoming)) {
-        const value: unknown = Reflect.get(incoming, field);
-        const before: unknown = Reflect.get(held, field);
-        if (value === before) continue;
-        if (!isRecord(value) || !isRecord(before)) {
-          fields[field] = value;
-          continue;
-        }
-        const delta = diffTable(before, value);
-        if (delta !== null) tables[field] = delta;
+  return {
+    snapshot: () => ({ ...previous }),
+    encode(patch) {
+      const next: Partial<EpicRuntimeProjection> = { ...patch };
+      stabilizeRecordSlices(next, previous);
+      const full = { ...next };
+      const sliceDeltas: SliceDelta[] = [];
+      const aliases = new Map<object, string[]>();
+      for (const key of Object.keys(patch)) {
+        const value: unknown = Reflect.get(patch, key);
+        if (typeof value !== "object" || value === null) continue;
+        const group = aliases.get(value);
+        if (group === undefined) aliases.set(value, [key]);
+        else group.push(key);
       }
-      sliceDeltas.push({ key, fields, tables });
-      delete next[key];
-    }
-    return {
-      ...next,
-      sliceDeltas,
-      sliceAliases: [...aliases.values()].filter((group) => group.length > 1),
-    };
+      for (const key of KEYED_SLICES) {
+        const incoming = next[key];
+        if (incoming === undefined) continue;
+        const held = previous[key];
+        if (held === undefined) continue;
+        const fields: Record<string, unknown> = {};
+        const tables: Record<string, TableDelta> = {};
+        for (const field of Object.keys(incoming)) {
+          const value: unknown = Reflect.get(incoming, field);
+          const before: unknown = Reflect.get(held, field);
+          if (value === before) continue;
+          if (!isRecord(value) || !isRecord(before)) {
+            fields[field] = value;
+            continue;
+          }
+          const delta = diffTable(before, value);
+          if (delta !== null) tables[field] = delta;
+        }
+        sliceDeltas.push({ key, fields, tables });
+        delete next[key];
+      }
+      Object.assign(previous, full);
+      for (const group of aliases.values()) {
+        for (const key of group.slice(1)) {
+          Reflect.set(previous, key, Reflect.get(previous, group[0]));
+        }
+      }
+      return {
+        ...next,
+        sliceDeltas,
+        sliceAliases: [...aliases.values()].filter((group) => group.length > 1),
+      };
+    },
   };
 }

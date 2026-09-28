@@ -58,6 +58,7 @@ const rawRead = defineRpcContract({
 
 const registry = defineVersionedRpcRegistry({
   "latest.read": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -76,6 +77,7 @@ const registry = defineVersionedRpcRegistry({
     },
   },
   "join.await": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -448,6 +450,121 @@ describe("HostRequestCoordinator", () => {
 
     raw.resolve({ value: "command-completed" });
     await flush();
+  });
+
+  it("does not opt a write into post-dispatch cancellation just because scheduling treats it as latest", async () => {
+    // A write scheduled "latest" must not become post-dispatch cancelable.
+    const allLatestCoordinator = new HostRequestCoordinator({
+      registry,
+      schedulingPolicy: {
+        modeFor: () => "latest",
+        joinResponseTimeoutMs: () => null,
+      },
+    });
+    const raw = deferred<{ value: string }>();
+    const observed = { authority: null as HostRequestAuthority | null };
+    const requestAuthority = authority("host-a", "user-a");
+
+    const request = submit(
+      allLatestCoordinator,
+      "fifo.command",
+      { value: 1 },
+      requestAuthority,
+      domain("all-latest-mutation"),
+      (capturedAuthority) => {
+        observed.authority = capturedAuthority;
+        return raw.promise;
+      },
+    );
+
+    await flush();
+    expect(observed.authority?.cancelAfterDispatch).toBe(false);
+
+    raw.resolve({ value: "command-completed" });
+    await expect(request).resolves.toEqual({ value: "command-completed" });
+  });
+
+  it("does not abort a queued write that was promoted to active before the transition abort is consumed", async () => {
+    const allLatestCoordinator = new HostRequestCoordinator({
+      registry,
+      schedulingPolicy: {
+        modeFor: () => "latest",
+        joinResponseTimeoutMs: () => null,
+      },
+    });
+    const firstRaw = deferred<{ value: string }>();
+    const mutationRaw = deferred<{ value: string }>();
+    const observed = { mutationAuthority: null as HostRequestAuthority | null };
+    const requestAuthority = authority("host-a", "user-a");
+
+    submit(
+      allLatestCoordinator,
+      "fifo.command",
+      { value: 1 },
+      requestAuthority,
+      domain("first"),
+      () => firstRaw.promise,
+    );
+    await flush();
+
+    const mutationRequest = submit(
+      allLatestCoordinator,
+      "fifo.command",
+      { value: 1 },
+      requestAuthority,
+      domain("queued-mutation"),
+      (capturedAuthority) => {
+        observed.mutationAuthority = capturedAuthority;
+        return mutationRaw.promise;
+      },
+    );
+
+    const transition = allLatestCoordinator.snapshotAllTransitions();
+
+    // Drains and promotes the queued mutation to active before the abort runs.
+    firstRaw.resolve({ value: "first-completed" });
+    await flush();
+    expect(observed.mutationAuthority).not.toBeNull();
+
+    allLatestCoordinator.abortHostTransition(transition);
+
+    expect(observed.mutationAuthority?.abortSignal.aborted).toBe(false);
+
+    mutationRaw.resolve({ value: "mutation-completed" });
+    await expect(mutationRequest).resolves.toEqual({
+      value: "mutation-completed",
+    });
+  });
+
+  it("permits post-dispatch cancellation for a fifo-scheduled read explicitly marked safe", async () => {
+    const allFifoCoordinator = new HostRequestCoordinator({
+      registry,
+      schedulingPolicy: {
+        modeFor: () => "fifo",
+        joinResponseTimeoutMs: () => null,
+      },
+    });
+    const raw = deferred<{ value: string }>();
+    const observed = { authority: null as HostRequestAuthority | null };
+    const requestAuthority = authority("host-a", "user-a");
+
+    const request = submit(
+      allFifoCoordinator,
+      "latest.read",
+      { path: "/indicator" },
+      requestAuthority,
+      domain("all-fifo-read"),
+      (capturedAuthority) => {
+        observed.authority = capturedAuthority;
+        return raw.promise;
+      },
+    );
+
+    await flush();
+    expect(observed.authority?.cancelAfterDispatch).toBe(true);
+
+    raw.resolve({ value: "read-completed" });
+    await expect(request).resolves.toEqual({ value: "read-completed" });
   });
 
   it("does not apply a delayed transition abort to a read submitted after its snapshot", async () => {

@@ -5392,6 +5392,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.status": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 5,
       versions: {
@@ -5448,6 +5449,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.identity.get": {
+    cancelAfterDispatch: true,
     // The host is the master copy of its own name. An older host has no reader
     // for `host-name.json` at all, so there is nothing to degrade to on-box -
     // clients fall back to the registry `displayName` instead.
@@ -5618,6 +5620,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.getInstallationInfo": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -5643,6 +5646,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // stop the host — collapsing them would put one capability answer, and one
   // degrade decision, over three very different risks.
   "host.service.status": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -5780,6 +5784,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.getRuntimeCapabilities": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -5964,6 +5969,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.notifications.getConfig": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6165,6 +6171,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "host.chatFork.get": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6186,6 +6193,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // unary method flips no negotiation - a client that never calls it cannot
   // tell it exists.
   "chat.readAccumulatedFileChange": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6204,6 +6212,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // host degrades to waiting for the row, which on a non-windowed host always
   // arrives because that host serves the whole transcript.
   "chat.locateRow": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -6216,6 +6225,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // Full-text search over this host's chats. Off-floor: a host without the
   // search index does not advertise it, and the client hides search.
   "chat.search": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -7291,6 +7301,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.listFileTree": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7303,6 +7314,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.listDirectory": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7321,6 +7333,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // (`degrade: unsupported`) and stays out of the released floor / baseline
   // surface.
   "workspace.browseFolders": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -7338,6 +7351,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.readFile": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7354,6 +7368,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // the optional-capability channel (`degrade: unsupported`) and stays out of
   // the released floor / baseline surface.
   "workspace.searchPaths": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -7371,6 +7386,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // so it rides the optional-capability channel (`degrade: unsupported`) and
   // stays out of the released floor / baseline surface.
   "workspace.searchText": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -7384,6 +7400,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.mentionFiles": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7396,6 +7413,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.mentionFolders": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7408,6 +7426,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.mentionWorktrees": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7420,6 +7439,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.mentionGitRoot": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7432,6 +7452,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.mentionGitBranches": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7444,6 +7465,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.mentionGitCommits": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -7456,6 +7478,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     },
   },
   "workspace.resolvePathsByRepoIdentifiers": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8682,6 +8705,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "git.listChangedFiles": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 1,
       versions: {
@@ -8701,6 +8725,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // request changes (working-tree files diff stage-based against the submodule
   // repo root), so there is no v1.1 for these methods.
   "git.getFileDiff": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8713,6 +8738,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "git.getFileDiffs": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -8725,6 +8751,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "git.getCapabilities": {
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {
@@ -9007,6 +9034,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
   },
   "host.fileCopy.status": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10160,6 +10188,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
 // every precise version and bridge at this call site.
 const HOST_RPC_NOTIFICATION_METHODS = {
   "host.notifications.list": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -10224,6 +10253,7 @@ const HOST_RPC_NOTIFICATION_METHODS = {
     },
   },
   "host.notifications.indicatorState": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -11139,6 +11169,7 @@ const HOST_RPC_DRAFTS_REGISTRY_DEFINITION = {
     },
   },
   "drafts.list": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -11190,6 +11221,7 @@ const HOST_RPC_DRAFTS_REGISTRY_DEFINITION = {
     },
   },
   "drafts.readBlob": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 1,
@@ -11227,6 +11259,7 @@ const HOST_RPC_EDITING_REGISTRY_DEFINITION = {
   // Optional edit hydration: full old/new/worktree text is fetched only when
   // the user enters edit mode. Older hosts keep Git diffs read-only.
   "git.getFileContents": {
+    cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
       latestMinor: 0,
@@ -11243,6 +11276,7 @@ const HOST_RPC_EDITING_REGISTRY_DEFINITION = {
 
 type HostRpcNotificationMethodMap = {
   readonly "host.notifications.list": {
+    readonly cancelAfterDispatch: true;
     readonly degrade: { readonly kind: "unsupported" };
     readonly 1: {
       readonly latestMinor: 0;
@@ -11295,6 +11329,7 @@ type HostRpcNotificationMethodMap = {
     };
   };
   readonly "host.notifications.indicatorState": {
+    readonly cancelAfterDispatch: true;
     readonly degrade: { readonly kind: "unsupported" };
     readonly 1: {
       readonly latestMinor: 1;

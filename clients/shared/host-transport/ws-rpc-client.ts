@@ -356,6 +356,10 @@ export class WsRpcClient<
       hostId: selected.hostId,
       evidence: this.evidence,
       liveness: this.liveness,
+      canCancelAfterDispatch: (dispatchedMethod) =>
+        authority.cancelAfterDispatch === true &&
+        this.registry[method]?.cancelAfterDispatch === true &&
+        this.registry[dispatchedMethod]?.cancelAfterDispatch === true,
     });
     const onAbort = (): void => {
       session.abort();
@@ -1031,6 +1035,7 @@ interface AttestationGrace {
 }
 
 interface SessionOptions {
+  readonly canCancelAfterDispatch: (method: string) => boolean;
   readonly socket: WebSocketLike;
   readonly dialTimeoutMs: number;
   /** See `WsRpcClientOptions.hostAttestationWindowMs`. */
@@ -1231,6 +1236,7 @@ function openSession(options: SessionOptions): Session {
   // lift the ambiguity, by attesting it never dispatched the request - which
   // is what the attestation grace below waits for.
   let requestSent = false;
+  let cancelAfterDispatch = false;
   let requestReplaySafe = false;
   let failure: HostRpcError | null = null;
   // Non-null only for the duration of the attestation grace: the ambiguous
@@ -1610,12 +1616,14 @@ function openSession(options: SessionOptions): Session {
       // older host stripped or never advertised never reaches this branch.
       if (frame.kind === "request") {
         requestSent = true;
+        cancelAfterDispatch = options.canCancelAfterDispatch(frame.method);
         requestReplaySafe = typeof frame.idempotencyKey === "string";
       }
       socket.send(JSON.stringify(frame));
     },
 
     abort(): void {
+      if (requestSent && !cancelAfterDispatch) return;
       failAll(
         new HostRequestAbortedError({
           message:

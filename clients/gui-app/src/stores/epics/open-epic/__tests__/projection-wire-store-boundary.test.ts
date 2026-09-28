@@ -57,7 +57,7 @@ describe("projection wire - encoder output applied through the store boundary", 
       writeCommand: null,
     });
     const opened = handle;
-    const encode = createProjectionEncoder();
+    const encoder = createProjectionEncoder();
 
     const c1First = chatProjection({ id: "c1", title: "First" });
     const c2 = chatProjection({ id: "c2", title: "Second" });
@@ -80,7 +80,7 @@ describe("projection wire - encoder output applied through the store boundary", 
     // chats/docChats are aliased (same ref), as `unionChats` hands through.
     opened.projection.apply(
       structuredClone(
-        encode({
+        encoder.encode({
           chats: chatsSliceA,
           docChats: chatsSliceA,
           chatRecords: chatRecordsSliceA,
@@ -107,7 +107,7 @@ describe("projection wire - encoder output applied through the store boundary", 
       byId: { c1: rc1Renamed, c3: rc3SecondAllocation },
       allIds: ["c1", "c3"],
     };
-    const patch = encode({
+    const patch = encoder.encode({
       chats: chatsSliceB,
       docChats: chatsSliceB,
       chatRecords: chatRecordsSliceB,
@@ -166,7 +166,7 @@ describe("projection wire - encoder output applied through the store boundary", 
       byId: { c1: rc1RenamedAgain, c3: rc3SecondAllocation },
       allIds: ["c1", "c3"],
     };
-    const patch3 = encode({ chatRecords: chatRecordsSliceC });
+    const patch3 = encoder.encode({ chatRecords: chatRecordsSliceC });
     const chatRecordsDelta3 = patch3.sliceDeltas?.find(
       (delta) => delta.key === "chatRecords",
     );
@@ -179,5 +179,14 @@ describe("projection wire - encoder output applied through the store boundary", 
       c1: rc1RenamedAgain,
     });
     expect(Object.hasOwn(chatRecordsDelta3.fields, "allIds")).toBe(false);
+
+    // A missed delta over a non-keyed field, never applied - snapshot() repairs it.
+    encoder.encode({ isDirty: true });
+    opened.projection.apply(structuredClone(encoder.snapshot()), 3);
+
+    const afterRepair = opened.store.getState();
+    expect(afterRepair.isDirty).toBe(true);
+    expect(afterRepair.chats.byId.c1.title).toBe("Renamed");
+    expect(afterRepair.chats.byId.c3).toBe(c3BeforeSecond);
   });
 });

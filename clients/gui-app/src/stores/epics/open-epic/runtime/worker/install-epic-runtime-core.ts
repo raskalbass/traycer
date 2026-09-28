@@ -222,14 +222,15 @@ export function installEpicRuntimeCore(
   let composed: EpicReplicaRuntime | null = null;
   host.onBootstrap((facts) => {
     const factories = buildFactories(host);
-    const encodeProjection = createProjectionEncoder();
+    const projection = createProjectionEncoder();
+    host.setProjectionSnapshotReader(() => projection.snapshot());
 
     const runtime = createEpicRuntimeComposition({
       epicId: facts.epicId,
       environment: host.environment,
       factories,
       delivery: createBatchingDelivery((patch) => {
-        host.publishProjection(encodeProjection(patch));
+        host.publishProjection(projection.encode(patch));
       }),
       getCurrentUserId: () => host.currentUserId(),
       getDocArm: () => readDocArm(host.streams.manifest()?.docArm),
