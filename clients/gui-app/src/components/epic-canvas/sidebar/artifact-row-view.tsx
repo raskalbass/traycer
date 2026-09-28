@@ -1,10 +1,6 @@
 import type { MouseEvent, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { LazySidebarTooltipWrapper } from "@/components/epic-canvas/sidebar/lazy-sidebar-hover";
 import { TreeChevron, TreeChevronSpacer } from "@/components/ui/tree-chevron";
 import { STATUS_DOT_CLASSES, STATUS_LABELS } from "./epic-sidebar-tree-shared";
 import { cn } from "@/lib/utils";
@@ -95,22 +91,22 @@ export function ArtifactUnreadMarker(props: {
   const label =
     props.variant === "self" ? "Unread artifact" : "Contains unread artifacts";
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            aria-label={label}
-            data-testid={`epic-sidebar-unread-${props.nodeId}`}
-            data-unread-marker={props.variant}
-            className={cn(
-              "h-4 w-0.5 shrink-0 rounded-full",
-              props.variant === "self" ? "bg-info" : "bg-info/50",
-            )}
-          />
-        }
+    <LazySidebarTooltipWrapper
+      label={label}
+      side="top"
+      sideOffset={undefined}
+      align={undefined}
+    >
+      <span
+        aria-label={label}
+        data-testid={`epic-sidebar-unread-${props.nodeId}`}
+        data-unread-marker={props.variant}
+        className={cn(
+          "h-4 w-0.5 shrink-0 rounded-full",
+          props.variant === "self" ? "bg-info" : "bg-info/50",
+        )}
       />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+    </LazySidebarTooltipWrapper>
   );
 }
 
@@ -122,20 +118,20 @@ function ArtifactStatusDot(props: {
   const { nodeId, statusValue, showStatusDot } = props;
   if (statusValue === null || !showStatusDot) return null;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className={cn(
-              "size-2 shrink-0 rounded-full",
-              STATUS_DOT_CLASSES[statusValue] ?? "bg-muted-foreground",
-            )}
-            data-testid={`epic-sidebar-status-dot-${nodeId}`}
-            aria-hidden
-          />
-        }
+    <LazySidebarTooltipWrapper
+      label={STATUS_LABELS[statusValue] ?? "Unknown"}
+      side="top"
+      sideOffset={undefined}
+      align={undefined}
+    >
+      <span
+        className={cn(
+          "size-2 shrink-0 rounded-full",
+          STATUS_DOT_CLASSES[statusValue] ?? "bg-muted-foreground",
+        )}
+        data-testid={`epic-sidebar-status-dot-${nodeId}`}
+        aria-hidden
       />
-      <TooltipContent>{STATUS_LABELS[statusValue] ?? "Unknown"}</TooltipContent>
-    </Tooltip>
+    </LazySidebarTooltipWrapper>
   );
 }
