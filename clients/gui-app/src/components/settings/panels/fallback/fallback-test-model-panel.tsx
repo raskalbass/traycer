@@ -924,9 +924,14 @@ function TestPickers(props: {
         <span className="flex min-w-0 flex-wrap items-center gap-2">
           <span id={permissionLabelId}>Permission mode</span>
           <Select
-            items={PERMISSION_OPTIONS.filter((option) =>
+            // The trigger draws the picked row as the list does, Experimental
+            // badge included.
+            items={PERMISSION_PICKER_OPTIONS.filter((option) =>
               tuple.permissionModes.includes(option.id),
-            ).map((option) => ({ value: option.id, label: option.label }))}
+            ).map((option) => ({
+              value: option.id,
+              label: <PermissionOptionLabel option={option} />,
+            }))}
             value={tuple.permissionMode}
             onValueChange={(next) => {
               const chosen = tuple.permissionModes.find(
@@ -953,14 +958,7 @@ function TestPickers(props: {
                   value={option.id}
                   label={option.label}
                 >
-                  <span className="inline-flex items-center gap-2">
-                    {option.label}
-                    {option.id === "auto" ? (
-                      <Badge variant="muted" size="xs">
-                        Experimental
-                      </Badge>
-                    ) : null}
-                  </span>
+                  <PermissionOptionLabel option={option} />
                 </SelectItem>
               ))}
             </SelectContent>
@@ -968,6 +966,22 @@ function TestPickers(props: {
         </span>
       </div>
     </div>
+  );
+}
+
+/** A permission row's content, in the list and on the closed trigger alike. */
+function PermissionOptionLabel(props: {
+  readonly option: (typeof PERMISSION_PICKER_OPTIONS)[number];
+}) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      {props.option.label}
+      {props.option.id === "auto" ? (
+        <Badge variant="muted" size="xs">
+          Experimental
+        </Badge>
+      ) : null}
+    </span>
   );
 }
 

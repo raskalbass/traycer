@@ -337,7 +337,15 @@ function ScopedAppStatusBar(props: {
           when a user reaches for it - with usage switched off in Settings, or
           with a pick that cannot be reached.
         */}
-        <RateLimitPopoverRoot open={usagePanelOpen} onOpenChange={setUsageOpen}>
+        {/* Keyed on the cluster's bar: the panel's content unmounts with the
+            cluster while this root stays, and a Base root closed with no
+            content left waits on an exit that never finishes. A fresh root
+            when the cluster comes back mounts closed outright. */}
+        <RateLimitPopoverRoot
+          key={usageInStrip ? "usage-in-strip" : "usage-elsewhere"}
+          open={usagePanelOpen}
+          onOpenChange={setUsageOpen}
+        >
           <div className="flex h-6 items-center gap-2 px-2 text-ui-xs tabular-nums">
             {cluster("left")}
             {/*
