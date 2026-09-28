@@ -60,11 +60,10 @@ import { useLayoutSnapshot } from "@/stores/layout/layout-store";
  * settings level with a back row.
  *
  * The areas are a vertical tab list, so the arrow keys walk them. Every area
- * stays mounted, hidden while another is picked (`forceMount` makes Radix drop
- * its own `hidden`, so it is passed here): Radix mounts a picked area's
- * children a commit AFTER the pick (Presence flips in a layout effect), so a
- * region landing or a search reveal that switches area would look for its row
- * in an empty pane and have nothing to re-run it. Settings search lands on
+ * stays mounted (`keepMounted`), hidden while another is picked: a picked
+ * area's rows are already in the document when the pick commits, so a region
+ * landing or a search reveal that switches area finds its row rather than an
+ * empty pane with nothing to re-run it. Settings search lands on
  * every row here, and picks its area first (`useLayoutAnchorArea`,
  * `useLayoutRegionLanding`).
  */
@@ -166,6 +165,7 @@ export function LayoutSettingsPanel(): ReactNode {
                   key={entry.id}
                   value={entry.id}
                   keepMounted
+                  data-layout-area-panel={entry.id}
                   // Named by its area rather than by the rail's trigger, which a
                   // phone does not draw.
                   aria-labelledby={undefined}
@@ -314,8 +314,11 @@ function useAreaStartsAtTop(
   area: LayoutAreaId,
 ): void {
   useLayoutEffect(() => {
+    // By id rather than by `:not([hidden])`: a Base panel takes `hidden` only
+    // once its close has finished, so in this commit the area just left still
+    // looks shown, and it comes first in document order.
     const body = root.current?.querySelector(
-      '[role="tabpanel"]:not([hidden]) [data-layout-area-body]',
+      `[data-layout-area-panel="${area}"] [data-layout-area-body]`,
     );
     if (body !== null && body !== undefined) body.scrollTop = 0;
   }, [root, area]);
