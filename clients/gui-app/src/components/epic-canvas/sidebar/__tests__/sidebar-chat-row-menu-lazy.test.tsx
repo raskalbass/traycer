@@ -1,8 +1,8 @@
 /**
- * Chat/artifact row menus: `LazyDropdownMenu` per row, one shared
- * `SidebarTreeContextMenu` root for the tree. Real primitives, except
- * call-through mount-count spies on `ContextMenu`/`DropdownMenu` - Radix's
- * Root renders no DOM node, so counting mounts is the only way to observe it.
+ * Chat/artifact row menus (per-row context menu and more-menu, real
+ * primitives): which row's menu is open across row switches, remounts and
+ * selection mode, and touch/outside-press behaviour around an open menu.
+ * First-use mounting lives in `sidebar-row-first-use-overlays.test.tsx`.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StrictMode, useEffect, type ReactElement } from "react";
@@ -68,42 +68,6 @@ vi.mock(
     return { ...actual, useHostNotificationIndicators: () => frozen };
   },
 );
-
-// Live (mount minus unmount) count of the REAL `ContextMenu`/`DropdownMenu`
-// roots, call-through unchanged - a spy on the primitives, not a fake.
-const contextMenuMounts = vi.hoisted(() => ({ current: 0 }));
-vi.mock("@/components/ui/context-menu", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/components/ui/context-menu")>();
-  function CountedContextMenu(props: Parameters<typeof actual.ContextMenu>[0]) {
-    useEffect(() => {
-      contextMenuMounts.current += 1;
-      return () => {
-        contextMenuMounts.current -= 1;
-      };
-    }, []);
-    return <actual.ContextMenu {...props} />;
-  }
-  return { ...actual, ContextMenu: CountedContextMenu };
-});
-
-const dropdownMenuMounts = vi.hoisted(() => ({ current: 0 }));
-vi.mock("@/components/ui/dropdown-menu", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/components/ui/dropdown-menu")>();
-  function CountedDropdownMenu(
-    props: Parameters<typeof actual.DropdownMenu>[0],
-  ) {
-    useEffect(() => {
-      dropdownMenuMounts.current += 1;
-      return () => {
-        dropdownMenuMounts.current -= 1;
-      };
-    }, []);
-    return <actual.DropdownMenu {...props} />;
-  }
-  return { ...actual, DropdownMenu: CountedDropdownMenu };
-});
 
 const EPIC_ID = "epic-row-menu-lazy";
 const TAB_ID = "tab-row-menu-lazy";
@@ -280,8 +244,6 @@ describe.each([CHAT_FIXTURE, ARTIFACT_FIXTURE])(
     afterEach(() => {
       for (const handle of opened.splice(0)) handle.dispose();
       cleanup();
-      contextMenuMounts.current = 0;
-      dropdownMenuMounts.current = 0;
       useEpicSidebarExpansionStore.setState({
         userExpandedByScope: {},
         userCollapsedByScope: {},
@@ -322,20 +284,6 @@ describe.each([CHAT_FIXTURE, ARTIFACT_FIXTURE])(
       );
     }
 
-    it("mounts one context-menu root and no dropdown-menu roots before any interaction", () => {
-      renderRows(["row-x", "row-y", "row-z"]);
-
-      // Non-vacuity: three rows really rendered.
-      expect(screen.getByTestId("epic-sidebar-item-row-x")).toBeTruthy();
-      expect(screen.getByTestId("epic-sidebar-item-row-y")).toBeTruthy();
-      expect(screen.getByTestId("epic-sidebar-item-row-z")).toBeTruthy();
-
-      // One shared context-menu root for the whole tree, not one per row -
-      // and no row's `LazyDropdownMenu` has armed a real `DropdownMenu`.
-      expect(contextMenuMounts.current).toBe(1);
-      expect(dropdownMenuMounts.current).toBe(0);
-    });
-
     it("right-click on one row shows only that row's own actions", () => {
       renderRows(["row-x", "row-y"]);
 
@@ -351,50 +299,45 @@ describe.each([CHAT_FIXTURE, ARTIFACT_FIXTURE])(
       ).toBeNull();
     });
 
-    it("right-clicking a second row while the first's menu is open switches to only the second's actions", () => {
-      renderRows(["row-x", "row-y"]);
+    it("right-clicking a second row while the first's menu is open leaves only the second's actions", () => {
+      vi.useFakeTimers();
+      try {
+        renderRows(["row-x", "row-y"]);
 
-      act(() => {
-        fireEvent.contextMenu(screen.getByTestId("epic-sidebar-item-row-x"));
-      });
-      expect(
-        screen.getByTestId("epic-sidebar-context-delete-row-x"),
-      ).toBeTruthy();
+        act(() => {
+          fireEvent.contextMenu(screen.getByTestId("epic-sidebar-item-row-x"));
+        });
+        expect(
+          screen.getByTestId("epic-sidebar-context-delete-row-x"),
+        ).toBeTruthy();
 
-      act(() => {
-        fireEvent.contextMenu(screen.getByTestId("epic-sidebar-item-row-y"));
-      });
+        // `DismissableLayer` installs its outside-press listener on a 0ms timer.
+        act(() => {
+          vi.advanceTimersByTime(0);
+        });
+        const rowY = screen.getByTestId("epic-sidebar-item-row-y");
+        act(() => {
+          fireEvent.pointerDown(rowY, {
+            button: 2,
+            pointerType: "mouse",
+            bubbles: true,
+          });
+          fireEvent.contextMenu(rowY);
+        });
 
-      expect(
-        screen.queryByTestId("epic-sidebar-context-delete-row-x"),
-      ).toBeNull();
-      expect(
-        screen.getByTestId("epic-sidebar-context-delete-row-y"),
-      ).toBeTruthy();
-    });
-
-    // Shift+F10 / the keyboard Menu key makes a real browser dispatch a native
-    // `contextmenu` event at the focused element - jsdom does not synthesize
-    // that translation from a keydown, so this dispatches the same terminal
-    // native event a keyboard gesture would produce, directly.
-    it("a keyboard-invoked context-menu gesture opens the row's real actions", () => {
-      renderRows(["row-x"]);
-      const row = screen.getByTestId("epic-sidebar-item-row-x");
-      row.focus();
-
-      act(() => {
-        fireEvent.contextMenu(row);
-      });
-
-      expect(
-        screen.getByTestId("epic-sidebar-context-delete-row-x"),
-      ).toBeTruthy();
+        expect(
+          screen.queryByTestId("epic-sidebar-context-delete-row-x"),
+        ).toBeNull();
+        expect(
+          screen.getByTestId("epic-sidebar-context-delete-row-y"),
+        ).toBeTruthy();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("does not reopen a stale menu for a row that unmounted and remounted, until a fresh gesture", () => {
-      // StrictMode: the fix's cleanup effect must tell a real target unmount
-      // from StrictMode's mount -> cleanup -> re-mount replay, or it would
-      // spuriously clear (or fail to clear) state on the replay alone.
+      // StrictMode: a mount -> cleanup -> re-mount replay must not read as a real unmount.
       renderSeededRowsStrict([
         { id: "row-p", parentId: null },
         { id: "row-x", parentId: "row-p" },
@@ -489,114 +432,11 @@ describe.each([CHAT_FIXTURE, ARTIFACT_FIXTURE])(
         screen.queryByTestId("epic-sidebar-context-delete-row-x"),
       ).toBeNull();
     });
-
-    it("a closed row's more-button carries no live dropdown-menu until armed", () => {
-      renderRows(["row-x"]);
-
-      const moreButton = screen.getByTestId("epic-sidebar-more-row-x");
-      // Zero real `DropdownMenu` mounts, and the trigger button has not taken
-      // on Radix's own `data-slot` (either would mean eager mounting).
-      expect(dropdownMenuMounts.current).toBe(0);
-      expect(moreButton.getAttribute("data-slot")).not.toBe(
-        "dropdown-menu-trigger",
-      );
-    });
-
-    it("pointer-down arms the more-button and opens this row's real actions", () => {
-      renderRows(["row-x", "row-y"]);
-
-      act(() => {
-        fireEvent.pointerDown(screen.getByTestId("epic-sidebar-more-row-x"), {
-          button: 0,
-        });
-      });
-
-      expect(screen.getByTestId("epic-sidebar-delete-row-x")).toBeTruthy();
-      expect(screen.queryByTestId("epic-sidebar-delete-row-y")).toBeNull();
-    });
-
-    it("a first keyboard open (no prior pointer interaction) also opens the real menu", () => {
-      renderRows(["row-x"]);
-      const moreButton = screen.getByTestId("epic-sidebar-more-row-x");
-      moreButton.focus();
-
-      act(() => {
-        fireEvent.keyDown(moreButton, { key: "Enter" });
-      });
-
-      expect(screen.getByTestId("epic-sidebar-delete-row-x")).toBeTruthy();
-    });
-
-    it("right-click opens nothing while the row is in bulk-selection mode", () => {
-      const handle = createSession(flatRows(["row-x"]), kind);
-      opened.push(handle);
-      const selectionRef: { current: SelectionControls | null } = {
-        current: null,
-      };
-      render(
-        <QueryClientProvider client={new QueryClient()}>
-          <EpicSessionContext.Provider value={handle}>
-            <SidebarBulkSelectionProvider panelId={fixture.panelId}>
-              <SelectionModeEntry
-                onReady={(controls) => (selectionRef.current = controls)}
-              />
-              {fixture.panel}
-            </SidebarBulkSelectionProvider>
-          </EpicSessionContext.Provider>
-        </QueryClientProvider>,
-      );
-      const selection = selectionRef.current;
-      if (selection === null)
-        throw new Error("selection controls never captured");
-
-      act(() => {
-        selection.enterSelectionMode();
-      });
-
-      act(() => {
-        fireEvent.contextMenu(screen.getByTestId("epic-sidebar-item-row-x"));
-      });
-      expect(
-        screen.queryByTestId("epic-sidebar-context-delete-row-x"),
-      ).toBeNull();
-    });
   },
 );
 
-// Artifact-only: the row "+" (add child) button, a second `AddNodeDropdown`
-// consumer now on `LazyDropdownMenu` too, distinct from the row's "..." menu.
-describe("artifact add-child button", () => {
-  const opened: OpenedStoreForTest[] = [];
-
-  afterEach(() => {
-    for (const handle of opened.splice(0)) handle.dispose();
-    cleanup();
-  });
-
-  it("pointer-down opens the real add menu with its entries", () => {
-    const handle = createSession(flatRows(["row-x"]), "artifacts");
-    opened.push(handle);
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <EpicSessionContext.Provider value={handle}>
-          {ARTIFACT_FIXTURE.panel}
-        </EpicSessionContext.Provider>
-      </QueryClientProvider>,
-    );
-
-    act(() => {
-      fireEvent.pointerDown(screen.getByTestId("epic-sidebar-add-row-x"), {
-        button: 0,
-      });
-    });
-
-    expect(screen.getByTestId("epic-sidebar-add-menu-row-x")).toBeTruthy();
-    expect(screen.getByTestId("epic-sidebar-add-spec-row-x")).toBeTruthy();
-  });
-});
-
-// Chat-only: the shared root's row-targeting capture handler is the same
-// code for both trees (`sidebar-reparent-row-drop-wrapper.tsx`).
+// A row's long-press must not re-arm from a press inside its own open menu
+// (React events bubble from the portalled menu to the row wrapper).
 describe("touch interaction inside an open context menu", () => {
   const opened: OpenedStoreForTest[] = [];
 
@@ -641,7 +481,7 @@ describe("touch interaction inside an open context menu", () => {
       });
       expect(received).toHaveBeenCalledTimes(1);
 
-      // Holding inside the portal must not restart the tree trigger timer.
+      // Holding inside the portal must not restart the row trigger timer.
       act(() => {
         vi.advanceTimersByTime(750);
       });
@@ -682,18 +522,13 @@ const MENU_KINDS: ReadonlyArray<MenuKindFixture> = [
   },
   {
     label: "dropdown menu",
-    open: () =>
-      fireEvent.pointerDown(screen.getByTestId("epic-sidebar-more-row-x"), {
-        button: 0,
-      }),
+    open: () => fireEvent.click(screen.getByTestId("epic-sidebar-more-row-x")),
     contentSelector: '[data-slot="dropdown-menu-content"]',
     itemTestId: "epic-sidebar-copy-id-row-x",
   },
 ];
 
-// Chat-only: same shared `ContextMenuTrigger`/row-boundary code for both
-// trees, and both menu kinds use Radix's `DismissableLayer` for outside-press
-// dismissal.
+// Both menu kinds use Radix's `DismissableLayer` for outside-press dismissal.
 describe.each(MENU_KINDS)(
   "$label dismissal after an inside press",
   (menuKind) => {
