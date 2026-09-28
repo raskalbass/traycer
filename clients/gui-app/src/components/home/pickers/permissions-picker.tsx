@@ -1,13 +1,12 @@
+import { LazyDropdownMenu } from "@/components/ui/lazy-menu";
 import { useRef } from "react";
 import { ChevronDown } from "lucide-react";
 import {
-  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { NarrowOnlyTooltip } from "@/components/home/toolbar/narrow-only-tooltip";
 import { ToolbarPillButton } from "@/components/home/toolbar/toolbar-buttons";
@@ -156,54 +155,57 @@ export function PermissionsPicker(props: PermissionsPickerProps) {
   // `data-state`, the ref - landed on a generic span instead of the focusable
   // control.
   const trigger = (
-    <DropdownMenuTrigger asChild>
-      <ToolbarPillButton
-        aria-label={accessibleLabel}
-        disabled={disabled}
+    <ToolbarPillButton
+      aria-label={accessibleLabel}
+      disabled={disabled}
+      className={cn(
+        "min-w-0 disabled:cursor-not-allowed disabled:opacity-50",
+        experimental ? "max-w-full" : "max-w-[min(32cqw,13rem)]",
+        compact && "justify-center",
+      )}
+    >
+      <Icon className="size-4 shrink-0" />
+      <span
         className={cn(
-          "min-w-0 disabled:cursor-not-allowed disabled:opacity-50",
-          experimental ? "max-w-full" : "max-w-[min(32cqw,13rem)]",
-          compact && "justify-center",
+          "min-w-0 flex-1 items-center gap-1.5 whitespace-nowrap @max-lg:hidden",
+          compact ? "hidden" : "inline-flex",
         )}
       >
-        <Icon className="size-4 shrink-0" />
-        <span
-          className={cn(
-            "min-w-0 flex-1 items-center gap-1.5 whitespace-nowrap @max-lg:hidden",
-            compact ? "hidden" : "inline-flex",
-          )}
-        >
-          <span className="truncate">{label}</span>
-          {experimental ? (
-            <Badge variant="muted" size="xs">
-              Experimental
-            </Badge>
-          ) : null}
-        </span>
-        <ChevronDown
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground @max-lg:hidden",
-            compact && "hidden",
-          )}
-        />
-      </ToolbarPillButton>
-    </DropdownMenuTrigger>
+        <span className="truncate">{label}</span>
+        {experimental ? (
+          <Badge variant="muted" size="xs">
+            Experimental
+          </Badge>
+        ) : null}
+      </span>
+      <ChevronDown
+        className={cn(
+          "size-3.5 shrink-0 text-muted-foreground @max-lg:hidden",
+          compact && "hidden",
+        )}
+      />
+    </ToolbarPillButton>
   );
 
   return (
-    <DropdownMenu>
-      {compact ? (
-        <TooltipWrapper
-          label={accessibleLabel}
-          side="top"
-          sideOffset={undefined}
-          align={undefined}
-        >
-          {trigger}
-        </TooltipWrapper>
-      ) : (
-        <NarrowOnlyTooltip label={accessibleLabel}>{trigger}</NarrowOnlyTooltip>
-      )}
+    <LazyDropdownMenu
+      trigger={
+        compact ? (
+          <TooltipWrapper
+            label={accessibleLabel}
+            side="top"
+            sideOffset={undefined}
+            align={undefined}
+          >
+            {trigger}
+          </TooltipWrapper>
+        ) : (
+          <NarrowOnlyTooltip label={accessibleLabel}>
+            {trigger}
+          </NarrowOnlyTooltip>
+        )
+      }
+    >
       <DropdownMenuContent
         align="start"
         className="min-w-[min(90vw,20rem)]"
@@ -322,7 +324,7 @@ export function PermissionsPicker(props: PermissionsPickerProps) {
           </>
         ) : null}
       </DropdownMenuContent>
-    </DropdownMenu>
+    </LazyDropdownMenu>
   );
 }
 

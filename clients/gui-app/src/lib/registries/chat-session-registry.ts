@@ -1,10 +1,23 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useReducer,
   useRef,
   useSyncExternalStore,
 } from "react";
+import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
+import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
+import {
+  cancelRetainedChatPrewarms,
+  prewarmRetainedChat,
+} from "./chat-prewarm";
+import {
+  admitColdResource,
+  COLD_ADMISSION_SETTLE_MS,
+  useTabCycleRepeating,
+} from "./cold-admission";
+import type { HostRpcRegistry } from "@traycer/protocol/host/registry";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChatStreamClient } from "@traycer-clients/shared/host-transport/chat-stream-client";
 import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
@@ -162,6 +175,7 @@ export function getChatSessionHandleHostId(
 }
 
 export function disposeAllChatSessions(): void {
+  cancelRetainedChatPrewarms();
   registry.disposeAll();
 }
 
@@ -193,6 +207,10 @@ export function useChatSessionHandle(
   enabled: boolean,
 ): ChatSessionStoreHandle | null {
   const epicId = useOpenEpicId();
+  const paneVisible = usePaneVisible();
+  const tabSelected = useTabBodySelected();
+  const visible = paneVisible && tabSelected;
+  const repeating = useTabCycleRepeating();
   const hostEntry = useHostDirectoryEntry(hostId);
   const lease = useHostLease(hostId);
   // Chat is a DURABLE per-tab stream: its `WsStreamClient` is OWNED by the
@@ -247,6 +265,9 @@ export function useChatSessionHandle(
       next: ChatSessionStoreHandle | null,
     ) => next,
     null,
+  );
+  const isMountedHandle = useEffectEvent(
+    (candidate: ChatSessionStoreHandle): boolean => candidate === handle,
   );
 
   useEffect(() => {
@@ -356,53 +377,99 @@ export function useChatSessionHandle(
     // to this chat's host - the host the turn runs on.
     const onProviderAuthError = (): void => {
       void queryClient.invalidateQueries({
-        queryKey: hostQueryKeys.methodScope(hostId, "providers.list"),
+        queryKey: hostQueryKeys.method<HostRpcRegistry, "providers.list">(
+          hostId,
+          "providers.list",
+          { native: null },
+        ),
+        exact: true,
       });
     };
 
-    const next = registry.acquire(
-      { epicId, chatId, hostId, scopeKey },
-      (factoryEpicId, factoryChatId) =>
-        createChatSessionStore({
-          hostId,
-          epicId: factoryEpicId,
-          chatId: factoryChatId,
-          userId,
-          environment: createRendererRuntimeEnvironment(),
-          streamClientFactory: factory,
-          streamFlushCoordinator: STREAM_FLUSH_COORDINATOR,
-          onAuthError,
-          onProviderAuthError,
-          // THIS chat's socket, never the app-wide one. Each chat session owns
-          // its own transport, so a wake resolved from `useWsStreamClient()`
-          // would collapse the backoff on a different connection and leave
-          // this one sitting out its delay - a button that appears to work and
-          // does nothing. `probeFirst: false` because a person pressing it is
-          // demanding a re-dial, and the probe-first flavour answers a
-          // live-but-stuck socket with nothing.
-          wakeTransport: () => {
-            boundStreamClient?.reconnectAll(CHAT_SESSION_WAKE_REASON, {
-              probeFirst: false,
-              wakeProbe: null,
-            });
-          },
-          // The same socket the wake above reaches, asked instead whether it
-          // is worth waking. `?? false` covers both "no transport of ours"
-          // (the `streamClientFactoryOverride` path never assigns
-          // `boundStreamClient`) and "this transport does not measure
-          // silence" (the local `WsStreamClient` leaves the member absent):
-          // neither is evidence of a dead session, so neither escalates.
-          transportSilentFor: (ms) =>
-            boundStreamClient?.isSilentFor?.(ms) ?? false,
-        }),
-    );
-    acquiredHandle = next;
-    handleHostIds.set(next, hostId);
-    setHandle(next);
+    const warm = registry.get(epicId, chatId, hostId, scopeKey);
+    // A warm session can outlive its body. Only this mount's admitted handle
+    // skips transit admission, so retained bodies stay intact during a hold.
+    const mounted = warm !== null && isMountedHandle(warm);
+    if (!mounted) setHandle(null);
+    const acquire = (): (() => void) | void => {
+      if (!visible && isEpicParked(epicId)) return;
+      const next = registry.acquire(
+        { epicId, chatId, hostId, scopeKey },
+        (factoryEpicId, factoryChatId) => {
+          const created = createChatSessionStore({
+            hostId,
+            epicId: factoryEpicId,
+            chatId: factoryChatId,
+            userId,
+            environment: createRendererRuntimeEnvironment(),
+            streamClientFactory: factory,
+            streamFlushCoordinator: STREAM_FLUSH_COORDINATOR,
+            onAuthError,
+            onProviderAuthError,
+            // THIS chat's socket, never the app-wide one. Each chat session owns
+            // its own transport, so a wake resolved from `useWsStreamClient()`
+            // would collapse the backoff on a different connection and leave
+            // this one sitting out its delay - a button that appears to work and
+            // does nothing. `probeFirst: false` because a person pressing it is
+            // demanding a re-dial, and the probe-first flavour answers a
+            // live-but-stuck socket with nothing.
+            wakeTransport: () => {
+              boundStreamClient?.reconnectAll(CHAT_SESSION_WAKE_REASON, {
+                probeFirst: false,
+                wakeProbe: null,
+              });
+            },
+            // The same socket the wake above reaches, asked instead whether it
+            // is worth waking. `?? false` covers both "no transport of ours"
+            // (the `streamClientFactoryOverride` path never assigns
+            // `boundStreamClient`) and "this transport does not measure
+            // silence" (the local `WsStreamClient` leaves the member absent):
+            // neither is evidence of a dead session, so neither escalates.
+            transportSilentFor: (ms) =>
+              boundStreamClient?.isSilentFor?.(ms) ?? false,
+          });
+          if (visible) registry.markTransient(created);
+          return created;
+        },
+      );
+      acquiredHandle = next;
+      // An intentional settled prewarm keeps its lease across later cycles.
+      // Foreground transit still has to earn retention after snapshot load.
+      if (!visible) registry.markPresented(next);
+      handleHostIds.set(next, hostId);
+      setHandle(next);
 
-    return () => {
-      registry.releaseHandle(epicId, chatId, hostId, next);
+      // A slow snapshot is never "presented" merely because its skeleton was
+      // visible. Shared holders can independently promote the same handle.
+      let presentedTimer: number | null = null;
+      const observe = (): void => {
+        if (!visible || !next.store.getState().snapshotLoaded) {
+          if (presentedTimer !== null) clearTimeout(presentedTimer);
+          presentedTimer = null;
+          return;
+        }
+        if (presentedTimer !== null || !registry.isTransient(next)) return;
+        presentedTimer = window.setTimeout(() => {
+          registry.markPresented(next);
+          unsubscribe();
+        }, COLD_ADMISSION_SETTLE_MS);
+      };
+      const unsubscribe =
+        visible && registry.isTransient(next)
+          ? next.store.subscribe(observe)
+          : () => {};
+      observe();
+      return () => {
+        unsubscribe();
+        if (presentedTimer !== null) clearTimeout(presentedTimer);
+        registry.releaseHandle(epicId, chatId, hostId, next);
+      };
     };
+    if (!visible && (!mounted || registry.isTransient(warm))) {
+      setHandle(null);
+      return prewarmRetainedChat(paneVisible, acquire);
+    }
+    return admitColdResource(mounted, repeating, acquire);
     // `openTransport` is referentially stable and reads its deps (auth, runner
     // host, credential source, directory) live, so the recovery wiring is never
     // a stale-capture risk and does not belong in this array. `transportKey` is
@@ -419,6 +486,9 @@ export function useChatSessionHandle(
     ownerIdentityKey,
     userId,
     enabled,
+    visible,
+    paneVisible,
+    repeating,
     openTransport,
     queryClient,
   ]);

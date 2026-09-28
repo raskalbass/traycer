@@ -56,7 +56,7 @@ export function TabGroupChip(props: {
   };
   const navigate = useNavigate();
   const { group, groupId } = props;
-  const actions = useTabsStore.getState();
+  const actions = readTabActions();
   return (
     <Popover
       open={editing}
@@ -189,4 +189,8 @@ export function TabGroupChip(props: {
       </PopoverContent>
     </Popover>
   );
+}
+
+function readTabActions() {
+  return useTabsStore.getState();
 }

@@ -1408,7 +1408,7 @@ function spliceNodeById(
  * row and the id order survived, so a full projection that changed nothing in
  * this slice is invisible to its subscribers.
  */
-function spliceIdSlice<T>(
+export function spliceIdSlice<T>(
   next: {
     readonly byId: Readonly<Record<string, T>>;
     readonly allIds: readonly string[];

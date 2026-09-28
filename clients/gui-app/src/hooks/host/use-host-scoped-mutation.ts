@@ -11,6 +11,7 @@ import type {
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { useHostClient, type HostRpcRegistry } from "@/lib/host";
 import { useHostMutation } from "@/hooks/host/use-host-query";
+import { isMutableProviderQuery } from "@/hooks/providers/invalidations";
 import {
   agentMutationKeys,
   hostQueryKeys,
@@ -165,9 +166,18 @@ export function useHostScopedMutationForClient<
         // id is a reason to skip invalidation, not to skip the caller.
         args.onSuccess?.(data, variables, ctx.hostId, ctx.captured);
         if (ctx.hostId === null) return;
+        const providerId =
+          typeof variables === "object" &&
+          variables !== null &&
+          "providerId" in variables &&
+          typeof variables.providerId === "string"
+            ? variables.providerId
+            : null;
         for (const method of args.invalidateMethods) {
           void queryClient.invalidateQueries({
             queryKey: hostQueryKeys.methodScope(ctx.hostId, method),
+            predicate: (query) =>
+              isMutableProviderQuery(query.queryKey, providerId),
           });
         }
       },

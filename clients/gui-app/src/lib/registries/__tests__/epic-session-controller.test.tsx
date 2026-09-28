@@ -58,6 +58,10 @@ import {
   setTestEffectiveHost,
 } from "@/lib/registries/test-support/epic-session-controller-test-support";
 import { TestEpicSessionTab } from "@/lib/registries/test-support/test-epic-session-tab";
+import { setTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
+import { COLD_ADMISSION_SETTLE_MS } from "@/lib/registries/cold-admission";
+import { useTabsStore } from "@/stores/tabs/store";
+import type { TabRef } from "@/stores/tabs/types";
 import { __syncEpicParkingOpenTabsForTests } from "@/lib/epics/epic-parking-open-tabs";
 import {
   __resetEpicParkingForTests,
@@ -2060,5 +2064,90 @@ describe("session-owned write-throughs", () => {
       writeThroughOldHandle(session);
       await expectDetachedWriteThroughs(session);
     });
+  });
+});
+
+/**
+ * W3-A on the controller's own imperative admission path (`startRun` in
+ * `epic-session-controller.ts`), distinct from the chat plane's React-effect
+ * gate: `coldTargetIsVisible` is re-checked INSIDE the deferred admit
+ * callback, not before scheduling it, so a keyup alone (`repeating` going
+ * false) is not sufficient - the target also has to be the header's active
+ * tab AND surface-visible, or the callback bails and leaves `coldDeferred`
+ * set for a later visibility event to complete.
+ */
+describe("EpicSessionController: deferred cold admission while the tab cycle repeats", () => {
+  const EPIC_ID = "epic-cold-deferred";
+  const TAB_ID = "tab-cold-deferred";
+  const OTHER_TAB_ID = "tab-other";
+
+  function activateHeaderTab(tabId: string): void {
+    const ref: TabRef = { kind: "epic", id: tabId };
+    useTabsStore.setState({
+      version: 2,
+      items: [{ kind: "tab", id: `tab:epic:${tabId}`, ref }],
+      activeItemId: `tab:epic:${tabId}`,
+      stripOrder: [ref],
+      systemTabs: { history: null, settings: null },
+    });
+  }
+
+  function hasSession(): boolean | undefined {
+    return getEpicSessionController().readEntryStatusForTests(EPIC_ID)
+      ?.hasSession;
+  }
+
+  beforeEach(() => {
+    __getOpenEpicRegistryForTests().disposeAll();
+    __resetEpicParkingForTests();
+    __setAgentActivityPlaneAnsweringForTests();
+    resetFakeDurableStreamTransports();
+    installTestEpicSessionEnvironment(defaultTestEpicSessionEnvironment());
+    setTestEffectiveHost("host-a", true);
+  });
+
+  afterEach(() => {
+    setTabCycleRepeating(false);
+    useTabsStore.setState(useTabsStore.getInitialState(), true);
+    __getOpenEpicRegistryForTests().disposeAll();
+    resetCanvasStore();
+    __resetEpicParkingForTests();
+    __resetAgentActivityStoreForTests();
+    useSelectionAuthorityStore.getState().reset();
+    vi.useRealTimers();
+  });
+
+  it("needs BOTH the surface-visible flag and the live header tab; neither alone nor a keyup admits early", () => {
+    vi.useFakeTimers();
+    setTabCycleRepeating(true);
+
+    // Unnamed: a real name (`TEST_EPIC_TAB_NAME`) starts an entry `suspended`
+    // until a surface resumes it, which would block `startRun` before cold
+    // admission is ever reached.
+    openTestEpicTab(TAB_ID, EPIC_ID, "");
+    expect(hasSession()).toBeFalsy();
+
+    // Both gates false: cancelled past the settle window, not merely delayed.
+    vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS + 50);
+    expect(hasSession()).toBeFalsy();
+
+    // Surface-visible alone is not enough - the header shows a different tab.
+    activateHeaderTab(OTHER_TAB_ID);
+    setEpicSurfaceVisibility(EPIC_ID, TAB_ID, true);
+    vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS + 50);
+    expect(hasSession()).toBeFalsy();
+
+    // Keyup alone is not enough either, same reason.
+    setTabCycleRepeating(false);
+    expect(hasSession()).toBeFalsy();
+    expect(__getOpenEpicRegistryForTests().peek(EPIC_ID)).toBeNull();
+
+    // Both gates true: the real tab becomes the header's active one and the
+    // surface re-fires visible.
+    setEpicSurfaceVisibility(EPIC_ID, TAB_ID, false);
+    activateHeaderTab(TAB_ID);
+    setEpicSurfaceVisibility(EPIC_ID, TAB_ID, true);
+
+    expect(hasSession()).toBe(true);
   });
 });

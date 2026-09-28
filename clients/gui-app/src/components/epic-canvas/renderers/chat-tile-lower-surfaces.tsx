@@ -342,6 +342,12 @@ export function ChatLowerInteractionSurfaces(
     readonly target: ChatStopConfirmationTarget;
     readonly readTarget: () => ChatStopConfirmationTarget;
   } | null>(null);
+  const stopTurnDialogOpen = stopConfirmation?.kind === "turn";
+  const [stopTurnDialogEverOpened, setStopTurnDialogEverOpened] =
+    useState(false);
+  if (stopTurnDialogOpen && !stopTurnDialogEverOpened) {
+    setStopTurnDialogEverOpened(true);
+  }
   // The SAME signal that puts Stop beside Send (`composer-send-button`), so
   // the confirmation exists exactly where the mis-tap does and desktop is
   // untouched by construction rather than by a second rule agreeing with the
@@ -520,13 +526,14 @@ export function ChatLowerInteractionSurfaces(
     activeAgentsVisible: dockAgentsVisible,
     approvalVisible,
   });
-  const lowerSurfaceTopSpacing: ChatLowerSurfaceTopSpacing =
-    pinnedStackVisible ||
-    queueVisible ||
-    dockAgentsVisible ||
-    dockBackgroundVisible
-      ? "connected"
-      : "normal";
+  const lowerSurfaceTopSpacing: ChatLowerSurfaceTopSpacing = [
+    pinnedStackVisible,
+    queueVisible,
+    dockAgentsVisible,
+    dockBackgroundVisible,
+  ].some(Boolean)
+    ? "connected"
+    : "normal";
   const pinnedStackTopSpacing: ChatPinnedStackTopSpacing = approvalVisible
     ? "compact"
     : "normal";
@@ -652,29 +659,32 @@ export function ChatLowerInteractionSurfaces(
             turnOnStopTurn();
           }}
         />
-        <ConfirmDestructiveDialog
-          open={stopConfirmation?.kind === "turn"}
-          onOpenChange={(open) => {
-            if (!open) setStopConfirmation(null);
-          }}
-          title="Stop this turn?"
-          description="The agent will stop working on its current response."
-          cascadeSummary={null}
-          actionLabel="Stop"
-          blockedReason={null}
-          isPending={false}
-          onConfirm={() => {
-            setStopConfirmation(null);
-            if (stopConfirmation === null || !isConfirmedTurnCurrent()) return;
-            // A sub-agent can start while this dialog is open. Go back through
-            // the same gate, retaining the turn this confirmation belongs to.
-            if (activeAgents.length > 0) {
-              setStopConfirmation({ ...stopConfirmation, kind: "children" });
-              return;
-            }
-            turnOnStopTurn();
-          }}
-        />
+        {stopTurnDialogOpen || stopTurnDialogEverOpened ? (
+          <ConfirmDestructiveDialog
+            open={stopTurnDialogOpen}
+            onOpenChange={(open) => {
+              if (!open) setStopConfirmation(null);
+            }}
+            title="Stop this turn?"
+            description="The agent will stop working on its current response."
+            cascadeSummary={null}
+            actionLabel="Stop"
+            blockedReason={null}
+            isPending={false}
+            onConfirm={() => {
+              setStopConfirmation(null);
+              if (stopConfirmation === null || !isConfirmedTurnCurrent())
+                return;
+              // A sub-agent can start while this dialog is open. Go back through
+              // the same gate, retaining the turn this confirmation belongs to.
+              if (activeAgents.length > 0) {
+                setStopConfirmation({ ...stopConfirmation, kind: "children" });
+                return;
+              }
+              turnOnStopTurn();
+            }}
+          />
+        ) : null}
       </ChatDockCompactStripProvider>
     </ChatComposerBannerPortalProvider>
   );

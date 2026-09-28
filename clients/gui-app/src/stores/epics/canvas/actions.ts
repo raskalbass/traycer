@@ -925,12 +925,33 @@ export function setActiveTab(
   const pane = findPaneById(state.root, paneId);
   if (pane === null) return state;
   if (!pane.tabInstanceIds.includes(tabId)) return state;
-  if (pane.activeTabId === tabId && state.activePaneId === paneId) {
+  if (
+    pane.activeTabId === tabId &&
+    state.activePaneId === paneId &&
+    pane.activationHistory[0] === tabId
+  ) {
     return state;
   }
   const root = replacePane(state.root, paneId, (current) =>
     recordPaneActivation(current, tabId),
   );
+  return { ...state, root, activePaneId: paneId };
+}
+
+/** Select a passing keyboard-cycle target without promoting it into MRU. */
+export function previewActiveTab(
+  state: EpicCanvasState,
+  paneId: string,
+  tabId: string,
+): EpicCanvasState {
+  if (state.root === null) return state;
+  const pane = findPaneById(state.root, paneId);
+  if (pane === null || !pane.tabInstanceIds.includes(tabId)) return state;
+  if (pane.activeTabId === tabId && state.activePaneId === paneId) return state;
+  const root = replacePane(state.root, paneId, (current) => ({
+    ...current,
+    activeTabId: tabId,
+  }));
   return { ...state, root, activePaneId: paneId };
 }
 

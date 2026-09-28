@@ -88,6 +88,7 @@ function createDeliveryPolicyHandle(
       retainedClientActionIds: new Set(),
     },
     deliveredRestoreCompletionKeys: new Set(),
+    isSurfaceVisible: () => true,
     setSurfaceVisibility: (_surfaceId: string, _visible: boolean) => undefined,
     clearSurfaceVisibility: (_surfaceId: string) => undefined,
     dispose: () => undefined,

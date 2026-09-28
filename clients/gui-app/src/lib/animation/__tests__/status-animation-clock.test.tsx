@@ -3,6 +3,10 @@ import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import {
+  __resetDocumentVisibilitySubscribersForTests,
+  setDesktopWindowOnScreen,
+} from "@/lib/dom/document-visibility";
+import {
   resetStatusAnimationClockForTests,
   STATUS_ANIMATION_PULSE_CADENCE_MS,
   STATUS_ANIMATION_SMOOTH_CADENCE_MS,
@@ -107,6 +111,7 @@ afterEach(() => {
   cleanup();
   resetStatusAnimationClockForTests();
   setDocumentHidden(false);
+  __resetDocumentVisibilitySubscribersForTests();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -205,6 +210,41 @@ describe("subscribeStatusAnimation", () => {
     expect(statusAnimationElapsedMs()).toBe(STATUS_ANIMATION_TICK_MS);
 
     setDocumentHidden(false);
+    expect(vi.getTimerCount()).toBe(1);
+
+    act(() => {
+      vi.advanceTimersByTime(STATUS_ANIMATION_TICK_MS);
+    });
+    expect(calls).toEqual([
+      STATUS_ANIMATION_TICK_MS,
+      STATUS_ANIMATION_TICK_MS * 2,
+    ]);
+  });
+
+  it("stops ticking when the desktop shell reports the window off-screen even though document.visibilityState stays visible, and resumes once it reports back on-screen", () => {
+    const calls: number[] = [];
+    subscribeStatusAnimation(
+      (elapsed) => calls.push(elapsed),
+      STATUS_ANIMATION_TICK_MS,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(STATUS_ANIMATION_TICK_MS);
+    });
+    expect(calls).toEqual([STATUS_ANIMATION_TICK_MS]);
+
+    expect(document.visibilityState).toBe("visible");
+    setDesktopWindowOnScreen(false);
+    expect(document.visibilityState).toBe("visible");
+    expect(vi.getTimerCount()).toBe(0);
+
+    act(() => {
+      vi.advanceTimersByTime(STATUS_ANIMATION_TICK_MS * 5);
+    });
+    expect(calls).toEqual([STATUS_ANIMATION_TICK_MS]);
+    expect(statusAnimationElapsedMs()).toBe(STATUS_ANIMATION_TICK_MS);
+
+    setDesktopWindowOnScreen(true);
     expect(vi.getTimerCount()).toBe(1);
 
     act(() => {

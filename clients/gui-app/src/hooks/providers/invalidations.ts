@@ -1,3 +1,4 @@
+import type { QueryKey } from "@tanstack/react-query";
 import type { HostRpcRegistry } from "@/lib/host";
 
 // Any provider override change can flip a provider's availability (enabled
@@ -76,3 +77,29 @@ export const PROVIDER_INVALIDATIONS: ReadonlyArray<
 export const PROFILE_API_KEY_MUTATION_SCOPE = {
   id: "providers.profileApiKey",
 } as const;
+
+/** Versioned artwork is immutable; unversioned icons still need catch-up. */
+export function isMutableProviderQuery(
+  queryKey: QueryKey,
+  providerId: string | null,
+): boolean {
+  if (queryKey[2] !== "providers.list") return true;
+  const params = queryKey[3];
+  if (params === null || typeof params !== "object" || !("native" in params)) {
+    return true;
+  }
+  const native = params.native;
+  if (native === null || typeof native !== "object") return true;
+  if (
+    "kind" in native &&
+    native.kind === "pluginIcon" &&
+    queryKey[6] === "pluginIcon" &&
+    typeof queryKey[7] === "string" &&
+    queryKey[7].length > 0
+  )
+    return false;
+  return (
+    providerId === null ||
+    ("providerId" in native && native.providerId === providerId)
+  );
+}

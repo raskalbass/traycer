@@ -104,6 +104,7 @@ const HALO_INSET = 4;
 const CARD_EDGE_PADDING = 16;
 
 export function OnboardingCoachmark(props: CoachmarkProps) {
+  "use no memo"; // Render reads live DOM state from the retained target.
   const { onClose, onTarget } = props;
   const [keyboardNavigation, setKeyboardNavigation] = useState(false);
   const target = useGuideTarget(props.rootRef, props.selector);

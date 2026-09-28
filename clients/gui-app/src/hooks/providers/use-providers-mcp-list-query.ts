@@ -5,6 +5,11 @@ import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
 import type { ProviderNativeScope } from "@traycer/protocol/host/provider-native-schemas";
 import { useHostClient, type HostRpcRegistry } from "@/lib/host";
 import { useHostQueryWithResponseMap } from "@/hooks/host/use-host-query";
+import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
+import {
+  isDocumentVisible,
+  subscribeDocumentVisibility,
+} from "@/lib/dom/document-visibility";
 import {
   mapProvidersListToMcpServers,
   type McpListData,
@@ -21,6 +26,7 @@ export function useProvidersMcpList(args: {
   readonly pollWhilePending: boolean;
 }): UseQueryResult<McpListData, HostRpcError> {
   const client = useHostClient();
+  const readiness = useReactiveHostReadiness(client);
   const listParams = {
     providerId: args.providerId,
     scope: args.scope,
@@ -61,14 +67,38 @@ export function useProvidersMcpList(args: {
         (server) => server.discoveryPending || server.status === "connecting",
       ));
   useEffect(() => {
-    if (!needsPoll) return;
-    const timer = setInterval(() => {
-      // Join a pending read instead of restarting it every polling tick.
-      // In particular, a manual Retry must be allowed to finish.
-      void refetch({ cancelRefetch: false });
-    }, MCP_LIST_PENDING_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [needsPoll, refetch]);
+    if (!needsPoll || !readiness.isReady) return;
+    let disposed = false;
+    let timer: number | null = null;
+    let delay = MCP_LIST_PENDING_REFRESH_MS;
+    let refreshing = false;
+    const schedule = (): void => {
+      if (disposed || !isDocumentVisible()) return;
+      timer = window.setTimeout(() => {
+        void refresh();
+      }, delay);
+    };
+    const refresh = async (): Promise<void> => {
+      if (disposed || !isDocumentVisible() || refreshing) return;
+      refreshing = true;
+      // Join slow reads; only schedule the next poll after this one settles.
+      await refetch({ cancelRefetch: false });
+      refreshing = false;
+      delay = Math.min(delay * 2, 30_000);
+      schedule();
+    };
+    const unsubscribe = subscribeDocumentVisibility(() => {
+      if (timer !== null) window.clearTimeout(timer);
+      delay = MCP_LIST_PENDING_REFRESH_MS;
+      if (isDocumentVisible()) void refresh();
+    });
+    schedule();
+    return () => {
+      disposed = true;
+      if (timer !== null) window.clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [needsPoll, readiness.isReady, refetch]);
 
   return query;
 }

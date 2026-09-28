@@ -459,6 +459,7 @@ function useRemoteFolderPickerNative(args: {
   readonly canRefresh: boolean;
   readonly refetch: () => Promise<unknown>;
 }) {
+  "use no memo"; // Render reads the live host directory through a stable client.
   const requestId = useRemoteFolderPickerStore((state) => state.requestId);
   const settle = useRemoteFolderPickerStore((state) => state.settle);
   const client = useRemoteFolderPickerStore((state) => state.client);

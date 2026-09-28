@@ -4,7 +4,7 @@ import {
   renderHook,
   type RenderHookResult,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonContent } from "@traycer/protocol/common/registry";
 import type { ChatMessageDelivery } from "@traycer/protocol/host/agent/gui/message-delivery";
 import type { ChatSubscribeClientFrame } from "@traycer/protocol/host/agent/gui/subscribe";
@@ -471,5 +471,47 @@ describe("useChatMessageDeliveryRestoreDriver: reload (coordinator addendum #4)"
     expect(secondFrame.messageId).toBe("message-1");
     expect(secondFrame.expectedRevision).toBe(4);
     expect(secondFrame.clientActionId).not.toBe(firstFrame.clientActionId);
+  });
+});
+
+describe("useChatMessageDeliveryRestoreDriver: local persistence failure", () => {
+  it("a quota failure while restoring throws and withholds the acknowledgement - nothing is sent as if durable when it is not", () => {
+    const harness = createHarness();
+    handles.push(harness.handle);
+    const callbacks = harness.callbacks();
+    emitSnapshot(callbacks, {
+      messageDelivery: withdrawnDelivery("message-1", 1, { restore: RESTORED }),
+    });
+
+    // Some environments run the jsdom setup's `installMockLocalStorage()`
+    // fallback (own-property methods on `window.localStorage` itself, not
+    // inherited from `Storage.prototype` - see
+    // `__tests__/test-browser-apis.ts`), so the spy must target whichever one
+    // is actually live rather than assuming the prototype.
+    const storageSpyTarget: Storage = Object.hasOwn(
+      window.localStorage,
+      "setItem",
+    )
+      ? window.localStorage
+      : Storage.prototype;
+    const setItemSpy = vi
+      .spyOn(storageSpyTarget, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("quota exceeded", "QuotaExceededError");
+      });
+    try {
+      // `replaceDraft` runs its durability barrier before returning; a
+      // failure there throws synchronously out of the effect, so the ACK on
+      // the very next line never executes.
+      expect(() => mountDriver(harness.handle, CHAT_ID, OWNER_ID)).toThrow();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+
+    expect(harness.sent).toHaveLength(0);
+    // The merge itself is not lost - it landed in memory before the barrier
+    // threw, exactly like the store-level "reached memory but failed on
+    // disk" contract.
+    expect(readComposerDraftSnapshot(CHAT_ID).content).toEqual(RESTORED);
   });
 });

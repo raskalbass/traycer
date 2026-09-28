@@ -6,6 +6,11 @@ import type { DraftDocument, DraftPublication } from "@traycer/protocol/host";
 import { isJsonContent } from "@/lib/editor/prosemirror-json";
 import { basePersistOptions, persistKey, STORE_KEYS } from "@/lib/persist";
 import {
+  cancelDeferredPersistOnRetarget,
+  createDeferredPersistStorage,
+} from "@/lib/persist/persist-options";
+import { persistNowOrThrow } from "@/lib/persist/deferred-json-storage";
+import {
   legacyComposerDraftId,
   migratedLegacyComposerDraftId,
   mintDraftId,
@@ -351,6 +356,11 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
           bumpRevision: true,
           bumpResetEpoch: true,
         });
+        // Restorers acknowledge the source after this returns.
+        persistNowOrThrow(
+          useComposerDraftStore.persist.getOptions().name ??
+            persistKey(STORE_KEYS.composerDraft),
+        );
         notifyDraftLocalEdit(draftId);
       },
       addBrowserAnnotation: (chatId, record) => {
@@ -411,6 +421,11 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
             },
           };
         });
+        // Failed-send handoffs restore their sidecars before the same ACK.
+        persistNowOrThrow(
+          useComposerDraftStore.persist.getOptions().name ??
+            persistKey(STORE_KEYS.composerDraft),
+        );
       },
       clearDraft: (chatId) => {
         // Sidecar first, document second: `replaceDraft` is the broadcast
@@ -585,23 +600,26 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
       // with every position after the removed image shifted. See
       // `stripBase64ImageNodesWithSelection` for why it is dropped rather than
       // rebased.
-      partialize: (state) => ({
-        pendingSubmittedDraftDeletes: state.pendingSubmittedDraftDeletes,
-        drafts: Object.fromEntries(
-          Object.entries(state.drafts).map(([chatId, draft]) => [
-            chatId,
-            draft === undefined
-              ? draft
-              : {
-                  ...draft,
-                  ...stripBase64ImageNodesWithSelection(
-                    draft.content,
-                    draft.selection,
-                  ),
-                },
-          ]),
-        ),
-      }),
+      storage: createDeferredPersistStorage<ComposerDraftStore>(
+        (state) => ({
+          pendingSubmittedDraftDeletes: state.pendingSubmittedDraftDeletes,
+          drafts: Object.fromEntries(
+            Object.entries(state.drafts).map(([chatId, draft]) => [
+              chatId,
+              draft === undefined
+                ? draft
+                : {
+                    ...draft,
+                    ...stripBase64ImageNodesWithSelection(
+                      draft.content,
+                      draft.selection,
+                    ),
+                  },
+            ]),
+          ),
+        }),
+        () => true,
+      ),
       // Synchronous localStorage hydration can finish during `create(...)`,
       // before an `onFinishHydration` subscriber can be registered. Normalize
       // at the merge boundary so legacy revisions are safe on initial import.
@@ -677,6 +695,8 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
     },
   ),
 );
+
+cancelDeferredPersistOnRetarget(useComposerDraftStore);
 
 function normalizedLegacyResetEpoch(rawDraft: Record<string, unknown>): number {
   const resetEpoch = rawDraft.resetEpoch;

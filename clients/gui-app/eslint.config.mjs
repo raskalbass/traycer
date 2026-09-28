@@ -2553,6 +2553,15 @@ export default tseslint.config(
     },
   },
   {
+    // Reveal/resume resamples an external wall clock before paint, as
+    // useGraceCountdown does. Deferring this write shows the hidden/paused
+    // sample for a frame; deriving it during render would read impure time.
+    files: ["src/hooks/use-elapsed-seconds.ts"],
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
     // These hooks build a remote host transport (Architecture §4 / S1's
     // shared `(hostId, userId)` session cache) inside a `useEffect`,
     // deliberately NOT a `useMemo`: only an effect's cleanup is guaranteed to

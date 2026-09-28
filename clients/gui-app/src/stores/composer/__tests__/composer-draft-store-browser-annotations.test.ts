@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { del as idbDel, get as idbGet, set as idbSet } from "idb-keyval";
 
 import { attachBrowserAnnotation } from "@/lib/browser-view/annotation/browser-annotation-attach";
+import { flushDeferredJsonWrite } from "@/lib/persist/deferred-json-storage";
 import { scheduleLandingImageReconcile } from "@/lib/composer/landing-image-gc";
 import { createChatSessionStore } from "@/stores/chats/chat-session-store";
 import { IMMEDIATE_STREAM_FLUSH_COORDINATOR } from "@/stores/chats/stream-flush-coordinator";
@@ -336,6 +337,8 @@ describe("composer draft store browserAnnotations", () => {
       sessionId: "session-roundtrip",
       comment: "persisted add",
     });
+    // The write is queued, not synchronous - flush it before reading disk.
+    flushDeferredJsonWrite(STORAGE_KEY);
     const stored = window.localStorage.getItem(STORAGE_KEY);
     expect(stored).not.toBeNull();
     const persisted = persistedAnnotationOf(stored, "chat-roundtrip");
@@ -466,6 +469,11 @@ describe("composer draft store browserAnnotations", () => {
       .getState()
       .restoreBrowserAnnotations("chat-reject", snapshot);
     expect(draftOf("chat-reject").browserAnnotations).toEqual(snapshot);
+    // Durable the instant the call returns - no flush, no lifecycle event.
+    // The failed-send handoff driver acknowledges right after this restore.
+    const onDisk = window.localStorage.getItem(STORAGE_KEY);
+    expect(onDisk).not.toBeNull();
+    expect(onDisk).toContain(attached.annotationId);
 
     useComposerDraftStore
       .getState()

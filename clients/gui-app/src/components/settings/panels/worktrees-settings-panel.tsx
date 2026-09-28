@@ -111,6 +111,7 @@ import { useRefreshSpinner } from "@/hooks/use-refresh-spinner";
 import { useRelativeTimestamp } from "@/lib/relative-time";
 import { useWorktreeTaskTitles } from "./use-worktree-task-titles";
 import { invalidateWorktreeListingAndBindingCaches } from "@/hooks/worktree/invalidations";
+import { worktreePathMatcher } from "@/lib/worktree/worktree-path-match";
 import {
   backgroundForegroundWorktreeDeleteForHost,
   clearSettledWorktreeDeleteSuccessesForHostIfQuiescent,
@@ -1199,9 +1200,12 @@ export function WorktreesList(props: {
   // Refresh the host-wide list plus the shared worktree/binding caches the
   // file-tree / home / create-worktree surfaces read, captured against the
   // host the delete ran on.
-  const invalidate = useCallback(() => {
-    invalidateWorktreeDeleteCaches(queryClient, hostId);
-  }, [queryClient, hostId]);
+  const invalidate = useCallback(
+    (worktreePaths: readonly string[]) => {
+      invalidateWorktreeDeleteCaches(queryClient, hostId, worktreePaths);
+    },
+    [queryClient, hostId],
+  );
 
   const {
     target: confirmed,
@@ -1604,7 +1608,7 @@ export function WorktreesList(props: {
     close();
     // A delete that was cancelled mid-flight may have partially landed on the
     // host, so refresh on close too - not only on a terminal frame.
-    invalidate();
+    if (confirmed !== null) invalidate([confirmed.worktreePath]);
   };
   const handleScriptReviewSave = (
     target: WorktreeHostEntry,
@@ -4080,15 +4084,25 @@ function unresolvedWorktreeSecondaryCopy(
 function invalidateWorktreeDeleteCaches(
   queryClient: QueryClient,
   hostId: string,
+  worktreePaths: readonly string[],
 ): void {
-  // Listing ("active", sweep-aware) + binding-backed pickers ("all") - the
-  // shared post-delete slice; see the helper for the refetchType rationale.
-  invalidateWorktreeListingAndBindingCaches(queryClient, hostId);
+  invalidateWorktreeListingAndBindingCaches(queryClient, hostId, worktreePaths);
+  const isRemoved = worktreePathMatcher(new Set(worktreePaths));
   // A deleted worktree's directory is gone, so its cached `git.getCapabilities`
   // (5-min staleTime) would otherwise keep reporting the stale `available: true`
   // and strand the git panel. Force a re-probe so the gate sees the repo is
   // gone and the panel routes selection to a healthy worktree.
   void queryClient.invalidateQueries({
     queryKey: hostQueryKeys.methodScope(hostId, "git.getCapabilities"),
+    predicate: (query) => {
+      const params = query.queryKey[3];
+      return (
+        params !== null &&
+        typeof params === "object" &&
+        "runningDir" in params &&
+        typeof params.runningDir === "string" &&
+        isRemoved(params.runningDir)
+      );
+    },
   });
 }

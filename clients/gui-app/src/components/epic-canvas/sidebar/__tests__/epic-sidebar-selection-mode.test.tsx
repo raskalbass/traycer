@@ -9,7 +9,12 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { domMax, LazyMotion } from "motion/react";
-import { forwardRef, type ReactNode } from "react";
+import {
+  forwardRef,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import type { Mock } from "vitest";
 import type { ChatSearchMessageHitsStatus } from "@/hooks/chats/use-chat-search-message-hits";
 import type { ProviderId } from "@/components/home/data/landing-options";
@@ -471,6 +476,30 @@ vi.mock("@/components/ui/dropdown-menu", async (importOriginal) => {
   };
 });
 
+// `ChatMoreMenu`/`ArtifactMoreMenu` now compose `LazyDropdownMenu`, which
+// gates ever reaching the mocks above behind its own armed/unarmed state -
+// so the pass-through cases here need this same real/fake split one level
+// up, or they see no menu content at all until something arms it.
+vi.mock("@/components/ui/lazy-menu", async (importOriginal) => {
+  const realLazyMenu =
+    await importOriginal<typeof import("@/components/ui/lazy-menu")>();
+  return {
+    ...realLazyMenu,
+    LazyDropdownMenu: (props: {
+      readonly trigger: ReactElement;
+      readonly children: ReactNode;
+    }) =>
+      dropdownMenuMode.real ? (
+        <realLazyMenu.LazyDropdownMenu {...props} />
+      ) : (
+        <>
+          {props.trigger}
+          {props.children}
+        </>
+      ),
+  };
+});
+
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: (props: { readonly children: ReactNode }) => props.children,
   TooltipTrigger: (props: { readonly children: ReactNode }) => props.children,
@@ -500,14 +529,12 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarGroup: (props: { readonly children: ReactNode }) => (
     <div>{props.children}</div>
   ),
-  SidebarGroupContent: forwardRef<
-    HTMLDivElement,
-    { readonly children: ReactNode; readonly "data-testid"?: string }
-  >((props, ref) => (
-    <div ref={ref} data-testid={props["data-testid"]}>
-      {props.children}
-    </div>
-  )),
+  // Forwards every prop, not just `children`/`data-testid`: the shared
+  // tree-level `ContextMenuTrigger` (`asChild`) clones its event handlers
+  // onto this exact element, and a narrower mock silently drops them.
+  SidebarGroupContent: forwardRef<HTMLDivElement, ComponentProps<"div">>(
+    (props, ref) => <div ref={ref} {...props} />,
+  ),
 }));
 
 vi.mock("@/hooks/host/use-addressable-host-id", () => ({
@@ -1008,6 +1035,19 @@ vi.mock("@/lib/epic-selectors", () => ({
         testState.activityTierById.get(id) ?? "turn",
       ]),
     ),
+  // Per-agent narrowed siblings of the two map-returning selectors above -
+  // same source, one id looked up instead of the whole map handed back.
+  useEpicAgentActivityTier: (agentId: string) =>
+    testState.activeAgentIds.has(agentId)
+      ? (testState.activityTierById.get(agentId) ?? "turn")
+      : undefined,
+  useRegisteredEpicAgentActivityTier: (
+    _epicId: string | null,
+    agentId: string,
+  ) =>
+    testState.activeAgentIds.has(agentId)
+      ? (testState.activityTierById.get(agentId) ?? "turn")
+      : undefined,
   useEpicArtifact: (artifactId: string | null) => {
     if (artifactId === null) return null;
     const node = testState.tree.nodeById[artifactId];

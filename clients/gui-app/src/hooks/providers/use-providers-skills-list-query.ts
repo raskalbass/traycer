@@ -1,3 +1,4 @@
+import { isDocumentVisible } from "@/lib/dom/document-visibility";
 import { useEffect } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
@@ -60,7 +61,7 @@ export function useProvidersSkillsList(args: {
   useEffect(() => {
     if (!enabled || !readiness.isReady) return;
     const timer = setInterval(() => {
-      if (document.visibilityState === "hidden") return;
+      if (!isDocumentVisible()) return;
       void refetch();
     }, SKILLS_LIST_REFRESH_MS);
     return () => clearInterval(timer);

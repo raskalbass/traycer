@@ -24,6 +24,8 @@ import type { HostStreamRpcRegistry } from "@traycer/protocol/host/registry";
 import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import type { DurableStreamTransport } from "@/lib/host/durable-stream-transport";
 import { FakeStreamClient } from "@traycer-clients/shared/host-transport/__testing__/fake-stream-client";
+import { hostQueryKeys } from "@/lib/query-keys";
+import { providersNativeQueryKeys } from "@/lib/query-keys/providers-native-query-keys";
 
 // `useChatSessionHandle`'s own module state (the process-wide registry) is
 // exercised for real below - only its collaborators are mocked, so the
@@ -837,5 +839,102 @@ describe("useChatSessionHandle retryFromUser silence gate", () => {
     fake.silentFor = false;
     handle.store.getState().retryFromUser();
     expect(reconnectAll).not.toHaveBeenCalled();
+  });
+});
+
+describe("useChatSessionHandle provider-auth-error invalidation", () => {
+  afterEach(() => {
+    cleanup();
+    disposeAllChatSessions();
+    hostEntryRef.value = null;
+    globalClientRef.value = null;
+    openTransportRef.fn = null;
+    readySessionHosts.value = new Set();
+    useAuthStore.setState({ profile: null, status: "signed-out" });
+  });
+
+  function signInAndBind(fake: FakeStreamClient): void {
+    useAuthStore.setState({
+      status: "signed-in",
+      profile: {
+        userId: CHAT_PROFILE_USER_ID,
+        userName: CHAT_PROFILE_USER_ID,
+        email: `${CHAT_PROFILE_USER_ID}@example.com`,
+      },
+    });
+    openTransportRef.fn = () => ({
+      wsStreamClient: fake,
+      close: () => {
+        fake.close();
+      },
+    });
+    globalClientRef.value = buildGlobalClient();
+    hostEntryRef.value = remoteTarget("pubkey-a");
+  }
+
+  it("invalidates only the exact classic providers.list key on a live auth-error frame, never the icon cache", async () => {
+    const fake = new FakeStreamClient(true);
+    signInAndBind(fake);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const testWrapper = ({ children }: { children: ReactNode }): ReactNode => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(
+      () => useChatSessionHandle("chat-auth-1", REMOTE_HOST_ID, true),
+      { wrapper: testWrapper },
+    );
+    await waitFor(() => {
+      expect(result.current).not.toBeNull();
+    });
+
+    const subscribeIndex = fake.subscribes.findIndex(
+      (entry) => entry.method === "chat.subscribe",
+    );
+    if (subscribeIndex === -1) {
+      throw new Error("expected a chat.subscribe session");
+    }
+    const session = fake.sessions[subscribeIndex];
+
+    const classicKey = hostQueryKeys.method<HostRpcRegistry, "providers.list">(
+      REMOTE_HOST_ID,
+      "providers.list",
+      { native: null },
+    );
+    const iconKey = providersNativeQueryKeys.pluginIcon(REMOTE_HOST_ID, {
+      providerId: "claude-code",
+      scope: "global",
+      workspaceRoot: null,
+      pluginId: "github@m",
+      theme: "light",
+      version: "1.0.0",
+    });
+    queryClient.setQueryData(classicKey, { providers: [], native: null });
+    queryClient.setQueryData(iconKey, { data: "icon-bytes" });
+
+    act(() => {
+      session.emit(
+        {
+          kind: "blockDelta",
+          hasBinaryPayload: false,
+          epicId: "epic-1",
+          chatId: "chat-auth-1",
+          event: {
+            type: "error",
+            blockId: "auth-live-1",
+            timestamp: 4,
+            message: "Codex is signed out on this machine.",
+            recoverable: true,
+            code: "auth",
+          },
+        },
+        null,
+      );
+    });
+
+    expect(queryClient.getQueryState(classicKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(iconKey)?.isInvalidated).not.toBe(true);
   });
 });

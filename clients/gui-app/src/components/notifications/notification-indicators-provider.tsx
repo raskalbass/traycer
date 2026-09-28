@@ -1,5 +1,9 @@
-import type { ReactNode } from "react";
-import { NotificationIndicatorsContext } from "@/components/notifications/notification-indicator-context";
+import { useLayoutEffect, useState, type ReactNode } from "react";
+import { createStore } from "zustand/vanilla";
+import {
+  NotificationIndicatorsContext,
+  NotificationIndicatorStoreContext,
+} from "@/components/notifications/notification-indicator-context";
 import type { SurfaceNotificationIndicators } from "@/stores/notifications/notification-indicator-state";
 
 interface NotificationIndicatorsProviderProps {
@@ -10,9 +14,15 @@ interface NotificationIndicatorsProviderProps {
 export function NotificationIndicatorsProvider(
   props: NotificationIndicatorsProviderProps,
 ): ReactNode {
+  const [store] = useState(() => createStore(() => props.indicators));
+  useLayoutEffect(() => {
+    store.setState(props.indicators, true);
+  }, [store, props.indicators]);
   return (
-    <NotificationIndicatorsContext.Provider value={props.indicators}>
-      {props.children}
-    </NotificationIndicatorsContext.Provider>
+    <NotificationIndicatorStoreContext.Provider value={store}>
+      <NotificationIndicatorsContext.Provider value={props.indicators}>
+        {props.children}
+      </NotificationIndicatorsContext.Provider>
+    </NotificationIndicatorStoreContext.Provider>
   );
 }

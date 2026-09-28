@@ -1,28 +1,37 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import {
   createRef,
+  Suspense,
+  use,
   useEffect,
   useState,
+  useTransition,
   type ReactElement,
   type ReactNode,
+  type RefAttributes,
   type RefObject,
 } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LegendListRef } from "@legendapp/list/react";
+import type { LegendListProps, LegendListRef } from "@legendapp/list/react";
 import type {
   ChatMessageActions,
   ChatMessageUserActions,
 } from "@/components/chat/chat-message";
 import { ChatTimeline } from "@/components/chat/chat-timeline";
+import { ChatPrewarmContext } from "@/lib/registries/chat-prewarm";
 import { CHAT_NAVIGATION_HIGHLIGHT_CLASSNAME } from "@/components/chat/chat-navigation-highlight";
 import { PANEL_RESIZE_VISIBLE_ROW_ATTRIBUTE } from "@/components/chat/chat-timeline-panel-resize-snapshot";
 import type { NextStepActionHandler } from "@/components/chat/segments/next-steps-action-group";
 import { beginPanelResizeInteraction } from "@/lib/layout/panel-resizing-class";
-import { transcriptListRows } from "@/stores/chats/transcript-list-rows";
+import {
+  transcriptListRows,
+  type TranscriptListRow,
+} from "@/stores/chats/transcript-list-rows";
 import type { ChatMessage as ChatMessageModel } from "@/stores/composer/chat-store";
 import { makeMessage, makeMessages } from "./chat-message-fixtures";
 import {
   advanceLegendListFrames,
+  enableLegendListBrowserScrollEvents,
   installLegendListTestClock,
   installLegendListViewportMetrics,
   restoreLegendListTestClock,
@@ -78,14 +87,55 @@ const legendListPolicyProps = vi.hoisted(() => ({
   },
 }));
 
+/** Armed only by the abandoned-transition regression test below; suspends
+ *  this real LegendList pass-through the instant it would receive the
+ *  targeted data length, so ChatTimeline's own render already ran (and wrote
+ *  its cache) before the commit is abandoned. `hits` proves that happened;
+ *  `lastDataKeys` is what LegendList actually received on a committed render. */
+const legendListSuspendProbe = vi.hoisted(() => ({
+  armed: false,
+  targetLength: -1,
+  promise: null as Promise<unknown> | null,
+  hits: 0,
+  lastDataKeys: null as ReadonlyArray<string> | null,
+}));
+
 vi.mock("@legendapp/list/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@legendapp/list/react")>();
-  const CapturingLegendList: typeof actual.LegendList = (props) => {
+  // `LegendListComponent` is a generic CALL SIGNATURE (`<ItemT = any>(props:
+  // ...) => ...`), not a generic type alias - it can't be instantiated as
+  // `LegendListComponent<TranscriptListRow>`. Typing the parameter directly,
+  // at the same ItemT as the real `<LegendList<TranscriptListRow>>` in
+  // chat-timeline.tsx, so `row.key` below is a real, typed read rather than
+  // an unconstrained generic.
+  const CapturingLegendList = (
+    props: LegendListProps<TranscriptListRow> & RefAttributes<LegendListRef>,
+  ) => {
     legendListPolicyProps.last = {
       maintainScrollAtEnd: props.maintainScrollAtEnd,
       maintainScrollAtEndThreshold: props.maintainScrollAtEndThreshold,
       maintainVisibleContentPosition: props.maintainVisibleContentPosition,
     };
+    const data = props.data;
+    // ChatTimeline always renders LegendList in data mode (data + renderItem,
+    // never children) - this branch is unreachable in practice, but the
+    // props type is a real data-mode/children-mode union, so it is handled
+    // rather than asserted away.
+    if (data === undefined) {
+      return <actual.LegendList {...props} />;
+    }
+    if (
+      legendListSuspendProbe.armed &&
+      legendListSuspendProbe.promise !== null &&
+      data.length === legendListSuspendProbe.targetLength
+    ) {
+      legendListSuspendProbe.hits += 1;
+      // The real React 19 suspension primitive: `use()` throws the pending
+      // promise itself when unresolved, which is exactly what a real
+      // suspending child does - not a synthetic stand-in for it.
+      use(legendListSuspendProbe.promise);
+    }
+    legendListSuspendProbe.lastDataKeys = data.map((row) => row.key);
     return <actual.LegendList {...props} />;
   };
   return { ...actual, LegendList: CapturingLegendList };
@@ -173,6 +223,7 @@ function renderTimeline(options: RenderTimelineOptions) {
     >
       <ChatTimeline
         rows={transcriptListRows({ window: null, rendered: messages })}
+        visible
         taskTitle={options.taskTitle ?? "Test transcript"}
         backgroundToolBlockIds={backgroundToolBlockIds}
         getMessageActions={getMessageActions}
@@ -632,6 +683,7 @@ describe("ChatTimeline", () => {
       <div style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}>
         <ChatTimeline
           rows={transcriptListRows({ window: null, rendered: messages })}
+          visible
           taskTitle="Test transcript"
           backgroundToolBlockIds={new Set<string>()}
           getMessageActions={() => null}
@@ -1235,6 +1287,367 @@ describe("ChatTimeline", () => {
       // dangling to double-mark or throw against detached DOM.
       expect(row.getAttribute(PANEL_RESIZE_VISIBLE_ROW_ATTRIBUTE)).toBe("true");
       stop();
+    });
+  });
+
+  describe("visible", () => {
+    interface VisibilityToggleSetters {
+      readonly setMessages: (messages: ReadonlyArray<ChatMessageModel>) => void;
+      readonly setVisible: (visible: boolean) => void;
+    }
+
+    function VisibilityToggleHarness({
+      initialMessages,
+      initialVisible,
+      onVisibleRowRangeChange,
+      listRef,
+      onExposeSetters,
+    }: {
+      readonly initialMessages: ReadonlyArray<ChatMessageModel>;
+      readonly initialVisible: boolean;
+      readonly onVisibleRowRangeChange:
+        | ((from: number, to: number) => void)
+        | undefined;
+      readonly listRef: RefObject<LegendListRef | null>;
+      readonly onExposeSetters: (setters: VisibilityToggleSetters) => void;
+    }): ReactElement {
+      const [messages, setMessages] = useState(initialMessages);
+      const [visible, setVisible] = useState(initialVisible);
+
+      useEffect(() => {
+        onExposeSetters({ setMessages, setVisible });
+      }, [onExposeSetters]);
+
+      return (
+        <div style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}>
+          <ChatTimeline
+            rows={transcriptListRows({ window: null, rendered: messages })}
+            visible={visible}
+            onVisibleRowRangeChange={onVisibleRowRangeChange}
+            taskTitle="Test transcript"
+            backgroundToolBlockIds={new Set<string>()}
+            getMessageActions={() => null}
+            nextStepActions={null}
+            listRef={listRef}
+            className="h-full"
+          />
+        </div>
+      );
+    }
+
+    it("freezes rendered rows while hidden and applies buffered growth on reveal", async () => {
+      const initialMessages = makeMessages(5);
+      const listRef = createRef<LegendListRef | null>();
+      let setters: VisibilityToggleSetters | null = null;
+
+      const { container } = render(
+        <VisibilityToggleHarness
+          initialMessages={initialMessages}
+          initialVisible
+          onVisibleRowRangeChange={undefined}
+          listRef={listRef}
+          onExposeSetters={(exposed) => {
+            setters = exposed;
+          }}
+        />,
+      );
+      await settleLegendList();
+      expect(rowIds(container)).toContain("message-4");
+
+      act(() => {
+        setters?.setVisible(false);
+      });
+      const grown = makeMessages(8);
+      act(() => {
+        setters?.setMessages(grown);
+      });
+      await flushFrame();
+
+      // Hidden: the buffered growth never reaches the mounted DOM.
+      expect(rowIds(container)).not.toContain("message-7");
+
+      act(() => {
+        setters?.setVisible(true);
+      });
+      await settleLegendList();
+
+      // Reveal applies the growth that arrived while hidden.
+      expect(rowIds(container)).toContain("message-7");
+    });
+
+    // Independent of the frozen-rows pin: a real scroll (no `rows` change) proves the callback gate itself, not just the row freeze.
+    it("suppresses the viewable-row-range report while hidden and resumes it on reveal", async () => {
+      enableLegendListBrowserScrollEvents();
+      const messages = makeMessages(LARGE_MESSAGE_COUNT);
+      const onVisibleRowRangeChange = vi.fn();
+      const listRef = createRef<LegendListRef | null>();
+      let setters: VisibilityToggleSetters | null = null;
+
+      render(
+        <VisibilityToggleHarness
+          initialMessages={messages}
+          initialVisible
+          onVisibleRowRangeChange={onVisibleRowRangeChange}
+          listRef={listRef}
+          onExposeSetters={(exposed) => {
+            setters = exposed;
+          }}
+        />,
+      );
+      await settleLegendList();
+      const node = listRef.current?.getScrollableNode();
+      if (node === undefined) {
+        throw new Error("Expected the LegendList scrollable node to mount");
+      }
+
+      onVisibleRowRangeChange.mockClear();
+      act(() => {
+        node.scrollTop = 400;
+      });
+      await flushFrame();
+      expect(onVisibleRowRangeChange).toHaveBeenCalled();
+
+      onVisibleRowRangeChange.mockClear();
+      act(() => {
+        setters?.setVisible(false);
+      });
+      act(() => {
+        node.scrollTop = 800;
+      });
+      await flushFrame();
+      expect(onVisibleRowRangeChange).not.toHaveBeenCalled();
+
+      onVisibleRowRangeChange.mockClear();
+      act(() => {
+        setters?.setVisible(true);
+      });
+      act(() => {
+        node.scrollTop = 1200;
+      });
+      await flushFrame();
+      expect(onVisibleRowRangeChange).toHaveBeenCalled();
+    });
+
+    it("does not let an abandoned speculative transition poison the frozen rows cache", async () => {
+      const listRef = createRef<LegendListRef | null>();
+      const grown = makeMessages(8);
+      let startGrowTransition: () => void = () => {};
+      let setVisible: (visible: boolean) => void = () => {};
+
+      function Harness(): ReactElement {
+        const [messages, setMessagesState] = useState(makeMessages(5));
+        const [visible, setVisibleState] = useState(true);
+        const [, startTransition] = useTransition();
+
+        useEffect(() => {
+          startGrowTransition = () =>
+            startTransition(() => setMessagesState(grown));
+          setVisible = setVisibleState;
+        }, []);
+
+        return (
+          <div style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}>
+            <ChatTimeline
+              rows={transcriptListRows({ window: null, rendered: messages })}
+              visible={visible}
+              onVisibleRowRangeChange={undefined}
+              taskTitle="Test transcript"
+              backgroundToolBlockIds={new Set<string>()}
+              getMessageActions={() => null}
+              nextStepActions={null}
+              listRef={listRef}
+              className="h-full"
+            />
+          </div>
+        );
+      }
+
+      render(
+        <Suspense fallback={<div data-testid="suspense-fallback" />}>
+          <Harness />
+        </Suspense>,
+      );
+      await settleLegendList();
+      expect(legendListSuspendProbe.lastDataKeys).toHaveLength(5);
+
+      try {
+        // Suspend LegendList the instant it would receive the transition's
+        // rows: ChatTimeline's own render (and cache write) already ran, but
+        // the commit is abandoned.
+        legendListSuspendProbe.armed = true;
+        legendListSuspendProbe.targetLength = grown.length;
+        legendListSuspendProbe.promise = new Promise(() => {});
+
+        act(() => {
+          startGrowTransition();
+        });
+
+        // Proves the speculative render actually reached LegendList with B,
+        // and that a transition suspending keeps the prior commit on screen
+        // (no fallback, same instance) rather than tearing it down.
+        expect(legendListSuspendProbe.hits).toBeGreaterThan(0);
+        expect(screen.queryByTestId("suspense-fallback")).toBeNull();
+
+        // Disarm before the hide: a buggy cache must be free to actually
+        // commit B here, or this would pass for the wrong reason.
+        legendListSuspendProbe.armed = false;
+
+        act(() => {
+          setVisible(false);
+        });
+        await flushFrame();
+
+        // Hidden: LegendList must still hold the last REAL commit (A), never
+        // the abandoned speculative render's rows (B).
+        expect(legendListSuspendProbe.lastDataKeys).toEqual(
+          makeMessages(5).map((message) => message.id),
+        );
+      } finally {
+        legendListSuspendProbe.armed = false;
+        legendListSuspendProbe.promise = null;
+        legendListSuspendProbe.hits = 0;
+      }
+    });
+
+    // W4 R-A: a retained-hidden body's prewarmed session marks
+    // `ChatPrewarmContext` true through `ChatTileSessionView`, and
+    // `ChatTimeline` computes rows from `visible || prewarmEligible` while
+    // still keying everything else (viewability, accessibility) off the real
+    // `visible` prop. The existing "freezes rendered rows while hidden" test
+    // above already pins the unmarked/default-`false` baseline; this pins the
+    // context row-gate boundary itself.
+    interface PrewarmToggleSetters {
+      readonly setMessages: (messages: ReadonlyArray<ChatMessageModel>) => void;
+      readonly setPrewarmEligible: (eligible: boolean) => void;
+      readonly setVisible: (visible: boolean) => void;
+    }
+
+    function PrewarmToggleHarness({
+      initialMessages,
+      initialPrewarmEligible,
+      listRef,
+      onExposeSetters,
+    }: {
+      readonly initialMessages: ReadonlyArray<ChatMessageModel>;
+      readonly initialPrewarmEligible: boolean;
+      readonly listRef: RefObject<LegendListRef | null>;
+      readonly onExposeSetters: (setters: PrewarmToggleSetters) => void;
+    }): ReactElement {
+      const [messages, setMessages] = useState(initialMessages);
+      const [prewarmEligible, setPrewarmEligible] = useState(
+        initialPrewarmEligible,
+      );
+      const [visible, setVisible] = useState(false);
+
+      useEffect(() => {
+        onExposeSetters({ setMessages, setPrewarmEligible, setVisible });
+      }, [onExposeSetters]);
+
+      return (
+        <div style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}>
+          <ChatPrewarmContext.Provider value={prewarmEligible}>
+            <ChatTimeline
+              rows={transcriptListRows({ window: null, rendered: messages })}
+              visible={visible}
+              onVisibleRowRangeChange={undefined}
+              taskTitle="Test transcript"
+              backgroundToolBlockIds={new Set<string>()}
+              getMessageActions={() => null}
+              nextStepActions={null}
+              listRef={listRef}
+              className="h-full"
+              data-testid="chat-timeline"
+            />
+          </ChatPrewarmContext.Provider>
+        </div>
+      );
+    }
+
+    it("mounts hydrated rows while hidden once marked prewarm-eligible, freezes on eligibility drop, and reveals live rows on a real visible transition - all in the SAME LegendList mount", async () => {
+      const listRef = createRef<LegendListRef | null>();
+      let setters: PrewarmToggleSetters | null = null;
+
+      const { container } = render(
+        <PrewarmToggleHarness
+          initialMessages={makeMessages(5)}
+          initialPrewarmEligible={false}
+          listRef={listRef}
+          onExposeSetters={(exposed) => {
+            setters = exposed;
+          }}
+        />,
+      );
+      await settleLegendList();
+      // Genuinely hidden AND not yet eligible: the real first hidden-branch
+      // call, with nothing ever committed - must be empty, not a bug.
+      expect(rowIds(container)).toEqual([]);
+      expect(
+        container.querySelector('[data-testid="chat-timeline"]'),
+      ).toBeNull();
+
+      act(() => {
+        setters?.setPrewarmEligible(true);
+      });
+      await settleLegendList();
+      // `visible={false}` throughout so far - eligibility alone mounted this.
+      expect(rowIds(container)).toContain("message-4");
+      const scrollContainerBefore = container.querySelector(
+        '[data-testid="chat-timeline"]',
+      );
+      const firstRowBefore = container.querySelector(
+        '[data-message-id="message-0"]',
+      );
+      expect(scrollContainerBefore).not.toBeNull();
+      expect(firstRowBefore).not.toBeNull();
+
+      const grown = makeMessages(8);
+      act(() => {
+        setters?.setMessages(grown);
+      });
+      await flushFrame();
+
+      // Still prewarm-eligible: buffered growth hydrates like a visible pane.
+      expect(rowIds(container)).toContain("message-7");
+
+      // Eligibility drops (a tab-cycle repeat, or the neighbour losing its
+      // "nearest" slot) - rows freeze exactly like the hidden/unmarked case.
+      act(() => {
+        setters?.setPrewarmEligible(false);
+      });
+      const grownFurther = makeMessages(10);
+      act(() => {
+        setters?.setMessages(grownFurther);
+      });
+      await flushFrame();
+
+      expect(rowIds(container)).not.toContain("message-9");
+      expect(rowIds(container)).toContain("message-7");
+      // The freeze must not have torn LegendList down - same scroll DOM and
+      // row node, not a rebuilt mount holding frozen data.
+      expect(container.querySelector('[data-testid="chat-timeline"]')).toBe(
+        scrollContainerBefore,
+      );
+      expect(container.querySelector('[data-message-id="message-0"]')).toBe(
+        firstRowBefore,
+      );
+
+      // Now a genuine reveal (the real `visible` prop, not eligibility) -
+      // the stale-read bug this pins resolves the frozen/empty cache instead
+      // of the current committed rows here. Must both show the live data
+      // AND keep the same mount - not an empty-state round trip, and not a
+      // rebuilt scroll DOM.
+      act(() => {
+        setters?.setVisible(true);
+      });
+      await flushFrame();
+
+      expect(rowIds(container)).toContain("message-9");
+      expect(container.querySelector('[data-testid="chat-timeline"]')).toBe(
+        scrollContainerBefore,
+      );
+      expect(container.querySelector('[data-message-id="message-0"]')).toBe(
+        firstRowBefore,
+      );
     });
   });
 });

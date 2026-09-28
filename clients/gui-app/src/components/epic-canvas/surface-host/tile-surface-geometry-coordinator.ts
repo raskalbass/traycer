@@ -56,6 +56,7 @@ interface SlotRegistration {
   readonly key: string;
   readonly slotElement: Element;
   readonly onRect: TileSurfaceRectListener;
+  lastRect: TileSurfaceRect | null;
 }
 
 let hostRegistration: { readonly element: Element } | null = null;
@@ -69,32 +70,59 @@ function ensureSharedObserver(): ResizeObserver {
   return sharedObserver;
 }
 
-function applyRectAgainstHost(
+function measureRect(
   registration: SlotRegistration,
   hostRect: DOMRect,
-): void {
+): TileSurfaceRect {
   const slotRect = registration.slotElement.getBoundingClientRect();
-  registration.onRect({
+  return {
     left: slotRect.left - hostRect.left,
     top: slotRect.top - hostRect.top,
     width: slotRect.width,
     height: slotRect.height,
-  });
+  };
+}
+
+function publishRect(
+  registration: SlotRegistration,
+  rect: TileSurfaceRect,
+): void {
+  if (slotRegistrations.get(registration.key) !== registration) return;
+  const previous = registration.lastRect;
+  if (
+    previous !== null &&
+    previous.left === rect.left &&
+    previous.top === rect.top &&
+    previous.width === rect.width &&
+    previous.height === rect.height
+  ) {
+    return;
+  }
+  registration.lastRect = rect;
+  registration.onRect(rect);
 }
 
 function applyRect(registration: SlotRegistration): void {
   if (hostRegistration === null) return;
-  applyRectAgainstHost(
+  publishRect(
     registration,
-    hostRegistration.element.getBoundingClientRect(),
+    measureRect(registration, hostRegistration.element.getBoundingClientRect()),
   );
 }
 
 function applyAllRegisteredRects(): void {
   if (hostRegistration === null) return;
   const hostRect = hostRegistration.element.getBoundingClientRect();
-  for (const registration of slotRegistrations.values()) {
-    applyRectAgainstHost(registration, hostRect);
+  // Read every slot before a listener can change a hosted body's styles.
+  const measurements = Array.from(
+    slotRegistrations.values(),
+    (registration) => ({
+      registration,
+      rect: measureRect(registration, hostRect),
+    }),
+  );
+  for (const { registration, rect } of measurements) {
+    publishRect(registration, rect);
   }
 }
 
@@ -111,6 +139,16 @@ function applyAllRegisteredRects(): void {
  */
 export function remeasureTileSurfaceGeometry(): void {
   applyAllRegisteredRects();
+}
+
+/** Reapply presentation policy without restarting observation of the same slot. */
+export function refreshTileSurfaceGeometrySlot(key: string): void {
+  const registration = slotRegistrations.get(key);
+  if (registration === undefined) return;
+  // A hidden record may have ignored a zero rect; showing it must apply that
+  // rect even if layout itself stayed unchanged, and open its mount latch.
+  registration.lastRect = null;
+  applyRect(registration);
 }
 
 /**
@@ -153,7 +191,12 @@ export function registerTileSurfaceGeometrySlot(
   if (previous !== undefined) {
     ensureSharedObserver().unobserve(previous.slotElement);
   }
-  const registration: SlotRegistration = { key, slotElement, onRect };
+  const registration: SlotRegistration = {
+    key,
+    slotElement,
+    onRect,
+    lastRect: null,
+  };
   slotRegistrations.set(key, registration);
   ensureSharedObserver().observe(slotElement);
   applyRect(registration);

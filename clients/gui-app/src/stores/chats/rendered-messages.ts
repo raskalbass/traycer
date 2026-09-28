@@ -3,6 +3,7 @@ import {
   codexRetryTitle,
 } from "@traycer/protocol/host/agent/gui/retry-feedback";
 import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import type {
   AgentSender,
   AssistantMessage,
@@ -1126,24 +1127,29 @@ export function useRenderedMessages(
     }
     return byTurnKey;
   }, [input.rowContext]);
-  const profileLabelsByTurnKey = useMemo(
-    () =>
-      profileLabelsByTurnKeyFromMessages({
-        messages: input.messages,
+  const stableProfileLabels = useShallow(
+    (labels: ReadonlyMap<string, string>) => labels,
+  );
+  const profileLabelsByTurnKey = stableProfileLabels(
+    useMemo(
+      () =>
+        profileLabelsByTurnKeyFromMessages({
+          messages: input.messages,
+          contextByTurnKey,
+          activeTurnId,
+          activeTurnUserMessageId,
+          activeTurnHarnessId,
+          activeTurnProfileId,
+        }),
+      [
+        input.messages,
         contextByTurnKey,
         activeTurnId,
         activeTurnUserMessageId,
         activeTurnHarnessId,
         activeTurnProfileId,
-      }),
-    [
-      input.messages,
-      contextByTurnKey,
-      activeTurnId,
-      activeTurnUserMessageId,
-      activeTurnHarnessId,
-      activeTurnProfileId,
-    ],
+      ],
+    ),
   );
   const activeTurnProjection = projectActiveTurn(
     input.activeTurn,
@@ -1262,39 +1268,58 @@ export function useRenderedMessages(
   const liveAssistant = input.liveAssistantMessage;
   const liveTurnKey = liveAssistant === null ? null : liveAssistant.turnId;
 
-  // Head/tail partition for the merge case: carve the live turn's records out
-  // of the settled walk so a streaming delta re-derives ONLY the active turn
-  // (the tail), leaving the settled head untouched per tick. The final memo
-  // re-interleaves the partitions through the shared `createdAt` sort, so the
-  // split never changes row ids or order. Per-tick stability: every dep here
-  // changes on snapshots or turn boundaries, never on streamed deltas. An
-  // empty `activeTurn` means the live row (if any) stands alone.
-  const partition = useMemo((): {
-    readonly settled: ReadonlyArray<Message>;
-    readonly activeTurn: ReadonlyArray<Message>;
-  } => {
-    const isActiveTurnRecord = (message: Message): boolean =>
-      message.role === "assistant" && message.turnId === liveTurnKey;
-    const activeTurn =
-      liveTurnKey === null
-        ? NO_MESSAGES
-        : input.messages.filter(isActiveTurnRecord);
-    if (activeTurn.length === 0) {
-      return { settled: input.messages, activeTurn: NO_MESSAGES };
+  // Modern seated turns stream through messages, without a standalone live
+  // record. Only split a contiguous suffix: interleaved records need the
+  // original emission order for equal timestamps, and legacy rows need the
+  // whole walk's user-timestamp anchor.
+  const streamingTurnKey =
+    liveTurnKey ?? (activeRunState === null ? null : activeTurnId);
+  const activeRecords = useMemo(() => {
+    if (streamingTurnKey === null) return NO_MESSAGES;
+    const records = input.messages.filter(
+      (message) =>
+        message.role === "assistant" && message.turnId === streamingTurnKey,
+    );
+    if (liveTurnKey === null) {
+      const tailStart = input.messages.length - records.length;
+      if (
+        records.some(
+          (message, index) =>
+            message !== input.messages[tailStart + index] ||
+            (message.role === "assistant" && message.startedAt === null),
+        )
+      ) {
+        return NO_MESSAGES;
+      }
     }
-    return {
-      settled: input.messages.filter((message) => !isActiveTurnRecord(message)),
-      activeTurn,
-    };
-  }, [input.messages, liveTurnKey]);
-  const liveMergesIntoPersisted = partition.activeTurn.length > 0;
+    return records;
+  }, [input.messages, streamingTurnKey, liveTurnKey]);
+  const stableSettled = useShallow(
+    (messages: ReadonlyArray<Message>) => messages,
+  );
+  const settled = stableSettled(
+    useMemo(() => {
+      if (activeRecords.length === 0) return input.messages;
+      return input.messages.filter(
+        (message) =>
+          message.role !== "assistant" || message.turnId !== streamingTurnKey,
+      );
+    }, [input.messages, activeRecords, streamingTurnKey]),
+  );
+  const liveMergesIntoPersisted =
+    liveTurnKey !== null && activeRecords.length > 0;
 
   // User records can be referenced from either partition (steer rows render
   // inside their nesting turn); build the lookup once per snapshot and thread
   // it everywhere instead of letting each walk rebuild it.
-  const userMessagesById = useMemo(
-    () => userMessagesByIdFromMessages(input.messages),
-    [input.messages],
+  const stableUserMessages = useShallow(
+    (messages: ReadonlyMap<string, UserMessage>) => messages,
+  );
+  const userMessagesById = stableUserMessages(
+    useMemo(
+      () => userMessagesByIdFromMessages(input.messages),
+      [input.messages],
+    ),
   );
   // A withdrawn opening anchors nothing: its row is hidden below, and a
   // record-less `turn.stopped` naming it (a legacy chat's stop during the old
@@ -1309,9 +1334,10 @@ export function useRenderedMessages(
     return ids;
   }, [userMessagesById, input.pendingUserMessages, withdrawnMessageId]);
 
-  const activeTurnSteeredIdsKey = liveMergesIntoPersisted
-    ? activeTurnSteeredIdsContentKey(partition.activeTurn, liveAssistant)
-    : "";
+  const activeTurnSteeredIdsKey =
+    activeRecords.length > 0
+      ? activeTurnSteeredIdsContentKey(activeRecords, liveAssistant)
+      : "";
   const activeTurnSteeredMessageIds = useMemo(
     (): ReadonlySet<string> =>
       new Set(
@@ -1324,18 +1350,21 @@ export function useRenderedMessages(
 
   // Turns present in the snapshot (plus the live turn) survive the cache
   // sweep; anything else fell out of the transcript (branch edits, deletes).
-  const retainedTurnKeys = useMemo((): ReadonlySet<string> => {
-    const keys = new Set(
-      input.messages
-        .filter(
-          (message): message is AssistantMessage =>
-            message.role === "assistant",
-        )
-        .map(assistantTurnKey),
-    );
-    if (liveTurnKey !== null) keys.add(liveTurnKey);
-    return keys;
-  }, [input.messages, liveTurnKey]);
+  const stableTurnKeys = useShallow((keys: ReadonlySet<string>) => keys);
+  const retainedTurnKeys = stableTurnKeys(
+    useMemo((): ReadonlySet<string> => {
+      const keys = new Set(
+        input.messages
+          .filter(
+            (message): message is AssistantMessage =>
+              message.role === "assistant",
+          )
+          .map(assistantTurnKey),
+      );
+      if (liveTurnKey !== null) keys.add(liveTurnKey);
+      return keys;
+    }, [input.messages, liveTurnKey]),
+  );
   const stoppedWithoutAssistantRecords = useMemo(
     () =>
       renderStoppedTurnsWithoutAssistantRecords(
@@ -1354,7 +1383,7 @@ export function useRenderedMessages(
 
   const persisted = useMemo(() => {
     return renderPersistedMessages({
-      messages: partition.settled,
+      messages: settled,
       userMessagesById,
       profileLabelsByTurnKey,
       contextByTurnKey,
@@ -1373,7 +1402,7 @@ export function useRenderedMessages(
       chatId: ownerId,
     });
   }, [
-    partition,
+    settled,
     userMessagesById,
     profileLabelsByTurnKey,
     contextByTurnKey,
@@ -1397,10 +1426,10 @@ export function useRenderedMessages(
   // needed here.
   const activeTurn = useMemo(
     () =>
-      partition.activeTurn.length === 0
+      activeRecords.length === 0
         ? NO_RENDERED_MESSAGES
         : renderPersistedMessages({
-            messages: partition.activeTurn,
+            messages: activeRecords,
             userMessagesById,
             profileLabelsByTurnKey,
             contextByTurnKey,
@@ -1421,7 +1450,7 @@ export function useRenderedMessages(
             chatId: ownerId,
           }),
     [
-      partition,
+      activeRecords,
       userMessagesById,
       profileLabelsByTurnKey,
       contextByTurnKey,
@@ -1475,21 +1504,57 @@ export function useRenderedMessages(
     ],
   );
 
+  const shownPersisted = useMemo(
+    () => withoutWithdrawnUserRow(persisted, withdrawnMessageId),
+    [persisted, withdrawnMessageId],
+  );
+  const shownActiveTurn = useMemo(
+    () => withoutWithdrawnUserRow(activeTurn, withdrawnMessageId),
+    [activeTurn, withdrawnMessageId],
+  );
+  const shownPending = useMemo(
+    () => withoutWithdrawnUserRow(pending, withdrawnMessageId),
+    [pending, withdrawnMessageId],
+  );
+  const stableActiveIds = useShallow((ids: ReadonlySet<string>) => ids);
+  const activeIds = stableActiveIds(
+    useMemo(
+      () => new Set(shownActiveTurn.map((message) => message.id)),
+      [shownActiveTurn],
+    ),
+  );
+  const dedupedPending = useMemo(() => {
+    const persistedIds = new Set(shownPersisted.map((message) => message.id));
+    return shownPending.filter(
+      (message) =>
+        !persistedIds.has(message.id) &&
+        !activeIds.has(message.id) &&
+        !queuedPromptMessageIds.has(message.id),
+    );
+  }, [shownPersisted, shownPending, activeIds, queuedPromptMessageIds]);
+  const settledOrder = useMemo(
+    () =>
+      [
+        ...rankMessages(shownPersisted, 0),
+        ...rankMessages(dedupedPending, 2),
+        ...rankMessages(stoppedWithoutAssistantRecords, 4),
+        ...rankMessages(forkedChatLinkMessages, 5),
+        ...rankMessages(notificationAnchorMessages, 6),
+        ...rankMessages(autoJudgeUnattendedDenialMessages, 7),
+        ...rankMessages(autoJudgeNoticeMessages, 8),
+      ].sort(compareRankedMessages),
+    [
+      shownPersisted,
+      dedupedPending,
+      stoppedWithoutAssistantRecords,
+      forkedChatLinkMessages,
+      notificationAnchorMessages,
+      autoJudgeUnattendedDenialMessages,
+      autoJudgeNoticeMessages,
+    ],
+  );
+
   return useMemo(() => {
-    // A withdrawn opening has left the conversation - its prompt is back in the
-    // composer - so neither its row nor an optimistic copy of it is drawn, from
-    // the moment the host's delivery view says so. The host's own removal
-    // follows (on the windowed line, a reindex and a resnapshot later); this is
-    // the one place that gap is closed, and every row below reads these.
-    const shownPersisted = withoutWithdrawnUserRow(
-      persisted,
-      withdrawnMessageId,
-    );
-    const shownActiveTurn = withoutWithdrawnUserRow(
-      activeTurn,
-      withdrawnMessageId,
-    );
-    const shownPending = withoutWithdrawnUserRow(pending, withdrawnMessageId);
     // Pre-turn window: the host reports `running`/`stopping` (a send was
     // accepted) but no assistant row exists yet - provider-session/worktree
     // setup runs before the turn materializes. Synthesize a pending-assistant
@@ -1519,67 +1584,39 @@ export function useRenderedMessages(
             workspace.state === "creating" || workspace.state === "setting-up",
         ),
     );
-    const trailing = setupGating
-      ? []
-      : renderPendingRunIndicator({
-          activeRunState,
-          activeTurnId,
-          activeTurnStartedAt,
-          activeTurnMeta: pendingTurnMeta(activeTurnMetaInput, displayContext),
-          turnPauseAccounting,
-          rendered: [
-            ...shownPersisted,
-            ...shownActiveTurn,
-            ...shownPending,
-            ...live,
-          ],
-        });
-
-    // A prompt is drawn in one place.
-    //
-    // The optimistic row covers the instant after send, before the host has
-    // queued or persisted it. Once the host has that prompt in the queue, the
-    // queue row is the copy that survives a reload and a paused setup, so the
-    // optimistic row stays in the store (a queued send is not a lost send) and
-    // is not drawn. Once the host has persisted the message, that transcript
-    // row is the copy; the optimistic row shares its id and drops.
-    const persistedIds = new Set(
-      [...shownPersisted, ...shownActiveTurn].map((message) => message.id),
+    const hasLiveIndicator = [...shownActiveTurn, ...live].some(
+      (message) => message.role === "assistant" && message.runState !== null,
     );
-    const dedupedPending = shownPending.filter(
-      (message) =>
-        !persistedIds.has(message.id) &&
-        !queuedPromptMessageIds.has(message.id),
-    );
+    const trailing =
+      setupGating || activeRunState === null || hasLiveIndicator
+        ? NO_RENDERED_MESSAGES
+        : renderPendingRunIndicator({
+            activeRunState,
+            activeTurnId,
+            activeTurnStartedAt,
+            activeTurnMeta: pendingTurnMeta(
+              activeTurnMetaInput,
+              displayContext,
+            ),
+            turnPauseAccounting,
+            rendered: [
+              ...shownPersisted,
+              ...shownActiveTurn,
+              ...shownPending,
+              ...live,
+            ],
+          });
 
-    // `baseRows` = everything that sorts by `createdAt`. Assembled before the
-    // cards so the common case can early-out without the anchor machinery. The
-    // imported-chat markers are deliberately NOT here - they are pinned (see
-    // `pinImportedChatMarkers`), so sorting them would only file them wrongly.
-    const baseRows = [
-      ...shownPersisted,
-      ...shownActiveTurn,
-      ...dedupedPending,
-      ...live,
-      ...stoppedWithoutAssistantRecords,
-      ...forkedChatLinkMessages,
-      ...notificationAnchorMessages,
-      // After the anchors, because `projectTranscriptRows` appends its passes
-      // in this same order and a tie between two events sharing a timestamp is
-      // resolved by that order alone. Moving any of these lists moves ordinals.
-      ...autoJudgeUnattendedDenialMessages,
-      ...autoJudgeNoticeMessages,
-      ...trailing,
-    ];
-
-    // Overwhelmingly common case - this chat has no worktree setup card: a plain
-    // `createdAt` sort. Skips the per-render anchor Set/Map/weave entirely. This
-    // memo re-runs on every streamed delta, so the no-card path must stay cheap.
+    // Ranks preserve the former stable sort's assembly order on ties:
+    // persisted, active, pending, live, event rows, trailing indicator.
+    const changingOrder = [
+      ...rankMessages(shownActiveTurn, 1),
+      ...rankMessages(live, 3),
+      ...rankMessages(trailing, 9),
+    ].sort(compareRankedMessages);
+    const baseRows = mergeRankedMessages(settledOrder, changingOrder);
     if (setupCardEntries.length === 0) {
-      return pinImportedChatMarkers(
-        importedChatMarkerMessages,
-        baseRows.sort(compareCanonicalRowOrder),
-      );
+      return pinImportedChatMarkers(importedChatMarkerMessages, baseRows);
     }
 
     // Only the initial worktree of an unforked chat pins above its history.
@@ -1618,8 +1655,10 @@ export function useRenderedMessages(
       }
     });
 
-    const sorted = [...baseRows, ...floatingCards].sort(
-      compareCanonicalRowOrder,
+    // Floating cards followed every base row in the original stable sort.
+    const sorted = mergeRankedMessages(
+      rankMessages(baseRows, 0),
+      rankMessages(floatingCards, 1).sort(compareRankedMessages),
     );
 
     // Weave each anchored card in immediately above its message. A push loop
@@ -1639,20 +1678,14 @@ export function useRenderedMessages(
       pinGenesisCard ? [setupCardEntries[0].message, ...woven] : woven,
     );
   }, [
-    persisted,
-    activeTurn,
-    pending,
+    settledOrder,
+    shownPersisted,
+    shownActiveTurn,
+    shownPending,
     live,
-    stoppedWithoutAssistantRecords,
-    forkedChatLinkMessages,
     importedChatMarkerMessages,
-    notificationAnchorMessages,
-    autoJudgeUnattendedDenialMessages,
-    autoJudgeNoticeMessages,
     setupCardRows,
     setupCardEntries,
-    queuedPromptMessageIds,
-    withdrawnMessageId,
     activeRunState,
     activeTurnId,
     activeTurnStartedAt,
@@ -1660,6 +1693,42 @@ export function useRenderedMessages(
     turnPauseAccounting,
     displayContext,
   ]);
+}
+
+interface RankedMessage {
+  readonly message: ChatMessageModel;
+  readonly rank: number;
+}
+
+function rankMessages(
+  messages: readonly ChatMessageModel[],
+  rank: number,
+): RankedMessage[] {
+  return messages.map((message) => ({ message, rank }));
+}
+
+function compareRankedMessages(a: RankedMessage, b: RankedMessage): number {
+  return compareCanonicalRowOrder(a.message, b.message) || a.rank - b.rank;
+}
+
+// ponytail: flat output still copies O(history); separate live-row subscriptions can remove this merge.
+function mergeRankedMessages(
+  settled: readonly RankedMessage[],
+  changing: readonly RankedMessage[],
+): readonly ChatMessageModel[] {
+  const merged: ChatMessageModel[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < settled.length && j < changing.length) {
+    if (compareRankedMessages(settled[i], changing[j]) <= 0) {
+      merged.push(settled[i++].message);
+    } else {
+      merged.push(changing[j++].message);
+    }
+  }
+  while (i < settled.length) merged.push(settled[i++].message);
+  while (j < changing.length) merged.push(changing[j++].message);
+  return merged;
 }
 
 /**
@@ -2128,14 +2197,14 @@ interface AssistantTurnAccumulator {
    * not just the first record's last delta.
    */
   timestamp: number;
-  blocks: ContentBlock[];
+  blocks: ReadonlyArray<ContentBlock>;
   /**
-   * False while `blocks` still ALIASES a contributing record's own array.
+   * Null while `blocks` still ALIASES a contributing record's own array.
    * Every mutation goes through `ownedTurnBlocks` first, so the common
    * single-record turn never pays an array copy on a render pass - which it
    * used to, once per turn, making each pass O(blocks in the transcript).
    */
-  blocksOwned: boolean;
+  ownedBlocks: ContentBlock[] | null;
   /**
    * One signature fragment per contributing record (plus one for appended
    * live blocks). Each fragment is derived per record and memoized on that
@@ -2321,18 +2390,17 @@ function activeTurnSteeredIdsContentKey(
   activeTurnRecords: ReadonlyArray<Message>,
   liveAssistant: LiveAssistantMessage | null,
 ): string {
-  const ids = [
-    ...activeTurnRecords.flatMap((message) =>
-      message.role === "assistant" ? message.blocks : [],
-    ),
-    ...(liveAssistant === null ? [] : liveAssistant.blocks),
-  ]
-    .filter(
-      (block): block is Extract<ContentBlock, { type: "steer" }> =>
-        block.type === "steer",
-    )
-    .map((block) => block.messageId);
-  return [...new Set(ids)].sort().join("\n");
+  const ids = new Set<string>();
+  const collect = (blocks: ReadonlyArray<ContentBlock>): void => {
+    for (const block of blocks) {
+      if (block.type === "steer") ids.add(block.messageId);
+    }
+  };
+  for (const message of activeTurnRecords) {
+    if (message.role === "assistant") collect(message.blocks);
+  }
+  if (liveAssistant !== null) collect(liveAssistant.blocks);
+  return [...ids].sort().join("\n");
 }
 
 function userMessagesByIdFromMessages(
@@ -2772,7 +2840,7 @@ function addAssistantMessageToAccumulator(
     timestamp: message.timestamp,
     // Alias, not a copy - `ownedTurnBlocks` clones on the first mutation.
     blocks: message.blocks,
-    blocksOwned: false,
+    ownedBlocks: null,
     signatureParts: [assistantRecordSignature(message)],
     profileLabel,
     reasoningEffort: message.reasoningEffort,
@@ -2877,10 +2945,11 @@ function addLiveAssistantImageProjection(
  * only because every mutation site routes through here.
  */
 function ownedTurnBlocks(acc: AssistantTurnAccumulator): ContentBlock[] {
-  if (acc.blocksOwned) return acc.blocks;
-  acc.blocks = [...acc.blocks];
-  acc.blocksOwned = true;
-  return acc.blocks;
+  if (acc.ownedBlocks !== null) return acc.ownedBlocks;
+  const blocks = [...acc.blocks];
+  acc.blocks = blocks;
+  acc.ownedBlocks = blocks;
+  return blocks;
 }
 
 /**
@@ -3052,23 +3121,23 @@ function resolveResumeDeliveryPlacements(
   blocks: ReadonlyArray<ContentBlock>,
 ): ReadonlyArray<ContentBlock> {
   let hasAssistantWork = false;
-  return blocks.map((block) => {
+  let resolved: ContentBlock[] | null = null;
+  for (const [index, block] of blocks.entries()) {
     if (block.type === "autonomous_resume") {
-      const placement = block.deliveryPlacement ?? null;
-      if (placement !== null) return block;
-      return {
+      if ((block.deliveryPlacement ?? null) !== null) continue;
+      resolved ??= [...blocks];
+      resolved[index] = {
         ...block,
         deliveryPlacement: hasAssistantWork ? "in_turn" : "turn_start",
       };
+      continue;
     }
-    // Use the renderer's existing block vocabulary and visibility rules.
-    // Steer markers map to null; notifications were handled above and do not
-    // constitute assistant work by themselves.
+    // Steers and notifications do not count as assistant work.
     if (!hasAssistantWork && blockToSegment(block) !== null) {
       hasAssistantWork = true;
     }
-    return block;
-  });
+  }
+  return resolved ?? blocks;
 }
 
 /**
@@ -3736,10 +3805,9 @@ function renderLiveAssistant(
     sender: liveAssistant.sender,
     startedAt: liveAssistant.startedAt,
     timestamp: liveAssistant.timestamp,
-    // A standalone live row owns its list from the start: it is built fresh
-    // here each pass and never aliases a persisted record.
-    blocks: [...liveAssistant.blocks],
-    blocksOwned: true,
+    // Read-only until an accumulator mutation requests an owned copy.
+    blocks: liveAssistant.blocks,
+    ownedBlocks: null,
     signatureParts: [
       `live:${liveAssistant.blocksVersion}:images:${liveAssistant.imageResolutionsVersion}`,
     ],

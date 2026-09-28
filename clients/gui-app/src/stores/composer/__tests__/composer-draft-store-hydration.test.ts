@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { legacyComposerDraftId } from "@/lib/drafts/draft-ids";
+import { cancelDeferredJsonWrites } from "@/lib/persist/deferred-json-storage";
 
 import {
   pendingSubmittedDraftDeletesForHost,
@@ -9,6 +10,7 @@ import {
 } from "../composer-draft-store";
 
 const STORAGE_KEY = "traycer-gui-app:composer-drafts";
+const DEBOUNCE_MS = 100;
 
 const MENTION_DRAFT: DraftState = {
   content: {
@@ -56,13 +58,21 @@ const MENTION_DRAFT: DraftState = {
 
 beforeEach(() => {
   window.localStorage.clear();
+  cancelDeferredJsonWrites();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 });
 afterEach(() => {
-  window.localStorage.clear();
+  // Reset (which schedules a deferred write through the persist middleware)
+  // BEFORE cancel (which wipes it), and both while still on fake timers -
+  // otherwise the reset's write arms a real 100ms timeout that fires mid a
+  // later test.
   useComposerDraftStore.setState({
     drafts: {},
     pendingSubmittedDraftDeletes: {},
   });
+  cancelDeferredJsonWrites();
+  vi.useRealTimers();
+  window.localStorage.clear();
 });
 
 const EMPTY_DOC: DraftState["content"] = {
@@ -224,6 +234,8 @@ describe("composer draft store hydration", () => {
     useComposerDraftStore
       .getState()
       .fenceAndDetachSubmittedDraft("chat-fenced", draftId, "host-a");
+    // Flush before reading disk - the write is queued, not synchronous.
+    vi.advanceTimersByTime(DEBOUNCE_MS);
     const persisted = window.localStorage.getItem(STORAGE_KEY);
     expect(persisted).not.toBeNull();
 

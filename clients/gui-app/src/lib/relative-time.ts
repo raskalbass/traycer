@@ -1,4 +1,10 @@
-import { useLayoutEffect, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
+import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 
 const SECOND_MS = 1_000;
 const MINUTE_MS = 60_000;
@@ -7,6 +13,52 @@ const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
 // Where the compact ladder stops counting weeks and shows a date instead.
 const COMPACT_WEEKS_CUTOFF_MS = 4 * WEEK_MS;
+
+const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+let formattingGeneration = 0;
+let zoneOffsets: string | null = null;
+let timeZone: string | null = null;
+let zoneCheckedAt = -Infinity;
+
+function getFormattingGeneration(): number {
+  const now = Date.now();
+  const year = new Date(now).getFullYear();
+  const offsets = `${new Date(Date.UTC(year, 0, 1)).getTimezoneOffset()}/${new Date(Date.UTC(year, 6, 1)).getTimezoneOffset()}`;
+  let changed = zoneOffsets !== null && offsets !== zoneOffsets;
+  zoneOffsets = offsets;
+  // Equal seasonal offsets do not identify a zone's historical rules. Allow
+  // at most 1s of stale formatting after such an OS timezone change, without
+  // paying for an Intl constructor on every timestamp.
+  if (now < zoneCheckedAt || now - zoneCheckedAt >= SECOND_MS) {
+    const nextZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    changed ||= timeZone !== null && nextZone !== timeZone;
+    timeZone = nextZone;
+    zoneCheckedAt = now;
+  }
+  if (changed) {
+    dateTimeFormatters.clear();
+    formattingGeneration += 1;
+  }
+  return formattingGeneration;
+}
+
+function formatDateTime(
+  timestamp: number,
+  locale: string | undefined,
+  options: Intl.DateTimeFormatOptions,
+): string {
+  const date = new Date(timestamp);
+  // Date's locale methods return this for invalid input; Intl.format throws.
+  if (Number.isNaN(date.getTime())) return "Invalid Date";
+  getFormattingGeneration();
+  const key = JSON.stringify([locale, options]);
+  let formatter = dateTimeFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, options);
+    dateTimeFormatters.set(key, formatter);
+  }
+  return formatter.format(date);
+}
 
 /**
  * A shared ticking clock: one `setInterval` for every component subscribed to
@@ -29,8 +81,8 @@ interface SharedClock {
   readonly getSnapshot: () => number;
   /**
    * The instant sampled at construction, subscription, or the last fire - and
-   * the snapshot every hook in this file hands `useSyncExternalStore`, so
-   * each one renders from the value that call RETURNS.
+   * the source for every hook's snapshot. Labels select their formatted value
+   * inside that snapshot, so unchanged text does not schedule a render.
    *
    * Never from a second read of the clock beside a tick snapshot. The desktop
    * renderer is built with the React Compiler, which memoizes a render-time
@@ -190,8 +242,6 @@ export function createSharedClock(intervalMs: number): SharedClock {
 // The long clock: every relative timestamp, reset countdown and "far reset"
 // decision in the app. Minute resolution is what those labels change at.
 const minuteClock = createSharedClock(MINUTE_MS);
-const { subscribe } = minuteClock;
-const sampledNowOf = minuteClock.sampledNow;
 
 /**
  * The SECOND clock, for the provider-fallback grace countdown alone.
@@ -204,6 +254,37 @@ const sampledNowOf = minuteClock.sampledNow;
  * which for this clock is the common case rather than the rare one.
  */
 const secondClock = createSharedClock(SECOND_MS);
+
+const subscribeIdle = (): (() => void) => () => undefined;
+
+function useClockValue<T>(
+  clock: SharedClock,
+  select: (now: number) => T,
+  enabled: boolean,
+): T {
+  const visible = useTileBodyVisible();
+  const getSnapshot = useCallback(
+    () => select(clock.sampledNow()),
+    [clock, select],
+  );
+  return useSyncExternalStore(
+    visible && enabled ? clock.subscribe : subscribeIdle,
+    getSnapshot,
+    getSnapshot,
+  );
+}
+
+function useRelativeLabel(
+  timestamp: number,
+  format: (timestamp: number, now: number) => string,
+  dateCutoffMs: number,
+): string {
+  const select = useMemo(
+    () => createRelativeLabelSelector(timestamp, format, dateCutoffMs),
+    [timestamp, format, dateCutoffMs],
+  );
+  return useClockValue(minuteClock, select, true);
+}
 
 /**
  * Pure bucketed relative-time formatter.
@@ -229,7 +310,7 @@ export function formatRelativeTimestamp(
 }
 
 function formatShortDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString(undefined, {
+  return formatDateTime(timestamp, undefined, {
     month: "short",
     day: "numeric",
   });
@@ -268,8 +349,11 @@ export function formatCompactRelativeTime(
  * tick repaints the label rather than its surrounding row.
  */
 export function useCompactRelativeTime(timestamp: number): string {
-  const now = useSyncExternalStore(subscribe, sampledNowOf, sampledNowOf);
-  return formatCompactRelativeTime(timestamp, now);
+  return useRelativeLabel(
+    timestamp,
+    formatCompactRelativeTime,
+    COMPACT_WEEKS_CUTOFF_MS,
+  );
 }
 
 /**
@@ -279,12 +363,16 @@ export function useCompactRelativeTime(timestamp: number): string {
  * list row does not re-render when the clock ticks.
  */
 export function useRelativeTimestamp(createdAt: number): string {
-  const now = useSyncExternalStore(subscribe, sampledNowOf, sampledNowOf);
-  return formatRelativeTimestamp(createdAt, now);
+  return useRelativeLabel(createdAt, formatRelativeTimestamp, 2 * DAY_MS);
 }
 
 export function useSampledNow(): number {
-  return useSyncExternalStore(subscribe, sampledNowOf, sampledNowOf);
+  const visible = useTileBodyVisible();
+  return useSyncExternalStore(
+    visible ? minuteClock.subscribe : subscribeIdle,
+    minuteClock.sampledNow,
+    minuteClock.sampledNow,
+  );
 }
 
 /**
@@ -323,9 +411,12 @@ export function formatResetCountdown(resetsAt: number, now: number): string {
  * still pays for only one interval.
  */
 export function useResetCountdown(resetsAt: number | null): string | null {
-  const now = useSyncExternalStore(subscribe, sampledNowOf, sampledNowOf);
-  if (resetsAt === null) return null;
-  return formatResetCountdown(resetsAt, now);
+  const select = useCallback(
+    (now: number) =>
+      resetsAt === null ? null : formatResetCountdown(resetsAt, now),
+    [resetsAt],
+  );
+  return useClockValue(minuteClock, select, resetsAt !== null);
 }
 
 /**
@@ -354,9 +445,11 @@ export function isFarReset(resetsAt: number, now: number): boolean {
  * display without a remount.
  */
 export function useIsFarReset(resetsAt: number | null): boolean {
-  const now = useSyncExternalStore(subscribe, sampledNowOf, sampledNowOf);
-  if (resetsAt === null) return false;
-  return isFarReset(resetsAt, now);
+  const select = useCallback(
+    (now: number) => resetsAt !== null && isFarReset(resetsAt, now),
+    [resetsAt],
+  );
+  return useClockValue(minuteClock, select, resetsAt !== null);
 }
 
 /**
@@ -370,9 +463,8 @@ export function useIsFarReset(resetsAt: number | null): boolean {
  * passes, so it doesn't need to subscribe to the shared tick clock.
  */
 export function formatResetDateTime(resetsAt: number): string {
-  const date = new Date(resetsAt);
-  const weekday = date.toLocaleDateString(undefined, { weekday: "short" });
-  const time = date.toLocaleTimeString(undefined, {
+  const weekday = formatDateTime(resetsAt, undefined, { weekday: "short" });
+  const time = formatDateTime(resetsAt, undefined, {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
@@ -396,7 +488,7 @@ export function formatResetDateTime(resetsAt: number): string {
  * in time, and the compact form is what fits in a sentence.
  */
 export function formatAbsoluteDateTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString(undefined, {
+  return formatDateTime(timestamp, undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -437,7 +529,8 @@ function formatDayScopedTime(
   // No `hour12` here, unlike `formatResetDateTime`. A transcript stamp reads
   // down a column of times the viewer scans, so it should be written the way
   // their own locale writes a clock - "15:45" where that is the convention.
-  const time = new Date(timestamp).toLocaleTimeString(
+  const time = formatDateTime(
+    timestamp,
     undefined,
     precision === "second"
       ? { hour: "numeric", minute: "2-digit", second: "2-digit" }
@@ -505,7 +598,7 @@ export function hasRenderableMessageTime(timestamp: number): boolean {
  * needs no `now` and never goes stale.
  */
 export function formatFullTimestamp(timestamp: number): string {
-  return new Date(timestamp).toLocaleString(undefined, {
+  return formatDateTime(timestamp, undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -530,12 +623,11 @@ export function formatFullTimestamp(timestamp: number): string {
  * rather than the transcript row around it.
  */
 export function useMessageTime(timestamp: number): string {
-  // The instance's accessor as the SNAPSHOT, like every hook in this file.
-  // This hook arrived from `origin/main`, where the sample was a module-level
-  // binding read beside the tick; rendering from the returned value is what
-  // keys the compiled label on the time instead of caching it on `timestamp`.
-  const now = useSyncExternalStore(subscribe, sampledNowOf, sampledNowOf);
-  return formatMessageTime(timestamp, now);
+  const select = useMemo(
+    () => createMessageTimeSelector(timestamp),
+    [timestamp],
+  );
+  return useClockValue(minuteClock, select, true);
 }
 
 /**
@@ -543,7 +635,7 @@ export function useMessageTime(timestamp: number): string {
  * date is more useful than the popover's compact weekday-only label.
  */
 export function formatResetFullDateTime(resetsAt: number): string {
-  return new Date(resetsAt).toLocaleString(undefined, {
+  return formatDateTime(resetsAt, undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -566,7 +658,7 @@ export function formatResetFullDateTime(resetsAt: number): string {
  * Pure, not a hook: an absolute time does not go stale.
  */
 export function formatClockTime(at: number): string {
-  return new Date(at).toLocaleTimeString(undefined, {
+  return formatDateTime(at, undefined, {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
@@ -656,11 +748,13 @@ export function formatGraceCountdown(deadline: number, now: number): string {
  * with it.
  */
 export function useGraceCountdown(deadline: number | null): string | null {
-  const now = useSyncExternalStore(
-    secondClock.subscribe,
-    secondClock.sampledNow,
-    secondClock.sampledNow,
+  const visible = useTileBodyVisible();
+  const select = useCallback(
+    (now: number) =>
+      deadline === null ? null : formatGraceCountdown(deadline, now),
+    [deadline],
   );
+  const label = useClockValue(secondClock, select, deadline !== null);
   // A new deadline on a mounted card - the destination menu closing, a
   // re-armed window - would render against the last fire's sample, up to a
   // second old, until the next fire. Re-sampling in a LAYOUT effect wakes
@@ -669,8 +763,58 @@ export function useGraceCountdown(deadline: number | null): string | null {
   // with 14.57 s left painted "16s". On mount it changes nothing: React
   // re-checks the snapshot after subscribing, as it always did.
   useLayoutEffect(() => {
+    if (!visible || deadline === null) return;
     secondClock.resample();
-  }, [deadline]);
-  if (deadline === null) return null;
-  return formatGraceCountdown(deadline, now);
+  }, [deadline, visible]);
+  return label;
+}
+
+function createRelativeLabelSelector(
+  timestamp: number,
+  format: (timestamp: number, now: number) => string,
+  dateCutoffMs: number,
+): (now: number) => string {
+  let date: string | undefined;
+  let generation = -1;
+  let offset = NaN;
+  return (now: number): string => {
+    if (now - timestamp < dateCutoffMs) return format(timestamp, now);
+    const nextGeneration = getFormattingGeneration();
+    const nextOffset = new Date(timestamp).getTimezoneOffset();
+    if (
+      date === undefined ||
+      generation !== nextGeneration ||
+      offset !== nextOffset
+    ) {
+      generation = nextGeneration;
+      offset = nextOffset;
+      date = formatShortDate(timestamp);
+    }
+    return date;
+  };
+}
+
+function createMessageTimeSelector(timestamp: number): (now: number) => string {
+  let day: number | null = null;
+  let label = "";
+  let generation = -1;
+  let offset = NaN;
+  return (now: number): string => {
+    // Local midnight, not an epoch-day bucket: the date prefix follows the
+    // viewer's calendar, including DST changes.
+    const nextDay = new Date(now).setHours(0, 0, 0, 0);
+    const nextGeneration = getFormattingGeneration();
+    const nextOffset = new Date(timestamp).getTimezoneOffset();
+    if (
+      day !== nextDay ||
+      generation !== nextGeneration ||
+      offset !== nextOffset
+    ) {
+      day = nextDay;
+      generation = nextGeneration;
+      offset = nextOffset;
+      label = formatMessageTime(timestamp, now);
+    }
+    return label;
+  };
 }

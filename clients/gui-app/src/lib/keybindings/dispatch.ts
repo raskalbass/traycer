@@ -1,3 +1,4 @@
+import { setTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { requestPaneOpenerFocus } from "@/lib/canvas/focus-pane-opener";
 import { reopenClosedTab } from "@/lib/tab-recovery/reopen";
@@ -13,8 +14,12 @@ import { openActiveTileFindWithReplace } from "@/lib/commands/tile-find";
 import { toggleActiveModelPicker } from "@/lib/commands/active-model-picker-registry";
 import { openActiveDraftsControl } from "@/lib/commands/active-drafts-control-registry";
 import { focusActiveComposer } from "@/lib/composer/composer-focus-registry";
-import { tabMatchesPath, tabResolveIntent } from "@/stores/tabs/registry";
-import { selectHostFocusedRef } from "@/stores/tabs/selectors";
+import { tabResolveIntent } from "@/stores/tabs/registry";
+import { tabRefKey } from "@/stores/tabs/layout";
+import {
+  selectHostFocusedRef,
+  selectHostRouteBackingRef,
+} from "@/stores/tabs/selectors";
 import { useTabsStore } from "@/stores/tabs/store";
 import { isHomeTabEnabled } from "@/stores/settings/settings-store";
 import type { TabActivationIntent } from "@/lib/tab-navigation/intents";
@@ -385,8 +390,6 @@ const STATIC_HANDLERS: Readonly<Partial<Record<ActionId, StaticHandler>>> = {
     return true;
   },
   "epic.duplicate-tab": (r) => duplicateActiveEpicTab(r),
-  "epic.next": (r) => moveHeaderTabFocus(r, 1),
-  "epic.prev": (r) => moveHeaderTabFocus(r, -1),
   "epic.close": (r) => closeActiveEpic(r),
   "tab.reopen": (r) => {
     void reopenClosedTab(r);
@@ -397,8 +400,6 @@ const STATIC_HANDLERS: Readonly<Partial<Record<ActionId, StaticHandler>>> = {
   "tab.close-others": (r) => closeOtherTabsInActive(r),
   "tab.close-right": (r) => closeRightTabsInActive(r),
   "tab.close-all": (r) => closeAllTabsInActive(r),
-  "tab.next": (r) => moveTabFocus(r, 1),
-  "tab.prev": (r) => moveTabFocus(r, -1),
   "group.split.horizontal": (r) => splitActiveGroup(r, "horizontal"),
   "group.split.vertical": (r) => splitActiveGroup(r, "vertical"),
   "group.split-right": (r) => splitActiveGroupRight(r),
@@ -451,11 +452,27 @@ export function dispatchAction(
   id: ActionId,
   router: KeybindingRouter,
 ): boolean {
+  return dispatchKeydownAction(id, router, false);
+}
+
+export function dispatchKeydownAction(
+  id: ActionId,
+  router: KeybindingRouter,
+  repeat: boolean,
+): boolean {
   const dynamic = dynamicHandlerRegistry.get(id);
   if (dynamic !== undefined) {
+    resetTabCycle(router);
     dynamic();
     return true;
   }
+  if (id === "epic.next" || id === "epic.prev") {
+    return moveTabCycle(router, "header", id === "epic.next" ? 1 : -1, repeat);
+  }
+  if (id === "tab.next" || id === "tab.prev") {
+    return moveTabCycle(router, "canvas", id === "tab.next" ? 1 : -1, repeat);
+  }
+  resetTabCycle(router);
   const handler = STATIC_HANDLERS[id];
   return handler === undefined ? false : handler(router);
 }
@@ -511,14 +528,182 @@ function switchToTabByIndex(router: KeybindingRouter, index: number): boolean {
   return true;
 }
 
-function moveHeaderTabFocus(router: KeybindingRouter, delta: -1 | 1): boolean {
-  const allTabs = getHeaderTabs();
-  if (allTabs.length === 0) return false;
-  const pathname = router.getPathname();
-  const activeIndex = allTabs.findIndex((tab) => tabMatchesPath(tab, pathname));
-  if (activeIndex === -1) return false;
-  const next = allTabs[(activeIndex + delta + allTabs.length) % allTabs.length];
-  router.navigateToTabIntent(tabResolveIntent(next));
+type TabCycleKind = "header" | "canvas";
+
+interface TabCycleSnapshot {
+  readonly scope: string;
+  readonly ids: ReadonlyArray<string>;
+  readonly activeId: string | null;
+  readonly commit: (id: string, preview: boolean) => void;
+}
+
+interface TabCycleSession {
+  readonly kind: TabCycleKind;
+  readonly scope: string;
+  readonly ids: ReadonlyArray<string>;
+  committedId: string | null;
+  targetId: string;
+  frame: number | null;
+  timer: number | null;
+}
+
+const tabCycles = new WeakMap<KeybindingRouter, TabCycleSession>();
+const repeatingTabCycles = new Set<TabCycleSession>();
+
+function readTabCycle(
+  router: KeybindingRouter,
+  kind: TabCycleKind,
+): TabCycleSnapshot | null {
+  if (kind === "header") {
+    const tabs = getHeaderTabs();
+    const state = useTabsStore.getState();
+    // An empty split side still cycles from the member backing its route.
+    const focused =
+      selectHostFocusedRef(state) ?? selectHostRouteBackingRef(state);
+    if (focused === null || tabs.length === 0) return null;
+    return {
+      scope: "header",
+      ids: tabs.map(tabRefKey),
+      // Activation updates the layout before the router commits its pathname.
+      activeId: tabRefKey(focused),
+      commit: (id) => {
+        const tab = tabs.find((candidate) => tabRefKey(candidate) === id);
+        if (tab !== undefined)
+          router.navigateToTabIntent(tabResolveIntent(tab));
+      },
+    };
+  }
+  const tab = getActiveTab(router);
+  if (tab === null) return null;
+  const canvas = useEpicCanvasStore.getState().canvasByTabId[tab.tabId];
+  if (canvas === undefined || canvas.activePaneId === null) return null;
+  const pane = findPaneById(canvas.root, canvas.activePaneId);
+  if (pane === null || pane.tabInstanceIds.length === 0) return null;
+  return {
+    scope: `${tab.tabId}:${pane.id}`,
+    ids: pane.tabInstanceIds,
+    activeId: pane.activeTabId,
+    commit: (id, preview) => {
+      runNestedFocus(router, tab, () => {
+        const state = useEpicCanvasStore.getState();
+        return preview
+          ? state.preparePreviewTileTabFocusTarget(tab.tabId, pane.id, id)
+          : state.prepareSetActiveTileTabFocusTarget(tab.tabId, pane.id, id);
+      });
+    },
+  };
+}
+
+function cycleMatches(
+  session: TabCycleSession,
+  snapshot: TabCycleSnapshot | null,
+): snapshot is TabCycleSnapshot {
+  return (
+    snapshot !== null &&
+    snapshot.scope === session.scope &&
+    snapshot.activeId === session.committedId &&
+    snapshot.ids.length === session.ids.length &&
+    snapshot.ids.every((id, index) => id === session.ids[index])
+  );
+}
+
+function clearTabCycleTimers(session: TabCycleSession): void {
+  if (session.frame !== null) window.cancelAnimationFrame(session.frame);
+  if (session.timer !== null) window.clearTimeout(session.timer);
+  session.frame = null;
+  session.timer = null;
+}
+
+export function resetTabCycle(router: KeybindingRouter): void {
+  const session = tabCycles.get(router);
+  if (session === undefined) return;
+  clearTabCycleTimers(session);
+  tabCycles.delete(router);
+  if (session.kind === "canvas" && repeatingTabCycles.has(session)) {
+    const snapshot = readTabCycle(router, session.kind);
+    // Settle only the selection we still own, never a cancelled pending target.
+    if (cycleMatches(session, snapshot) && session.committedId !== null) {
+      snapshot.commit(session.committedId, false);
+    }
+  }
+  repeatingTabCycles.delete(session);
+  setTabCycleRepeating(repeatingTabCycles.size > 0);
+}
+
+/** Re-read live membership and focus before any delayed write. */
+export function validateTabCycle(router: KeybindingRouter): void {
+  const session = tabCycles.get(router);
+  if (session === undefined) return;
+  if (!cycleMatches(session, readTabCycle(router, session.kind))) {
+    resetTabCycle(router);
+  }
+}
+
+export function flushTabCycle(router: KeybindingRouter): void {
+  const session = tabCycles.get(router);
+  if (session === undefined) return;
+  const pending = session.frame !== null;
+  clearTabCycleTimers(session);
+  // A dialog can open after the last keydown but before this frame/key release.
+  if (pending && isKeybindingDialogOpen(document.activeElement)) {
+    resetTabCycle(router);
+    return;
+  }
+  const snapshot = readTabCycle(router, session.kind);
+  if (!cycleMatches(session, snapshot)) {
+    resetTabCycle(router);
+    return;
+  }
+  if (session.targetId === snapshot.activeId) return;
+  session.committedId = session.targetId;
+  snapshot.commit(session.targetId, repeatingTabCycles.has(session));
+}
+
+function moveTabCycle(
+  router: KeybindingRouter,
+  kind: TabCycleKind,
+  delta: -1 | 1,
+  repeat: boolean,
+): boolean {
+  const snapshot = readTabCycle(router, kind);
+  let session = tabCycles.get(router);
+  if (
+    !repeat ||
+    session === undefined ||
+    session.kind !== kind ||
+    !cycleMatches(session, snapshot)
+  ) {
+    resetTabCycle(router);
+    session = undefined;
+  }
+  if (snapshot === null) return false;
+  const currentId = session?.targetId ?? snapshot.activeId;
+  const index = currentId === null ? 0 : snapshot.ids.indexOf(currentId);
+  if (index === -1) return false;
+  const targetId =
+    snapshot.ids[(index + delta + snapshot.ids.length) % snapshot.ids.length];
+  session ??= {
+    kind,
+    scope: snapshot.scope,
+    ids: snapshot.ids,
+    committedId: snapshot.activeId,
+    targetId,
+    frame: null,
+    timer: null,
+  };
+  session.targetId = targetId;
+  tabCycles.set(router, session);
+  if (repeat) {
+    repeatingTabCycles.add(session);
+    setTabCycleRepeating(true);
+  }
+  if (!repeat) {
+    flushTabCycle(router);
+  } else if (session.frame === null) {
+    session.frame = window.requestAnimationFrame(() => flushTabCycle(router));
+    // Hidden/occluded windows may never receive a frame.
+    session.timer = window.setTimeout(() => flushTabCycle(router), 100);
+  }
   return true;
 }
 
@@ -701,28 +886,6 @@ function closeAllTabsInActive(router: KeybindingRouter): boolean {
   return true;
 }
 
-function moveTabFocus(router: KeybindingRouter, delta: number): boolean {
-  const tab = getActiveTab(router);
-  if (tab === null) return false;
-  const canvas = useEpicCanvasStore.getState().canvasByTabId[tab.tabId];
-  if (canvas === undefined || canvas.activePaneId === null) return false;
-  const pane = findPaneById(canvas.root, canvas.activePaneId);
-  if (pane === null || pane.tabInstanceIds.length === 0) return false;
-  const idx =
-    pane.activeTabId === null
-      ? 0
-      : pane.tabInstanceIds.indexOf(pane.activeTabId);
-  if (idx === -1) return false;
-  const count = pane.tabInstanceIds.length;
-  const nextInstanceId = pane.tabInstanceIds[(idx + delta + count) % count];
-  runNestedFocus(router, tab, () =>
-    useEpicCanvasStore
-      .getState()
-      .prepareSetActiveTileTabFocusTarget(tab.tabId, pane.id, nextInstanceId),
-  );
-  return true;
-}
-
 function switchActivePaneTabByIndex(
   router: KeybindingRouter,
   index: number,
@@ -873,4 +1036,16 @@ function escapeAttributeSelectorValue(value: string): string {
     return CSS.escape(value);
   }
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+export function isKeybindingDialogOpen(target: EventTarget | null): boolean {
+  if (typeof document === "undefined") return false;
+  // Leader-hosting dialogs are transparent, but another open dialog still
+  // blocks. A key inside a blocking dialog needs no document-wide lookup.
+  const selector =
+    '[role="dialog"][data-state="open"]:not([data-leader-scope])';
+  if (target instanceof Element && target.closest(selector) !== null) {
+    return true;
+  }
+  return document.querySelector(selector) !== null;
 }

@@ -3,8 +3,10 @@ import {
   memo,
   use,
   useCallback,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   type RefObject,
 } from "react";
 import {
@@ -14,6 +16,7 @@ import {
   type OnViewableItemsChangedInfo,
 } from "@legendapp/list/react";
 import { cn } from "@/lib/utils";
+import { ChatPrewarmContext } from "@/lib/registries/chat-prewarm";
 import { ChatEmptyState } from "@/components/chat/chat-empty-state";
 import {
   ChatMessage,
@@ -133,6 +136,7 @@ export interface ChatTimelineProps {
    * row is hydrated and this is just the rendered messages.
    */
   readonly rows: ReadonlyArray<TranscriptListRow>;
+  readonly visible: boolean;
   /**
    * Which ROW indexes the viewport is showing, from LegendList's viewability
    * pass - `[fromIndex, toIndex)` over `rows`, buffered by the list's render
@@ -229,6 +233,7 @@ export interface ChatTimelineProps {
  */
 export const ChatTimeline = memo(function ChatTimeline({
   rows: inputRows,
+  visible,
   onVisibleRowRangeChange,
   taskTitle,
   backgroundToolBlockIds,
@@ -253,7 +258,12 @@ export const ChatTimeline = memo(function ChatTimeline({
   onListMetricsChange,
   ...rest
 }: ChatTimelineProps) {
-  const rows = useStableChatTimelineRows(listRef, inputRows);
+  const prewarmEligible = use(ChatPrewarmContext);
+  const rows = useStableChatTimelineRows(
+    listRef,
+    inputRows,
+    visible || prewarmEligible,
+  );
 
   const keySequenceChanged = useCommittedKeySequenceChanged(listRef, rows);
 
@@ -306,11 +316,21 @@ export const ChatTimeline = memo(function ChatTimeline({
   // an end-exclusive range. Reported from the buffered bounds rather than the
   // strictly-visible ones so hydration warms the rows the list is about to
   // mount, not only the ones already on screen.
+  const viewabilityRef = useRef({ visible, onVisibleRowRangeChange });
+  // LegendList can call its previous callback during a new-data layout pass.
+  useInsertionEffect(() => {
+    viewabilityRef.current = { visible, onVisibleRowRangeChange };
+  }, [visible, onVisibleRowRangeChange]);
   const handleViewableItemsChanged = useCallback(
     (info: OnViewableItemsChangedInfo<TranscriptListRow>): void => {
-      onVisibleRowRangeChange?.(info.startBuffered, info.endBuffered + 1);
+      const current = viewabilityRef.current;
+      if (!current.visible) return;
+      current.onVisibleRowRangeChange?.(
+        info.startBuffered,
+        info.endBuffered + 1,
+      );
     },
-    [onVisibleRowRangeChange],
+    [],
   );
 
   // Stable renderItem: `rowHeightMemory` is a mount-lifetime object, not a
@@ -558,6 +578,11 @@ const committedChatTimelineKeysCache = new WeakMap<
   ReadonlyArray<string>
 >();
 
+const committedChatTimelineRowsCache = new WeakMap<
+  RefObject<LegendListRef | null>,
+  ReadonlyArray<TranscriptListRow>
+>();
+
 /** Returns a structurally-shared copy of `rows`: for each row whose content
  *  hasn't changed since last call, the previous object reference is reused.
  *  `messages` is rebuilt wholesale on every store update (every streaming
@@ -574,15 +599,31 @@ const committedChatTimelineKeysCache = new WeakMap<
 function useStableChatTimelineRows(
   listRef: RefObject<LegendListRef | null>,
   rows: ReadonlyArray<TranscriptListRow>,
+  visible: boolean,
 ): ReadonlyArray<TranscriptListRow> {
-  return useMemo(() => {
+  "use no memo";
+  // Re-read the mutable WeakMap when hiding, without rerendering on each commit.
+  const stableRows = useMemo(() => {
+    // A suspended visible render may have populated the sharing cache.
+    if (!visible) {
+      return (
+        committedChatTimelineRowsCache.get(listRef) ??
+        EMPTY_STABLE_TRANSCRIPT_LIST_ROWS_STATE.result
+      );
+    }
     const previous =
       stableChatTimelineRowsCache.get(listRef) ??
       EMPTY_STABLE_TRANSCRIPT_LIST_ROWS_STATE;
     const next = computeStableTranscriptListRows(rows, previous);
     stableChatTimelineRowsCache.set(listRef, next);
     return next.result;
-  }, [rows, listRef]);
+  }, [rows, listRef, visible]);
+
+  useLayoutEffect(() => {
+    committedChatTimelineRowsCache.set(listRef, stableRows);
+  }, [listRef, stableRows]);
+
+  return stableRows;
 }
 
 /**

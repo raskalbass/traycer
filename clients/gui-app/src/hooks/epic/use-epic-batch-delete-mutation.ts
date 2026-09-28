@@ -214,7 +214,11 @@ export function useEpicBatchDelete(): UseMutationResult<
             stopOwnersPaths: new Set(),
           }).then((outcome) => {
             emitTaskDeleteSummaryToast(epicToast, outcome);
-            invalidateWorktreeCachesForHost(queryClient, hostId);
+            invalidateWorktreeListingAndBindingCaches(
+              queryClient,
+              hostId,
+              eligibleWorktreePaths,
+            );
           });
         }
         if (ctx.hostId !== null && ctx.userId !== null) {
@@ -578,15 +582,4 @@ function joinToastDetails(
     (part): part is string => part !== null && part.length > 0,
   );
   return parts.length === 0 ? null : parts.join(" · ");
-}
-
-// Refresh the host-wide worktree list plus the shared binding-backed caches
-// after the cleanup lands, so Settings ▸ Worktrees and the folder/worktree
-// pickers stop showing the removed worktrees. Shares the Settings delete
-// flow's invalidation slice; see the helper for the refetchType rationale.
-function invalidateWorktreeCachesForHost(
-  queryClient: QueryClient,
-  hostId: string,
-): void {
-  invalidateWorktreeListingAndBindingCaches(queryClient, hostId);
 }

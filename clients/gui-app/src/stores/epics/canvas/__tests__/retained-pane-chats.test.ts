@@ -34,8 +34,27 @@ function tileFor(instanceId: string): EpicCanvasTileRef | undefined {
   };
 }
 
+/** Settled (non-preview) retention - the normal, non-cycling path. */
 function retained(pane: TilePane, cap: number): ReadonlyArray<string> {
-  return retainedPaneChatInstanceIds({ pane, tileFor, cap });
+  return retainedPaneChatInstanceIds({
+    pane,
+    tileFor,
+    cap,
+    preserveHistory: false,
+  });
+}
+
+/** Retention while a keyboard hold is previewing `pane.activeTabId`. */
+function retainedDuringHold(
+  pane: TilePane,
+  cap: number,
+): ReadonlyArray<string> {
+  return retainedPaneChatInstanceIds({
+    pane,
+    tileFor,
+    cap,
+    preserveHistory: true,
+  });
 }
 
 describe("retainedPaneChatInstanceIds", () => {
@@ -142,5 +161,31 @@ describe("retainedPaneChatInstanceIds", () => {
       activationHistory: [],
     });
     expect(retained(pane, RETAINED_PANE_CHAT_CAP)).toEqual([]);
+  });
+});
+
+// A held Cmd+] repeat previews `pane.activeTabId` on every frame without
+// touching `activationHistory` (see `previewActiveTab` vs `setActiveTab` in
+// actions.ts). `preserveHistory: true` is how the two retention callers ask
+// for that: keep the settled window the cap already picked from history, and
+// admit the in-flight preview target as ONE extra slot on top of the cap -
+// never in place of a settled entry, and never counted twice.
+//
+// The settled-pair-survives-a-long-hold and cap+1 invariants are covered at
+// the integration level in `keybinding-provider.test.ts`'s "owner boundary"
+// suite (real dispatch driving real store state); this file keeps only the
+// one case that's specific to this pure function and not exercised there -
+// a non-chat preview target contributing no transit slot at all.
+describe("retainedPaneChatInstanceIds with preserveHistory: true (mid-hold preview)", () => {
+  it("adds no transit slot when the previewed tab is not a chat", () => {
+    const pane = paneWith({
+      tabInstanceIds: ["chat-a", "chat-b", "spec-1"],
+      activeTabId: "spec-1",
+      activationHistory: ["chat-a", "chat-b"],
+    });
+    expect(retainedDuringHold(pane, RETAINED_PANE_CHAT_CAP)).toEqual([
+      "chat-a",
+      "chat-b",
+    ]);
   });
 });

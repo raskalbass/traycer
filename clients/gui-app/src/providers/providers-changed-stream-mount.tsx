@@ -1,9 +1,12 @@
 import { useEffect, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryFilters } from "@tanstack/react-query";
 import { ProvidersChangedStreamClient } from "@traycer-clients/shared/host-transport/providers-changed-stream-client";
 import { acquireHostConnection } from "@traycer-clients/shared/host-client/host-connection-registry";
 import { isReopenableHostStreamClose } from "@traycer-clients/shared/host-client/host-connection-reconnect-engine";
-import { PROVIDER_INVALIDATIONS } from "@/hooks/providers/invalidations";
+import {
+  PROVIDER_INVALIDATIONS,
+  isMutableProviderQuery,
+} from "@/hooks/providers/invalidations";
 import {
   useStreamHostId,
   useStreamMethodSupport,
@@ -36,12 +39,35 @@ export function ProvidersChangedStreamMount(): ReactNode {
       currentClient = null;
       openClient();
     }, isReopenableHostStreamClose);
-    const invalidateProviderQueries = (): void => {
-      for (const method of PROVIDER_INVALIDATIONS) {
-        void queryClient.invalidateQueries({
-          queryKey: hostQueryKeys.methodScope(hostId, method),
-        });
-      }
+    let invalidationTimer: number | null = null;
+    let invalidateAllProviders = false;
+    const changedProviders = new Set<string>();
+    const invalidateProviderQueries = (providerId: string | null): void => {
+      if (providerId === null) invalidateAllProviders = true;
+      else changedProviders.add(providerId);
+      if (invalidationTimer !== null) return;
+      invalidationTimer = window.setTimeout(() => {
+        invalidationTimer = null;
+        const providerIds = invalidateAllProviders
+          ? [null]
+          : [...changedProviders];
+        invalidateAllProviders = false;
+        changedProviders.clear();
+        for (const method of PROVIDER_INVALIDATIONS) {
+          const filters: QueryFilters = {
+            queryKey: hostQueryKeys.methodScope(hostId, method),
+            predicate: (query) =>
+              providerIds.some((id) =>
+                isMutableProviderQuery(query.queryKey, id),
+              ),
+          };
+          // A pre-event read can return stale data. Cancel even an initial
+          // read, which invalidateQueries alone would join instead of replace.
+          void queryClient.cancelQueries(filters).then(() => {
+            if (!disposed) return queryClient.invalidateQueries(filters);
+          });
+        }
+      }, 50);
     };
 
     function openClient(): void {
@@ -50,10 +76,10 @@ export function ProvidersChangedStreamMount(): ReactNode {
       let openedAtMs = 0;
       client = new ProvidersChangedStreamClient({
         wsStreamClient: streamClient,
-        onChanged: () => {
+        onChanged: (providerId) => {
           if (currentClient !== client) return;
           reopenScheduler.resetBackoff();
-          invalidateProviderQueries();
+          invalidateProviderQueries(providerId);
         },
         onConnectionStatus: (status, reason) => {
           if (currentClient !== client) return;
@@ -61,7 +87,7 @@ export function ProvidersChangedStreamMount(): ReactNode {
             openedAtMs = Date.now();
             // Catch up after any disconnect window even when the host emitted
             // no later provider event to wake this renderer.
-            invalidateProviderQueries();
+            invalidateProviderQueries(null);
             return;
           }
           if (status !== "closed") return;
@@ -80,6 +106,7 @@ export function ProvidersChangedStreamMount(): ReactNode {
     openClient();
     return () => {
       disposed = true;
+      if (invalidationTimer !== null) window.clearTimeout(invalidationTimer);
       reopenScheduler.dispose();
       currentClient?.close();
       currentClient = null;

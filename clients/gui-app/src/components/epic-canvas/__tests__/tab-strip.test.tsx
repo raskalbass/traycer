@@ -138,20 +138,37 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   useHostClientForHostId: () => null,
 }));
 
+function fixtureBrowserSessionsState(hostId: string | null): {
+  readonly items: readonly BrowserSessionInfo[];
+} {
+  return {
+    items:
+      hostId === null
+        ? []
+        : (testState.browserSessionsByHost.get(hostId) ?? []),
+  };
+}
+
 vi.mock("@/components/epic-canvas/renderers/use-browser-sessions", () => ({
   useBrowserSessionsForHost: (args: { readonly hostId: string | null }) => ({
     hostId: args.hostId,
     lifecycle: "live",
     inventoryReady: true,
-    items:
-      args.hostId === null
-        ? []
-        : (testState.browserSessionsByHost.get(args.hostId) ?? []),
+    items: fixtureBrowserSessionsState(args.hostId).items,
     errorMessage: null,
     retry: () => undefined,
     openTab: () => Promise.reject(new Error("not used")),
     closeTab: () => Promise.resolve(),
   }),
+  // `browser-tab-presentation.ts` reads through this selector rather than
+  // the full state above - apply the caller's selector to the same fixture
+  // items so its tab/session lookup sees what the test seeded.
+  useBrowserSessionsSelectorForHost: (
+    args: { readonly hostId: string | null },
+    selector: (state: {
+      readonly items: readonly BrowserSessionInfo[];
+    }) => unknown,
+  ) => selector(fixtureBrowserSessionsState(args.hostId)),
 }));
 
 vi.mock("@/hooks/terminal/use-terminal-rename-for-mutation", () => ({

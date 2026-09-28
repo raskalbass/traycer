@@ -472,6 +472,9 @@ export interface SessionRegistry<TSession> {
    */
   pruneWarm(): void;
 
+  /** Recheck a session's original idle deadline and the cap after work settles. */
+  reevaluate(key: SessionKey): void;
+
   size(): number;
 
   /** Fires on membership changes and on demand transitions. */
@@ -1089,6 +1092,13 @@ export function createSessionRegistry<TSession>(
     },
 
     pruneWarm: () => enforceWarmCap(),
+
+    reevaluate(key) {
+      transact(() => {
+        expireIfIdle(key);
+        enforceWarmCap();
+      });
+    },
 
     size: () => entries.size,
 

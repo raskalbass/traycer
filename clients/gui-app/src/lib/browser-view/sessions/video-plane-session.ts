@@ -1,3 +1,7 @@
+import {
+  isDocumentVisible,
+  subscribeDocumentVisibility,
+} from "@/lib/dom/document-visibility";
 import type {
   BrowserScreencastServerFrame,
   BrowserVideoPlaneFailureReason,
@@ -165,19 +169,16 @@ export function createVideoPlaneSession(options: {
    */
   const armDeadline = (): void => {
     const onVisible = (): void => {
+      if (!isDocumentVisible()) return;
+      cancelDeadline?.();
       cancelDeadline = null;
       armDeadline();
     };
     const timer = window.setTimeout(
       () => {
         cancelDeadline = null;
-        if (document.visibilityState !== "visible") {
-          document.addEventListener("visibilitychange", onVisible, {
-            once: true,
-          });
-          cancelDeadline = () => {
-            document.removeEventListener("visibilitychange", onVisible);
-          };
+        if (!isDocumentVisible()) {
+          cancelDeadline = subscribeDocumentVisibility(onVisible);
           return;
         }
         deadlineRound = null;

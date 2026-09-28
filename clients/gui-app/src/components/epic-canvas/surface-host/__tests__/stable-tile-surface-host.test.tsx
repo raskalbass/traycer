@@ -958,6 +958,107 @@ describe("StableTileSurfaceHost geometry retention while hidden (confirmed scrol
     expect(record.style.height).toBe("400px");
     slot.remove();
   });
+
+  /**
+   * Perf fix W1-B item 6: registration keys on `[instanceId, slotElement]`
+   * only; a SEPARATE effect keyed on `[instanceId, slotElement, visible]`
+   * calls `refreshTileSurfaceGeometrySlot` instead of re-registering. A pane
+   * tab reselection republishes the same `geometryAnchorElement` with a
+   * different `presentation` - it must not re-observe the slot, and refresh
+   * must still pick up the slot's CURRENT rect on re-show even when no
+   * ResizeObserver batch ever fires for it while hidden.
+   */
+  it("a presentation-only toggle does not re-observe the slot, and refresh still applies the slot's current rect with no RO callback", () => {
+    seedOneChat();
+    const slot = document.createElement("div");
+    document.body.appendChild(slot);
+    // A spy wrapping a mutable rect, rather than repeated `stubElementRect`
+    // reassignments - `stubElementRect` replaces the own `getBoundingClientRect`
+    // property outright, which would silently drop this spy on every restub.
+    let currentSlotRect = { left: 10, top: 20, width: 300, height: 200 };
+    const setSlotRect = (rect: typeof currentSlotRect): void => {
+      currentSlotRect = rect;
+    };
+    const slotRectSpy = vi.fn(() => fakeDomRect(currentSlotRect));
+    slot.getBoundingClientRect = slotRectSpy;
+
+    const observeSpy = vi.spyOn(
+      ControllableResizeObserver.prototype,
+      "observe",
+    );
+    render(<StableTileSurfaceHost renderRecordBody={() => null} />);
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+    const record = screen.getByTestId("stable-tile-surface-record-chat-1");
+    expect(record.style.transform).toBe("translate(10px, 20px)");
+    const observeCallsAfterMount = observeSpy.mock.calls.length;
+    expect(observeCallsAfterMount).toBeGreaterThan(0);
+
+    // Going hidden must not synchronously re-measure the slot at all: the
+    // refresh effect is gated on `visible`, so its only job while hiding is
+    // to skip.
+    const rectCallsBeforeHide = slotRectSpy.mock.calls.length;
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: false,
+        topLevelFocused: false,
+      });
+    });
+    expect(slotRectSpy.mock.calls.length).toBe(rectCallsBeforeHide);
+
+    // The slot's real DOM rect moves while hidden - no RO batch fires for it
+    // here, so refresh alone must pick this up on re-show.
+    setSlotRect({ left: 40, top: 60, width: 500, height: 400 });
+
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+
+    // The slot was never re-registered.
+    expect(observeSpy.mock.calls.length).toBe(observeCallsAfterMount);
+    // Refresh applied the slot's current rect, not a stale cached one.
+    expect(record.style.transform).toBe("translate(40px, 60px)");
+    expect(record.style.width).toBe("500px");
+    expect(record.style.height).toBe("400px");
+    expect(slotRectSpy.mock.calls.length).toBeGreaterThan(rectCallsBeforeHide);
+
+    // A second hide/show cycle, this time re-showing onto a slot that has
+    // genuinely gone to 0x0 while hidden (e.g. its pane collapsed) - refresh
+    // must apply that real zero rect rather than leaving the stale 500x400.
+    const rectCallsBeforeSecondHide = slotRectSpy.mock.calls.length;
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: false,
+        topLevelFocused: false,
+      });
+    });
+    expect(slotRectSpy.mock.calls.length).toBe(rectCallsBeforeSecondHide);
+
+    setSlotRect({ left: 40, top: 60, width: 0, height: 0 });
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+
+    expect(observeSpy.mock.calls.length).toBe(observeCallsAfterMount);
+    expect(record.style.width).toBe("0px");
+    expect(record.style.height).toBe("0px");
+    expect(slotRectSpy.mock.calls.length).toBeGreaterThan(
+      rectCallsBeforeSecondHide,
+    );
+
+    observeSpy.mockRestore();
+    slot.remove();
+  });
 });
 
 function fakeDomRect(rect: {

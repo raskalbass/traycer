@@ -370,6 +370,86 @@ describe("HostRequestCoordinator", () => {
     await flush();
   });
 
+  // `submit()` above always passes `signal: undefined`, so none of those
+  // tests exercise `attachWaiter`'s own abort wiring at all. These two submit
+  // through `coordinator.request` directly with a real `AbortSignal`, and pin
+  // the one distinction `attachWaiter` draws: a non-FIFO job's transport
+  // authority is cancelled once its last waiter cancels, a FIFO job's is not.
+  it("cancelling a started read's own signal propagates to the transport authority, not just the caller's waiter", async () => {
+    const coordinator = makeCoordinator();
+    const raw = deferred<{ value: string }>();
+    const observed = { authority: null as HostRequestAuthority | null };
+    const controller = new AbortController();
+    const requestAuthority = authority("host-a", "user-a");
+
+    const request = coordinator.request({
+      hostId: "host-a",
+      userId: "user-a",
+      method: "latest.read",
+      params: { path: "/indicator" },
+      authority: requestAuthority,
+      authorityDomain: domain("read-cancel"),
+      signal: controller.signal,
+      execute: (capturedAuthority) => {
+        observed.authority = capturedAuthority;
+        return raw.promise;
+      },
+    });
+
+    await flush();
+    expect(observed.authority?.abortSignal.aborted).toBe(false);
+    // A read's result can be safely discarded on cancellation - the drain
+    // marks it opted into post-dispatch transport cancellation.
+    expect(observed.authority?.cancelAfterDispatch).toBe(true);
+
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ reason: "waiter-cancelled" });
+    expect(observed.authority?.abortSignal.aborted).toBe(true);
+
+    raw.resolve({ value: "late" });
+    await flush();
+  });
+
+  it("cancelling a FIFO command's own signal rejects only the caller - the dispatched write keeps running", async () => {
+    const coordinator = makeCoordinator();
+    const raw = deferred<{ value: string }>();
+    const observed = { authority: null as HostRequestAuthority | null };
+    const controller = new AbortController();
+    const requestAuthority = authority("host-a", "user-a");
+
+    const request = coordinator.request({
+      hostId: "host-a",
+      userId: "user-a",
+      method: "fifo.command",
+      params: { value: 1 },
+      authority: requestAuthority,
+      authorityDomain: domain("fifo-cancel"),
+      signal: controller.signal,
+      execute: (capturedAuthority) => {
+        observed.authority = capturedAuthority;
+        return raw.promise;
+      },
+    });
+
+    await flush();
+    expect(observed.authority?.abortSignal.aborted).toBe(false);
+    // A FIFO command may already be applying on the host - its result must
+    // not be discardable, so it never opts into post-dispatch cancellation.
+    expect(observed.authority?.cancelAfterDispatch).toBe(false);
+
+    controller.abort();
+    await flush();
+
+    // The caller is told its own wait ended, but a FIFO command is a mutation
+    // the host may already be applying - the mutation itself keeps running.
+    expect(observed.authority?.abortSignal.aborted).toBe(false);
+    await expect(request).rejects.toMatchObject({ reason: "waiter-cancelled" });
+
+    raw.resolve({ value: "command-completed" });
+    await flush();
+  });
+
   it("does not apply a delayed transition abort to a read submitted after its snapshot", async () => {
     const coordinator = makeCoordinator();
     const oldRaw = deferred<{ value: string }>();

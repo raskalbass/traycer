@@ -397,6 +397,7 @@ export class HostRequestCoordinator<Registry extends VersionedRpcRegistry> {
     const authority: HostRequestAuthority = {
       ...job.authority,
       abortSignal: combined.signal,
+      cancelAfterDispatch: job.mode !== "fifo",
     };
     void job
       .execute(authority)

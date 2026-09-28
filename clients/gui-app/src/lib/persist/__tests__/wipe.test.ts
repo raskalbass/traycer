@@ -45,6 +45,7 @@ vi.mock("@/lib/appearance/appearance-cache", () => ({
 import { clearAllPersistedStores } from "@/lib/persist/wipe";
 import { STASH_DB_NAME } from "@/lib/drafts/stash-migration";
 import { fileEditRuntimeRegistry } from "@/lib/workspace/file-edit-runtime-registry";
+import { deferJsonWrite } from "@/lib/persist/deferred-json-storage";
 
 function createMockStorage(seed: Record<string, string>): Storage {
   const map = new Map<string, string>(Object.entries(seed));
@@ -595,5 +596,40 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
       "blocked",
     );
     expect(reloadSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("clearAllPersistedStores - queued debounced writes", () => {
+  it("cancels a queued history/canvas write before the sweep, so a later pagehide cannot resurrect it", async () => {
+    // Reset to jsdom's real default (no IndexedDB) - a prior "renderer
+    // IndexedDB drop" test may have left a blocked-deletion factory installed,
+    // which is irrelevant to this test's own concern.
+    Object.defineProperty(globalThis, "indexedDB", {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
+    const key = "traycer-gui-app:last-route:window-a";
+    expect(localStorageMock.getItem(key)).toBeNull();
+
+    // A history navigation (or a canvas local-persist write) queued its disk
+    // write but the 100ms debounce hasn't fired yet.
+    deferJsonWrite(key, () => {
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({ entries: ["/epics/e1/t1"], index: 0 }),
+      );
+    });
+
+    await clearAllPersistedStores({ hostClear: null });
+
+    expect(localStorageMock.getItem(key)).toBeNull();
+
+    // The unload-time flush must not be able to resurrect a key the wipe
+    // just cleared.
+    window.dispatchEvent(new Event("pagehide"));
+
+    expect(localStorageMock.getItem(key)).toBeNull();
   });
 });

@@ -24,7 +24,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { LayoutGroup, useReducedMotion, type Transition } from "motion/react";
+import { useReducedMotion, type Transition } from "motion/react";
 import * as m from "motion/react-m";
 import { runTileStripCommitHandoff } from "@/components/epic-canvas/dnd/tile-strip-commit-handoff";
 import { useTileTabDisplacement } from "@/components/epic-canvas/dnd/use-tile-tab-displacement";
@@ -330,38 +330,36 @@ export function TabStrip(props: TabStripProps) {
             deps to `tabs` + stable handlers means a pure active-switch
             re-renders only the two tabs whose flags flip.
           */}
-            <LayoutGroup id={`epic-tab-strip-${groupId}`}>
-              {tabs.map((tab, index) => {
-                return (
-                  <TabItem
-                    key={tab.instanceId}
-                    domRef={setTabRef(tab.instanceId)}
-                    tab={tab}
-                    epicId={epicId}
-                    tabId={tabId}
-                    groupId={groupId}
-                    offsetX={tileOffsets.get(tab.instanceId) ?? 0}
-                    showDropIndicatorBefore={dndDropIndicator === index}
-                    index={index}
-                    onSelect={onSelectTab}
-                    onClose={onCloseTab}
-                    onPromotePreview={onPromotePreview}
-                    canRenameTabs={canRenameTabs}
-                    menuProps={{
-                      groupId,
-                      tabId: tab.instanceId,
-                      canCloseRight: index < tabs.length - 1,
-                      ...menuHandlers,
-                    }}
-                  />
-                );
-              })}
-              <TabStripEndDropIndicator
-                visible={
-                  dndDropIndicator !== null && dndDropIndicator >= tabs.length
-                }
-              />
-            </LayoutGroup>
+            {tabs.map((tab, index) => {
+              return (
+                <TabItem
+                  key={tab.instanceId}
+                  domRef={setTabRef(tab.instanceId)}
+                  tab={tab}
+                  epicId={epicId}
+                  tabId={tabId}
+                  groupId={groupId}
+                  offsetX={tileOffsets.get(tab.instanceId) ?? 0}
+                  showDropIndicatorBefore={dndDropIndicator === index}
+                  index={index}
+                  onSelect={onSelectTab}
+                  onClose={onCloseTab}
+                  onPromotePreview={onPromotePreview}
+                  canRenameTabs={canRenameTabs}
+                  menuProps={{
+                    groupId,
+                    tabId: tab.instanceId,
+                    canCloseRight: index < tabs.length - 1,
+                    ...menuHandlers,
+                  }}
+                />
+              );
+            })}
+            <TabStripEndDropIndicator
+              visible={
+                dndDropIndicator !== null && dndDropIndicator >= tabs.length
+              }
+            />
           </div>
         </div>
         <div
@@ -1211,11 +1209,16 @@ function TabItemMotionFrame(props: {
  * leaving the neighbour chasing a spring after pointer-up. Under reduced
  * motion the order still changes but nothing travels.
  */
+const TILE_DISPLACEMENT_TRANSITION: Transition = {
+  ...EPIC_TAB_REORDER_TRANSITION,
+  opacity: { duration: 0 },
+};
+const REDUCED_TILE_DISPLACEMENT_TRANSITION: Transition = { duration: 0 };
+
 function useTileDisplacementTransition(): Transition {
-  const reduceMotion = useReducedMotion() === true;
-  return reduceMotion
-    ? { duration: 0 }
-    : { ...EPIC_TAB_REORDER_TRANSITION, opacity: { duration: 0 } };
+  return useReducedMotion() === true
+    ? REDUCED_TILE_DISPLACEMENT_TRANSITION
+    : TILE_DISPLACEMENT_TRANSITION;
 }
 
 function TabStripDropIndicator(props: { readonly visible: boolean }) {

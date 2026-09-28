@@ -62,6 +62,7 @@
  * a ref during render violates the React Compiler's `react-hooks/refs`.)
  */
 import { useMemo, useState } from "react";
+import { useTabCycleRepeating } from "@/lib/registries/cold-admission";
 import type { EpicCanvasTileRef, TilePane } from "@/stores/epics/canvas/types";
 import {
   isRetainablePaneChat,
@@ -143,6 +144,7 @@ export function useMountedPaneTabs(
   input: UseMountedPaneTabsInput,
 ): ReadonlySet<string> {
   const { activeTabId, pane, tabs, paneVisible } = input;
+  const preserveHistory = useTabCycleRepeating();
 
   // Terminals are pinned; chats are retained by their own policy below;
   // everything else competes for LRU slots.
@@ -181,10 +183,11 @@ export function useMountedPaneTabs(
         retainedPaneChatInstanceIds({
           pane,
           cap: RETAINED_PANE_CHAT_CAP,
+          preserveHistory,
           tileFor: (instanceId) => tileByInstanceId.get(instanceId),
         }),
       ),
-    [pane, tileByInstanceId],
+    [pane, tileByInstanceId, preserveHistory],
   );
 
   const [committedLru, setCommittedLru] =

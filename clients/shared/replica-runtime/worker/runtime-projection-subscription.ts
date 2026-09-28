@@ -1,17 +1,13 @@
 /**
  * The main-thread end of the projection channel.
  *
- * The worker publishes WHOLE slices, never patches - the projection sink has
- * always worked that way, and T3's fixture rule exists because a test that
- * forces one field is order-dependent on the next publish. Whole values make
- * the boundary simple and make one property load-bearing: **publications must
- * be applied in order, and a revision already applied must be DROPPED.**
- *
- * With patches, an out-of-order delivery corrupts visibly. With whole values it
- * does not corrupt at all - it silently rolls the UI back to an older slice
- * that is internally consistent and simply stale, which no downstream
- * assertion can distinguish from a legitimate update. So the guard lives here,
- * once, rather than in each consumer.
+ * Publications must be applied in order, and a revision already applied must
+ * be dropped. The worker bridge delivers reliably in order; this watermark
+ * rejects stale replays, rather than repairing gaps or reordering deliveries.
+ * Consumers may send whole slices or encode changed rows before transport.
+ * Row deltas depend on every preceding accepted publication, while whole
+ * slices would silently roll the UI back if an older revision were replayed.
+ * Keep the guard here so both forms share the same ordering authority.
  *
  * The slice's TYPE is the store's, not this module's. It arrives as `unknown`
  * and the composition root supplies the narrowing - the same shape as a call

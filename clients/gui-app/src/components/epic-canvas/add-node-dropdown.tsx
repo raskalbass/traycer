@@ -5,7 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
+  type ReactElement,
 } from "react";
 import { useStore } from "zustand";
 import { TUI_HARNESS_ID_TO_PROVIDER_ID } from "@traycer/protocol/host/provider-schemas";
@@ -35,6 +35,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LazyDropdownMenu } from "@/components/ui/lazy-menu";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
@@ -55,7 +56,7 @@ import { useSeededWorkspaceSnapshotStore } from "@/stores/worktree/seeded-worksp
 import { deriveWorkspaceMode } from "@/lib/worktree/workspace-mode";
 
 export interface AddArtifactDropdownProps {
-  children: ReactNode;
+  children: ReactElement;
   open: boolean | undefined;
   onOpenChange: ((open: boolean) => void) | undefined;
   menuPlacement: "header" | "row";
@@ -181,89 +182,95 @@ export function AddNodeDropdown(props: AddArtifactDropdownProps) {
       ? ({ "--swatch": terminalAgentIconColor } as CSSProperties)
       : undefined;
 
+  const content = (
+    <DropdownMenuContent
+      side={menuPlacement === "header" ? "right" : "bottom"}
+      align={menuPlacement === "header" ? "start" : "end"}
+      sideOffset={menuPlacement === "header" ? 8 : 4}
+      avoidCollisions={menuPlacement !== "header"}
+      className="w-[min(90vw,11rem)]"
+      data-testid={menuTestId}
+    >
+      {visibleTypes.map((type) => {
+        const itemDisabled = disabledTypes?.includes(type) ?? false;
+        const OptionIcon = EPIC_NODE_ICONS[type];
+        const iconColor = artifactIconColors[type];
+        const iconStyle =
+          artifactIconColorMode === "byType"
+            ? ({ "--swatch": iconColor } as CSSProperties)
+            : undefined;
+        return (
+          <DropdownMenuItem
+            key={type}
+            data-testid={itemTestId(type)}
+            onSelect={() => {
+              onAdd(type);
+            }}
+            disabled={itemDisabled}
+          >
+            <OptionIcon
+              className={cn(
+                "size-3.5",
+                artifactIconColorMode === "byType" && "text-[var(--swatch)]",
+                artifactIconColorMode === "none" && "text-muted-foreground",
+              )}
+              style={iconStyle}
+            />
+            {DEFAULT_EPIC_NODE_NAMES[type]}
+          </DropdownMenuItem>
+        );
+      })}
+      {onAddTerminalAgent === undefined ? null : (
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger
+            disabled={tuiAgentPending}
+            data-testid={`${menuTestId}-terminal-agent`}
+          >
+            <TerminalAgentIcon
+              className={cn(
+                "size-3.5",
+                artifactIconColorMode === "byType" && "text-[var(--swatch)]",
+                artifactIconColorMode === "none" && "text-muted-foreground",
+              )}
+              style={terminalAgentIconStyle}
+            />
+            New agent (Terminal)
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent
+            ref={terminalAgentSubRef}
+            layout="panel"
+            className="flex w-[min(92vw,32rem)] flex-col gap-3"
+            data-testid={`${menuTestId}-terminal-agent-sub`}
+            // The host Select + folder picker open portaled overlays; treat
+            // clicks inside them (stacked above this submenu) as inside it so
+            // picking a host / branch doesn't dismiss the launcher.
+            onInteractOutside={(event) =>
+              preserveWhenNestedOverlay(event, terminalAgentSubRef.current)
+            }
+          >
+            <TerminalAgentSubMenuContent
+              epicId={epicId}
+              menuTestId={menuTestId}
+              workspaceSeed={terminalAgentWorkspaceSeed}
+              hostScope={
+                terminalAgentHostScope ?? ACTIVE_HOST_WORKSPACE_CONTROLS_SCOPE
+              }
+              tuiAgentPending={tuiAgentPending === true}
+              onAddTerminalAgent={onAddTerminalAgent}
+              terminalAgentStagingKey={terminalAgentStagingKey}
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      )}
+    </DropdownMenuContent>
+  );
+  if (open === undefined && onOpenChange === undefined) {
+    return <LazyDropdownMenu trigger={children}>{content}</LazyDropdownMenu>;
+  }
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
-      <DropdownMenuContent
-        side={menuPlacement === "header" ? "right" : "bottom"}
-        align={menuPlacement === "header" ? "start" : "end"}
-        sideOffset={menuPlacement === "header" ? 8 : 4}
-        avoidCollisions={menuPlacement !== "header"}
-        className="w-[min(90vw,11rem)]"
-        data-testid={menuTestId}
-      >
-        {visibleTypes.map((type) => {
-          const itemDisabled = disabledTypes?.includes(type) ?? false;
-          const OptionIcon = EPIC_NODE_ICONS[type];
-          const iconColor = artifactIconColors[type];
-          const iconStyle =
-            artifactIconColorMode === "byType"
-              ? ({ "--swatch": iconColor } as CSSProperties)
-              : undefined;
-          return (
-            <DropdownMenuItem
-              key={type}
-              data-testid={itemTestId(type)}
-              onSelect={() => {
-                onAdd(type);
-              }}
-              disabled={itemDisabled}
-            >
-              <OptionIcon
-                className={cn(
-                  "size-3.5",
-                  artifactIconColorMode === "byType" && "text-[var(--swatch)]",
-                  artifactIconColorMode === "none" && "text-muted-foreground",
-                )}
-                style={iconStyle}
-              />
-              {DEFAULT_EPIC_NODE_NAMES[type]}
-            </DropdownMenuItem>
-          );
-        })}
-        {onAddTerminalAgent === undefined ? null : (
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger
-              disabled={tuiAgentPending}
-              data-testid={`${menuTestId}-terminal-agent`}
-            >
-              <TerminalAgentIcon
-                className={cn(
-                  "size-3.5",
-                  artifactIconColorMode === "byType" && "text-[var(--swatch)]",
-                  artifactIconColorMode === "none" && "text-muted-foreground",
-                )}
-                style={terminalAgentIconStyle}
-              />
-              New agent (Terminal)
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent
-              ref={terminalAgentSubRef}
-              layout="panel"
-              className="flex w-[min(92vw,32rem)] flex-col gap-3"
-              data-testid={`${menuTestId}-terminal-agent-sub`}
-              // The host Select + folder picker open portaled overlays; treat
-              // clicks inside them (stacked above this submenu) as inside it so
-              // picking a host / branch doesn't dismiss the launcher.
-              onInteractOutside={(event) =>
-                preserveWhenNestedOverlay(event, terminalAgentSubRef.current)
-              }
-            >
-              <TerminalAgentSubMenuContent
-                epicId={epicId}
-                menuTestId={menuTestId}
-                workspaceSeed={terminalAgentWorkspaceSeed}
-                hostScope={
-                  terminalAgentHostScope ?? ACTIVE_HOST_WORKSPACE_CONTROLS_SCOPE
-                }
-                tuiAgentPending={tuiAgentPending === true}
-                onAddTerminalAgent={onAddTerminalAgent}
-                terminalAgentStagingKey={terminalAgentStagingKey}
-              />
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        )}
-      </DropdownMenuContent>
+      {content}
     </DropdownMenu>
   );
 }

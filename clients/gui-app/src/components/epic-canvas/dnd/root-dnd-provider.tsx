@@ -47,6 +47,7 @@ import {
   isLeftPanelDropNoop,
   resolveCanvasDropPreview,
   resolveOverlayTileForSource,
+  type SidebarReparentDropInput,
   type HeaderStripDropResult,
   type ResolvedEpicCanvasDrop,
 } from "@/components/epic-canvas/dnd/root-dnd-commits";
@@ -1124,6 +1125,47 @@ interface RootDndProviderProps {
   readonly children: ReactNode;
 }
 
+function commitReparentAndEndGesture(
+  input: SidebarReparentDropInput,
+  endGesture: () => void,
+): void {
+  try {
+    // The rejection is caught by `.catch`, NOT by the `catch` below.
+    // The commit is async now, so it has no synchronous throw and the
+    // enclosing `catch` can never see its failure - a `void`ed call
+    // would lose the log entirely and surface as an unhandled rejection.
+    //
+    // `.catch` rather than `await`, and that is the whole point at THIS
+    // site: awaiting would hold the `finally` until the commit settled,
+    // and the `finally` is the gesture cleanup that "has to survive the
+    // failure" per the comment above. Cleanup stays synchronous; only
+    // the logging waits.
+    void commitSidebarReparentDrop(input).catch((error: unknown) => {
+      appLogger.error(
+        "[epic-dnd] sidebar reparent commit rejected; the gesture already ended",
+        {
+          epicId: input.epicId,
+          sourceNodeId: input.sourceNodeId,
+          newParentId: input.newParentId,
+        },
+        error,
+      );
+    });
+  } catch (error: unknown) {
+    appLogger.error(
+      "[epic-dnd] sidebar reparent commit threw; ending the gesture anyway",
+      {
+        epicId: input.epicId,
+        sourceNodeId: input.sourceNodeId,
+        newParentId: input.newParentId,
+      },
+      error,
+    );
+  } finally {
+    endGesture();
+  }
+}
+
 export function RootDndProvider(props: RootDndProviderProps) {
   const navigate = useNavigate();
   const navigateNested = useEpicNestedFocusNavigation();
@@ -1441,18 +1483,8 @@ export function RootDndProvider(props: RootDndProviderProps) {
         // Rethrowing would defeat the point, since the cleanup is exactly
         // what has to survive the failure, so the error is logged and
         // swallowed and the commit's own handler owns anything user-facing.
-        try {
-          // The rejection is caught by `.catch`, NOT by the `catch` below.
-          // The commit is async now, so it has no synchronous throw and the
-          // enclosing `catch` can never see its failure - a `void`ed call
-          // would lose the log entirely and surface as an unhandled rejection.
-          //
-          // `.catch` rather than `await`, and that is the whole point at THIS
-          // site: awaiting would hold the `finally` until the commit settled,
-          // and the `finally` is the gesture cleanup that "has to survive the
-          // failure" per the comment above. Cleanup stays synchronous; only
-          // the logging waits.
-          void commitSidebarReparentDrop({
+        commitReparentAndEndGesture(
+          {
             hostBinding,
             epicId: reparent.epicId,
             sourceNodeId: reparent.sourceNodeId,
@@ -1460,30 +1492,9 @@ export function RootDndProvider(props: RootDndProviderProps) {
             panelId: reparent.panelId,
             viewTabId: reparent.viewTabId,
             queryClient,
-          }).catch((error: unknown) => {
-            appLogger.error(
-              "[epic-dnd] sidebar reparent commit rejected; the gesture already ended",
-              {
-                epicId: reparent.epicId,
-                sourceNodeId: reparent.sourceNodeId,
-                newParentId: reparent.newParentId,
-              },
-              error,
-            );
-          });
-        } catch (error: unknown) {
-          appLogger.error(
-            "[epic-dnd] sidebar reparent commit threw; ending the gesture anyway",
-            {
-              epicId: reparent.epicId,
-              sourceNodeId: reparent.sourceNodeId,
-              newParentId: reparent.newParentId,
-            },
-            error,
-          );
-        } finally {
-          endGesture();
-        }
+          },
+          endGesture,
+        );
         return;
       }
       if (composerDrop !== null) {

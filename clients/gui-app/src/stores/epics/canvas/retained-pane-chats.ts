@@ -102,6 +102,8 @@ export interface RetainedPaneChatInstancesInput {
    */
   readonly tileFor: (instanceId: string) => EpicCanvasTileRef | undefined;
   readonly cap: number;
+  /** Keep the settled window while a keyboard-cycle target passes through. */
+  readonly preserveHistory: boolean;
 }
 
 /**
@@ -131,8 +133,19 @@ export function retainedPaneChatInstanceIds(
     retained.push(instanceId);
   };
 
-  consider(resolveActivePaneTab(pane.activeTabId, pane.tabInstanceIds));
+  const activeId = resolveActivePaneTab(pane.activeTabId, pane.tabInstanceIds);
+  if (!input.preserveHistory) consider(activeId);
   for (const instanceId of pane.activationHistory) consider(instanceId);
+  if (
+    input.preserveHistory &&
+    activeId !== null &&
+    !retained.includes(activeId)
+  ) {
+    const tile = tileFor(activeId);
+    if (tile !== undefined && isRetainablePaneChat(tile)) {
+      retained.unshift(activeId);
+    }
+  }
 
   return retained;
 }

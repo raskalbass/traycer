@@ -254,16 +254,9 @@ export const TabItem = memo(function TabItem(props: TabItemProps) {
     isDragging,
   } = useHeaderTabDnd(tab.kind, tab.id, dnd, dragGhost);
   const tabRef = useRef<HTMLDivElement | null>(null);
-  const scrollActiveTabIntoView = useCallback(
-    (element: HTMLDivElement | null) => {
-      if (element === null || !isActive) return;
-      element.scrollIntoView({ block: "nearest", inline: "nearest" });
-    },
-    [isActive],
-  );
   const combinedRef = useMemo(
-    () => mergeRefs<HTMLDivElement>(dndRef, tabRef, scrollActiveTabIntoView),
-    [dndRef, scrollActiveTabIntoView],
+    () => mergeRefs<HTMLDivElement>(dndRef, tabRef),
+    [dndRef],
   );
   const longPressTimerRef = useRef<number | null>(null);
   const modifier = useTabLeaderModifierForIndex(index);

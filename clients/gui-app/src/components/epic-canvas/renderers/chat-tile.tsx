@@ -123,6 +123,10 @@ import {
   worktreeBindingIsFolderless,
 } from "@/hooks/composer/use-workspace-mention-roots";
 import { useChatSessionHandle } from "@/lib/registries/chat-session-registry";
+import {
+  ChatPrewarmContext,
+  useChatPrewarmEligible,
+} from "@/lib/registries/chat-prewarm";
 import { useEpicParked } from "@/lib/epics/epic-parking";
 import { useEpicDraftGuard } from "@/lib/epics/use-epic-draft-guard";
 import {
@@ -911,6 +915,11 @@ function useComposerNavigationHighlight(): {
 }
 
 export function ChatTileSessionView(props: ChatTileSessionViewProps) {
+  const prewarmEligible = useChatPrewarmEligible(
+    props.viewTabId,
+    props.node.instanceId,
+    props.handle,
+  );
   const {
     blockId: composerHighlightBlockId,
     generation: composerHighlightGeneration,
@@ -992,7 +1001,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     setElement: setLowerSurfacesElement,
     element: lowerSurfacesElement,
     height: lowerSurfacesHeight,
-  } = useMeasuredElementHeight();
+  } = useMeasuredElementHeight(true);
   // Shared transcript jump: resolve the owning message, expand the card via its
   // open-store, and bump the scroll request the messages surface watches. Both
   // the Background panel rows and the autonomous-resume marker route through
@@ -1510,40 +1519,42 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
              * absolutely positioned, so it does not participate in this flex
              * layout regardless. */}
             <div className="relative flex min-h-0 flex-1 flex-col">
-              <ChatSessionMessagesSurface
-                snapshotLoaded={view.snapshotLoaded}
-                connectionStatus={view.connectionStatus}
-                fatalClose={view.fatalClose}
-                preSnapshotRetries={view.preSnapshotRetries}
-                preSnapshotReloadStartedAt={view.preSnapshotReloadStartedAt}
-                onRetry={view.onChatRetryFromUser}
-                preContent={view.preContent}
-                restoreContext={view.restoreContext}
-                node={view.node}
-                taskTitle={view.taskTitle}
-                epicId={view.currentEpicId}
-                viewTabId={view.viewTabId}
-                tabHostId={view.tabHostId}
-                workspaceRoots={view.linkResolutionRoots}
-                messages={view.messages}
-                activeTurnId={view.activeTurnId}
-                transcriptWindow={view.transcriptWindow}
-                onVisibleOrdinalRangeChange={onVisibleOrdinalRangeChange}
-                baselineEpoch={view.transcriptBaselineEpoch}
-                hydrationSequence={view.transcriptHydrationSequence}
-                coldRewrittenMessageIds={view.coldRewrittenMessageIds}
-                backgroundItems={view.lower.backgroundItems}
-                scrollRequest={backgroundScrollRequest}
-                onScrollRequestSettled={onScrollRequestSettled}
-                surfaceVisible={view.surfaceVisible}
-                systemOverlayActive={systemOverlayActive}
-                getMessageActions={view.getMessageActions}
-                nextStepActions={view.nextStepActions}
-                planActions={view.planActions}
-                composerOverlayHeight={
-                  lowerSurfacesElement === null ? 0 : lowerSurfacesHeight
-                }
-              />
+              <ChatPrewarmContext.Provider value={prewarmEligible}>
+                <ChatSessionMessagesSurface
+                  snapshotLoaded={view.snapshotLoaded}
+                  connectionStatus={view.connectionStatus}
+                  fatalClose={view.fatalClose}
+                  preSnapshotRetries={view.preSnapshotRetries}
+                  preSnapshotReloadStartedAt={view.preSnapshotReloadStartedAt}
+                  onRetry={view.onChatRetryFromUser}
+                  preContent={view.preContent}
+                  restoreContext={view.restoreContext}
+                  node={view.node}
+                  taskTitle={view.taskTitle}
+                  epicId={view.currentEpicId}
+                  viewTabId={view.viewTabId}
+                  tabHostId={view.tabHostId}
+                  workspaceRoots={view.linkResolutionRoots}
+                  messages={view.messages}
+                  activeTurnId={view.activeTurnId}
+                  transcriptWindow={view.transcriptWindow}
+                  onVisibleOrdinalRangeChange={onVisibleOrdinalRangeChange}
+                  baselineEpoch={view.transcriptBaselineEpoch}
+                  hydrationSequence={view.transcriptHydrationSequence}
+                  coldRewrittenMessageIds={view.coldRewrittenMessageIds}
+                  backgroundItems={view.lower.backgroundItems}
+                  scrollRequest={backgroundScrollRequest}
+                  onScrollRequestSettled={onScrollRequestSettled}
+                  surfaceVisible={view.surfaceVisible}
+                  systemOverlayActive={systemOverlayActive}
+                  getMessageActions={view.getMessageActions}
+                  nextStepActions={view.nextStepActions}
+                  planActions={view.planActions}
+                  composerOverlayHeight={
+                    lowerSurfacesElement === null ? 0 : lowerSurfacesHeight
+                  }
+                />
+              </ChatPrewarmContext.Provider>
               {/*
                * SurfaceActivityProvider narrows catalog/provider query subscriptions
                * to the one focused pane+tab. A visible split partner keeps rendering

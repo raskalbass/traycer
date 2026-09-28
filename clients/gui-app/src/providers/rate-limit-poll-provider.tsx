@@ -1,3 +1,7 @@
+import {
+  isDocumentVisible,
+  subscribeDocumentVisibility,
+} from "@/lib/dom/document-visibility";
 import { useEffect, useEffectEvent, useMemo } from "react";
 import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useRefreshProviderRateLimitsOnTurn } from "@/hooks/host/use-refresh-provider-rate-limits-on-turn";
@@ -26,10 +30,8 @@ import { EPHEMERAL_RATE_LIMIT_POLL_INTERVAL_MS } from "@/lib/rate-limits/rate-li
  * 2. OpenCode's HTTP-lane turn refresh, kept mounted even while its popover
  *    and Settings surfaces are closed.
  *
- * The timer PAUSES on `document.visibilityState === "hidden"` (window truly
- * minimized/backgrounded) and resumes when the window is shown again - matching
- * the same visibility signal TanStack's `focusManager` uses for the httpFetch
- * lane's `refetchIntervalInBackground: false`. It deliberately does NOT key off
+ * The timer pauses while the shared document/desktop signal says hidden and
+ * resumes when the window is shown again. It deliberately does NOT key off
  * window focus (`blur` / `document.hasFocus()`): the core scenario this feature
  * exists for is glancing at the icon while Traycer sits visible-but-unfocused on
  * a second monitor, and pausing on mere focus-loss would break exactly that.
@@ -75,7 +77,7 @@ export function RateLimitPollProvider(): null {
     const tick = (): void => {
       // Defensive: the timer is cleared while hidden, but guard the body too so
       // a tick that races a `visibilitychange` cannot ask the host for work.
-      if (document.visibilityState === "hidden") return;
+      if (!isDocumentVisible()) return;
       pollTargets();
     };
     const start = (): void => {
@@ -91,7 +93,7 @@ export function RateLimitPollProvider(): null {
       intervalHandle = null;
     };
     const syncToVisibility = (): void => {
-      if (document.visibilityState === "hidden") {
+      if (!isDocumentVisible()) {
         stop();
       } else {
         start();
@@ -99,9 +101,9 @@ export function RateLimitPollProvider(): null {
     };
 
     syncToVisibility();
-    document.addEventListener("visibilitychange", syncToVisibility);
+    const unsubscribeVisibility = subscribeDocumentVisibility(syncToVisibility);
     return () => {
-      document.removeEventListener("visibilitychange", syncToVisibility);
+      unsubscribeVisibility();
       stop();
     };
   }, [hostId]);

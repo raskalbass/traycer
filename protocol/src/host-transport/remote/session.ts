@@ -474,6 +474,12 @@ export interface RemoteSessionOptions<
   readonly livenessProbe: SessionLivenessProbe | null;
 }
 
+/** Only reads whose results may be discarded opt into post-dispatch abort. */
+export interface RemoteUnaryReadCancellation {
+  readonly signal: AbortSignal;
+  readonly cancelAfterDispatch: true;
+}
+
 /**
  * Public surface of `RemoteSession` (Architecture §4 / S1 session-collapse).
  * A plain interface (not the concrete class) so the session cache
@@ -511,13 +517,15 @@ export interface IRemoteSession<
    * park waiting for the session to become ready: without it a cancelled read
    * would still be dispatched at the ready boundary and would keep occupying
    * the request coordinator's active slot for the whole dial. `null` for
-   * callers that own no authority.
+   * callers that own no authority. A bare signal cancels only before dispatch:
+   * resource-acquiring calls must receive their result to clean it up. Reads
+   * may explicitly opt into post-dispatch cancellation with the wrapper.
    */
   sendUnary<Method extends keyof RpcRegistry & string>(
     method: Method,
     params: RequestOfMethod<RpcRegistry, Method>,
     idempotencyKey: string | null,
-    abortSignal: AbortSignal | null,
+    abortSignal: AbortSignal | RemoteUnaryReadCancellation | null,
     callerAgentId: string | null,
     /**
      * Per-request response budget, overriding `unaryResponseMs`.
@@ -722,6 +730,7 @@ interface PendingUnary {
   readonly replaySafe: boolean;
   readonly resolve: (result: unknown) => void;
   readonly reject: (error: HostRpcError) => void;
+  readonly disposeAbort: () => void;
   timer: TimerHandle | null;
 }
 
@@ -1333,7 +1342,7 @@ export class RemoteSession<
     method: Method,
     params: RequestOfMethod<RpcRegistry, Method>,
     idempotencyKey: string | null,
-    abortSignal: AbortSignal | null,
+    abortSignal: AbortSignal | RemoteUnaryReadCancellation | null,
     callerAgentId: string | null,
     responseTimeoutMs: number | undefined,
     replayMustBeKeyed: boolean,
@@ -1364,12 +1373,20 @@ export class RemoteSession<
     method: string,
     params: unknown,
     idempotencyKey: string | null,
-    abortSignal: AbortSignal | null,
+    cancellation: AbortSignal | RemoteUnaryReadCancellation | null,
     callerAgentId: string | null,
     responseTimeoutMs: number | undefined,
     replayMustBeKeyed: boolean,
     requiredHostMethodVersion: RequiredHostMethodVersion | null,
   ): Promise<unknown> {
+    const abortSignal =
+      cancellation !== null && "signal" in cancellation
+        ? cancellation.signal
+        : cancellation;
+    const postDispatchSignal =
+      cancellation !== null && "signal" in cancellation
+        ? cancellation.signal
+        : null;
     this.start();
     const requestId = this.options.requestId();
     if (abortSignal !== null && abortSignal.aborted) {
@@ -1505,6 +1522,7 @@ export class RemoteSession<
         responseTimeoutMs,
         idempotencyKey,
         replayMustBeKeyed,
+        postDispatchSignal,
       );
     }
 
@@ -1520,6 +1538,7 @@ export class RemoteSession<
       responseTimeoutMs,
       idempotencyKey,
       replayMustBeKeyed,
+      postDispatchSignal,
     );
   }
 
@@ -1657,7 +1676,11 @@ export class RemoteSession<
     responseTimeoutMs: number | undefined,
     idempotencyKey: string | null,
     replayMustBeKeyed: boolean,
+    abortSignal: AbortSignal | null,
   ): Promise<unknown> {
+    if (abortSignal?.aborted) {
+      return Promise.reject(abortedRequestError(requestId, method));
+    }
     let prepared: { onWireVersion: SchemaVersion; onWirePayload: unknown };
     try {
       prepared = prepareRequestPayload(
@@ -1703,6 +1726,9 @@ export class RemoteSession<
     const replaySafe = wireIdempotencyKey !== null;
     return new Promise<unknown>((resolve, reject) => {
       {
+        const onAbort = (): void => {
+          this.rejectUnary(streamId, abortedRequestError(requestId, method));
+        };
         const timer = setTimeout(() => {
           this.rejectUnary(
             streamId,
@@ -1735,7 +1761,14 @@ export class RemoteSession<
           resolve,
           reject,
           timer,
+          disposeAbort: () =>
+            abortSignal?.removeEventListener("abort", onAbort),
         });
+        abortSignal?.addEventListener("abort", onAbort, { once: true });
+        if (abortSignal?.aborted) {
+          onAbort();
+          return;
+        }
         try {
           this.enqueueMessage(connection, {
             type: MuxFrameType.REQUEST,
@@ -2882,6 +2915,7 @@ export class RemoteSession<
     responseTimeoutMs: number | undefined,
     idempotencyKey: string | null,
     replayMustBeKeyed: boolean,
+    abortSignal: AbortSignal | null,
   ): Promise<unknown> {
     return resolveUnavailableMethodDegrade({
       registry: this.options.rpcRegistry,
@@ -2917,6 +2951,7 @@ export class RemoteSession<
           // replay: a degrade must not become the unkeyed dispatch the
           // direct path just refused.
           replayMustBeKeyed,
+          abortSignal,
         ),
     });
   }
@@ -5096,6 +5131,7 @@ export class RemoteSession<
     if (entry.timer !== null) {
       clearTimeout(entry.timer);
     }
+    entry.disposeAbort();
     this.pendingUnary.delete(streamId);
     // The stream's `outboundSeq` entry is NOT cleared here: `rejectUnary`
     // still has a CLOSE to send on it. Each caller retires the counter itself.
@@ -5159,10 +5195,7 @@ export class RemoteSession<
 
   private rejectAllPendingUnary(error: HostRpcError): void {
     for (const [streamId, entry] of Array.from(this.pendingUnary)) {
-      if (entry.timer !== null) {
-        clearTimeout(entry.timer);
-      }
-      this.pendingUnary.delete(streamId);
+      this.clearPendingUnary(streamId);
       this.outboundSeq.delete(streamId);
       entry.reject(error);
     }
@@ -5170,10 +5203,7 @@ export class RemoteSession<
 
   private rejectPendingOnConnectionDrop(): void {
     for (const [streamId, entry] of Array.from(this.pendingUnary)) {
-      if (entry.timer !== null) {
-        clearTimeout(entry.timer);
-      }
-      this.pendingUnary.delete(streamId);
+      this.clearPendingUnary(streamId);
       this.outboundSeq.delete(streamId);
       entry.reject(
         entry.replaySafe
@@ -5735,7 +5765,7 @@ function abortedRequestError(
   method: string,
 ): HostRequestAbortedError {
   return new HostRequestAbortedError({
-    message: "Remote unary was aborted before it was sent",
+    message: "Remote unary was aborted",
     requestId,
     method,
   });

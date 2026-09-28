@@ -124,6 +124,11 @@ export function syncHeaderStripItem(input: {
 let armed = false;
 
 export function armHeaderStripCommitHandoff(): void {
+  // Called synchronously before the reorder write. Capture the current slots
+  // here so intervening resizes need no bookkeeping on ordinary commits.
+  for (const entry of entries.values()) {
+    entry.lastBaselineLeft = entry.node?.offsetLeft ?? null;
+  }
   armed = true;
 }
 
@@ -174,13 +179,13 @@ export interface HeaderStripHandoffReport {
 /**
  * Re-base every item whose baseline moved, then release the arm.
  *
- * Driven from the strip container's layout effect on EVERY strip layout pass:
- * baselines have to be recorded even when nothing is armed, or the first commit
- * after a quiet render would compare against a stale slot. Walking the DOM
- * rather than the registry is deliberate - it is the only way to notice an item
- * that is on screen and NOT registered.
+ * Driven from the strip container's layout effect. Only an armed reorder
+ * needs geometry: arming captured its pre-commit slots synchronously. Walking
+ * the DOM on that commit is deliberate - it notices an on-screen item that is
+ * NOT registered, including a split group.
  */
 export function runHeaderStripCommitHandoff(): HeaderStripHandoffReport {
+  if (!armed) return { rebased: [], moved: [], uncorrected: [] };
   const byNode = new Map<HTMLElement, HeaderStripItemEntry>();
   for (const entry of entries.values()) {
     if (entry.node !== null) byNode.set(entry.node, entry);
@@ -191,6 +196,11 @@ export function runHeaderStripCommitHandoff(): HeaderStripHandoffReport {
   const nodes = document.querySelectorAll(
     `[data-testid="${HEADER_STRIP_SCROLL_TEST_ID}"] [data-strip-item-id]`,
   );
+  const measurements: Array<{
+    id: string;
+    entry: HeaderStripItemEntry;
+    nextBaselineLeft: number;
+  }> = [];
   for (const node of nodes) {
     if (!(node instanceof HTMLElement)) continue;
     const id = node.getAttribute("data-strip-item-id");
@@ -199,21 +209,21 @@ export function runHeaderStripCommitHandoff(): HeaderStripHandoffReport {
     if (entry === undefined) {
       // On screen, not participating. Never skip this quietly - that silence is
       // exactly what hid the split group.
-      if (armed) uncorrected.push(id);
+      uncorrected.push(id);
       continue;
     }
+    measurements.push({ id, entry, nextBaselineLeft: node.offsetLeft });
+  }
+  for (const { id, entry, nextBaselineLeft } of measurements) {
     const previousBaselineLeft = entry.lastBaselineLeft;
-    const nextBaselineLeft = node.offsetLeft;
     entry.lastBaselineLeft = nextBaselineLeft;
     if (previousBaselineLeft === null) {
-      // No snapshot to preserve a position against. Harmless on a first layout
-      // pass; at a commit it means an item joined late and is reported.
-      if (armed) uncorrected.push(id);
+      // No pre-commit snapshot: an item joined after arming and is reported.
+      uncorrected.push(id);
       continue;
     }
     if (previousBaselineLeft === nextBaselineLeft) continue;
     moved.push(id);
-    if (!armed) continue;
     entry.value.jump(
       handoffTransformFor({
         previousBaselineLeft,
@@ -226,7 +236,7 @@ export function runHeaderStripCommitHandoff(): HeaderStripHandoffReport {
     animate(entry.value, entry.targetX, entry.transition);
     rebased.push(id);
   }
-  if (armed && uncorrected.length > 0) {
+  if (uncorrected.length > 0) {
     appLogger.warn(
       "[header-strip] commit reached items that cannot be re-based",
       { uncorrected },

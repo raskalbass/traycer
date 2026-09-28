@@ -233,7 +233,7 @@ function LocalTabAppearanceMenu(props: { readonly tab: HeaderTab }) {
   const customization = useTabsStore((state) => state.customizations?.[key]);
   const groups = useTabsStore((state) => state.groups);
   const groupId = customization?.groupId ?? null;
-  const actions = useTabsStore.getState();
+  const actions = readTabActions();
   return (
     <>
       <ContextMenuSub>
@@ -318,4 +318,8 @@ function LocalTabAppearanceMenu(props: { readonly tab: HeaderTab }) {
       <ContextMenuSeparator />
     </>
   );
+}
+
+function readTabActions() {
+  return useTabsStore.getState();
 }

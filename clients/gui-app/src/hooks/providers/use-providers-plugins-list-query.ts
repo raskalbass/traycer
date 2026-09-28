@@ -5,6 +5,11 @@ import type { ProviderNativeScope } from "@traycer/protocol/host/provider-native
 import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
 import { useHostClient, type HostRpcRegistry } from "@/lib/host";
 import { useHostQueryWithResponseMap } from "@/hooks/host/use-host-query";
+import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
+import {
+  isDocumentVisible,
+  subscribeDocumentVisibility,
+} from "@/lib/dom/document-visibility";
 import {
   mapProvidersListToPlugins,
   type PluginsListData,
@@ -21,6 +26,7 @@ export function useProvidersPluginsList(args: {
   readonly enabled: boolean;
 }): UseQueryResult<PluginsListData, HostRpcError> {
   const client = useHostClient();
+  const readiness = useReactiveHostReadiness(client);
   const listParams = {
     providerId: args.providerId,
     scope: args.scope,
@@ -66,12 +72,18 @@ export function useProvidersPluginsList(args: {
   const { refetch } = query;
   const enabled = args.enabled;
   useEffect(() => {
-    if (!enabled) return;
-    const timer = setInterval(() => {
-      void refetch();
-    }, PLUGINS_LIST_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [enabled, refetch]);
+    if (!enabled || !readiness.isReady) return;
+    const refresh = (): void => {
+      if (!isDocumentVisible()) return;
+      void refetch({ cancelRefetch: false });
+    };
+    const timer = setInterval(refresh, PLUGINS_LIST_REFRESH_MS);
+    const unsubscribe = subscribeDocumentVisibility(refresh);
+    return () => {
+      clearInterval(timer);
+      unsubscribe();
+    };
+  }, [enabled, readiness.isReady, refetch]);
 
   return query;
 }

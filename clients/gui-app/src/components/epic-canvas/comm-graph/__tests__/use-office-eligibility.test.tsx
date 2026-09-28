@@ -14,13 +14,33 @@ import {
   render,
   type RenderResult,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
 import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { useOfficeEligibility } from "@/components/epic-canvas/comm-graph/office/use-office-eligibility";
+import {
+  __resetDocumentVisibilitySubscribersForTests,
+  setDesktopWindowOnScreen,
+} from "@/lib/dom/document-visibility";
+
+/**
+ * The hook's shared `isDocumentVisible()` reads `document.visibilityState`,
+ * not `document.hidden` - a real browser keeps the two in lockstep, but a
+ * jsdom test only gets that for free if it stubs the property the production
+ * code actually reads.
+ */
+function setDocumentHidden(hidden: boolean): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => (hidden ? "hidden" : "visible"),
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
 
 afterEach(() => {
   cleanup();
+  setDocumentHidden(false);
+  __resetDocumentVisibilitySubscribersForTests();
 });
 
 interface ProbeProps {
@@ -84,27 +104,37 @@ describe("useOfficeEligibility", () => {
   });
 
   it("is ineligible while the document itself is hidden", () => {
-    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
-    try {
-      const result = renderProbe({ intersecting: true });
-      expect(eligibleText(result)).toBe("false");
-    } finally {
-      hidden.mockRestore();
-    }
+    setDocumentHidden(true);
+    const result = renderProbe({ intersecting: true });
+    expect(eligibleText(result)).toBe("false");
   });
 
   it("becomes eligible when visibilitychange reports the document visible again", () => {
-    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    setDocumentHidden(true);
     const result = renderProbe({ intersecting: true });
     expect(eligibleText(result)).toBe("false");
 
-    hidden.mockReturnValue(false);
     act(() => {
-      document.dispatchEvent(new Event("visibilitychange"));
+      setDocumentHidden(false);
     });
 
     expect(eligibleText(result)).toBe("true");
-    hidden.mockRestore();
+  });
+
+  it("is ineligible when the desktop shell reports the window off-screen even though document.visibilityState stays visible, and becomes eligible again once it reports back on-screen", () => {
+    const result = renderProbe({ intersecting: true });
+    expect(eligibleText(result)).toBe("true");
+
+    act(() => {
+      setDesktopWindowOnScreen(false);
+    });
+    expect(document.visibilityState).toBe("visible");
+    expect(eligibleText(result)).toBe("false");
+
+    act(() => {
+      setDesktopWindowOnScreen(true);
+    });
+    expect(eligibleText(result)).toBe("true");
   });
 
   it("stays eligible for a visible pane that does not have focus", () => {

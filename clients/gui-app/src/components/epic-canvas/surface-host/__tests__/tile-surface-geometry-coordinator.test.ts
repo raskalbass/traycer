@@ -166,16 +166,85 @@ describe("host-root movement invalidates every registered slot", () => {
     rectsB.length = 0;
     const hostRectRead = vi.spyOn(host, "getBoundingClientRect");
 
-    // Simulate a real host-root resize (e.g. the sidebar toggling) - only
-    // the HOST's own observed element changed; neither slot moved.
+    // The host resize also shifts its origin, so every slot's host-relative
+    // rect genuinely changes and must be redelivered under the new
+    // unchanged-rect suppression.
     hostRectRead.mockReturnValue(
-      fakeRect({ left: 0, top: 0, width: 400, height: 300 }),
+      fakeRect({ left: 50, top: 20, width: 400, height: 300 }),
     );
     triggerResizeObserverCallbacks();
 
-    expect(rectsA).toEqual([{ left: 100, top: 100, width: 50, height: 50 }]);
-    expect(rectsB).toEqual([{ left: 300, top: 300, width: 50, height: 50 }]);
+    expect(rectsA).toEqual([{ left: 50, top: 80, width: 50, height: 50 }]);
+    expect(rectsB).toEqual([{ left: 250, top: 280, width: 50, height: 50 }]);
     expect(hostRectRead).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("read-all then changed-only callbacks (perf fix W1-B item 2)", () => {
+  it("does not re-invoke a slot's listener when a RO batch fires but its computed rect is unchanged from the last delivered rect", () => {
+    const host = document.createElement("div");
+    stubRect(host, { left: 0, top: 0, width: 800, height: 600 });
+    registerTileSurfaceGeometryHost(host);
+
+    const slot = document.createElement("div");
+    stubRect(slot, { left: 10, top: 10, width: 100, height: 100 });
+    const rects: TileSurfaceRect[] = [];
+    registerTileSurfaceGeometrySlot("chat-1", slot, (rect) => rects.push(rect));
+    rects.length = 0;
+
+    // The shared observer fires, but this slot's own rect never changed.
+    triggerResizeObserverCallbacks();
+
+    expect(rects).toEqual([]);
+  });
+
+  it("reads every registered slot's rect before invoking any changed listener - a listener's own side effect during the sweep cannot leak into a sibling's rect for the same batch", () => {
+    const host = document.createElement("div");
+    stubRect(host, { left: 0, top: 0, width: 800, height: 600 });
+    registerTileSurfaceGeometryHost(host);
+
+    const slotB = document.createElement("div");
+    stubRect(slotB, { left: 100, top: 0, width: 50, height: 50 });
+    const rectsB: TileSurfaceRect[] = [];
+
+    // Slot A is registered (and iterated) first, so it runs first if
+    // listeners were interleaved with reads instead of
+    // read-all-then-changed-only. Its side effect below must fire only
+    // during the TESTED batch, not during A's own registration-time initial
+    // delivery (registration synchronously invokes its listener once) -
+    // otherwise it would poison slot B's cached rect during setup and the
+    // assertion below would pass for the wrong reason regardless of
+    // read/publish ordering.
+    let sideEffectArmed = false;
+    const slotA = document.createElement("div");
+    stubRect(slotA, { left: 0, top: 0, width: 50, height: 50 });
+    const rectsA: TileSurfaceRect[] = [];
+    registerTileSurfaceGeometrySlot("chat-a", slotA, (rect) => {
+      rectsA.push(rect);
+      if (!sideEffectArmed) return;
+      // Side effect mid-sweep: if reads and callbacks were interleaved, this
+      // would leak into slot B's rect for the same batch.
+      stubRect(slotB, { left: 500, top: 0, width: 50, height: 50 });
+    });
+
+    registerTileSurfaceGeometrySlot("chat-b", slotB, (rect) =>
+      rectsB.push(rect),
+    );
+
+    rectsA.length = 0;
+    rectsB.length = 0;
+    // Slot B cached its real, untouched rect (100) during setup; now the
+    // side effect is live for the batch under test.
+    sideEffectArmed = true;
+
+    // Only slot A's underlying rect actually changes this batch.
+    stubRect(slotA, { left: 10, top: 0, width: 50, height: 50 });
+    triggerResizeObserverCallbacks();
+
+    expect(rectsA).toEqual([{ left: 10, top: 0, width: 50, height: 50 }]);
+    // Slot B's rect was unchanged at batch-start, so it must stay
+    // unreported - its rect was captured before slot A's callback ran.
+    expect(rectsB).toEqual([]);
   });
 });
 

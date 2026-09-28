@@ -43,11 +43,8 @@ import { ArtifactPanelSearchShell } from "@/components/epic-canvas/sidebar/epic-
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuContent } from "@/components/ui/dropdown-menu";
+import { LazyDropdownMenu } from "@/components/ui/lazy-menu";
 import { ContextMenuContent } from "@/components/ui/context-menu";
 import { SidebarGroup, SidebarGroupContent } from "@/components/ui/sidebar";
 import { TreeChevron, TreeChevronSpacer } from "@/components/ui/tree-chevron";
@@ -168,7 +165,10 @@ import {
   type EpicCanvasSidebarNodeDragData,
 } from "@/components/epic-canvas/dnd/dnd";
 import { useDragSourceDisabled } from "@/components/epic-canvas/dnd/use-drag-source-disabled";
-import { SidebarReparentRowDropWrapper } from "@/components/epic-canvas/sidebar/sidebar-reparent-row-drop-wrapper";
+import {
+  SidebarReparentRowDropWrapper,
+  SidebarTreeContextMenu,
+} from "@/components/epic-canvas/sidebar/sidebar-reparent-row-drop-wrapper";
 import { SidebarPanelEmptyState } from "@/components/epic-canvas/sidebar/sidebar-panel-empty-state";
 import type {
   ArtifactsSlice,
@@ -765,12 +765,14 @@ export function ArtifactTreePanelBody(props: ArtifactTreePanelBodyProps) {
       <SidebarFilterVisibilityContext.Provider value={visibleIds}>
         <ArtifactPanelSearchShell epicId={epicId} tabId={tabId}>
           <SidebarGroup className="min-h-0 flex-1">
-            <SidebarGroupContent
-              ref={treeRegionRef}
-              className="flex min-h-0 flex-1 flex-col"
-            >
-              {panelContent}
-            </SidebarGroupContent>
+            <SidebarTreeContextMenu>
+              <SidebarGroupContent
+                ref={treeRegionRef}
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                {panelContent}
+              </SidebarGroupContent>
+            </SidebarTreeContextMenu>
           </SidebarGroup>
         </ArtifactPanelSearchShell>
       </SidebarFilterVisibilityContext.Provider>
@@ -873,15 +875,7 @@ const ArtifactNode = memo(function ArtifactNode(props: ArtifactNodeProps) {
   // `memo` on this component is not a defence and never was - it blocks a
   // re-render pushed down by a parent, not one this component's own
   // subscription triggers. So the reads below subscribe to their ANSWERS.
-  //
-  // `useShallow` is required, not decorative: a deriving selector returns a
-  // fresh object each call, so without it `useSyncExternalStore` sees a change
-  // on every notification and loops. See `epic-sidebar-filter.ts`.
-  const cascadeCounts = useEpicStore(
-    useShallow((state: OpenEpicState) =>
-      computeDescendantCountsFromTree(state.tree, nodeId),
-    ),
-  );
+
   const statusValue = useEpicArtifactStatus(nodeId);
 
   useEffect(() => {
@@ -935,6 +929,14 @@ const ArtifactNode = memo(function ArtifactNode(props: ArtifactNodeProps) {
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  // Closed dialogs need no subtree walk on mount or store notifications.
+  const cascadeSummary = useEpicStore((state) =>
+    confirmDeleteOpen
+      ? formatCascadeSummary(
+          computeDescendantCountsFromTree(state.tree, nodeId),
+        )
+      : null,
+  );
   // Mount the delete dialog on FIRST open and keep it mounted thereafter,
   // rather than rendering it for every row unconditionally.
   //
@@ -1186,13 +1188,6 @@ const ArtifactNode = memo(function ArtifactNode(props: ArtifactNodeProps) {
 
   if (node === null) return null;
   if (!treeFilter(node.type)) return null;
-
-  // Cascade counts feed only the delete-confirm dialog, computed from the
-  // canonical tree structure rather than the churning record list. Subscribed
-  // at the top of this component rather than derived here, because a hook
-  // cannot live below the two early returns above - see the note at the
-  // subscription for why it stopped reading the whole slice.
-  const cascadeSummary = formatCascadeSummary(cascadeCounts);
 
   const showStatusDot = computeArtifactNodeStatusDot(artifactType, statusValue);
 
@@ -2145,8 +2140,8 @@ function ArtifactMoreMenu(props: {
 }) {
   const { nodeId, nodeName, entries } = props;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
+    <LazyDropdownMenu
+      trigger={
         <Button
           type="button"
           variant="ghost"
@@ -2160,10 +2155,11 @@ function ArtifactMoreMenu(props: {
         >
           <MoreHorizontal className="size-3" />
         </Button>
-      </DropdownMenuTrigger>
+      }
+    >
       <DropdownMenuContent align="end" className="w-max">
         <SidebarDropdownMenuItems entries={entries} />
       </DropdownMenuContent>
-    </DropdownMenu>
+    </LazyDropdownMenu>
   );
 }

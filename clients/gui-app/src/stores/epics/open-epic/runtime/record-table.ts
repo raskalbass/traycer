@@ -415,6 +415,11 @@ export interface RecordTable<TRow, TSlice> {
   /** The slice as last published. The projector reads this as an input. */
   current(): TSlice;
   /**
+   * Apply ordered writes and rebuild the published slice once. Inner writes
+   * return null; use retainedRow for same-batch reads, current for publication.
+   */
+  batch(body: () => void): RecordTablePublication<TSlice> | null;
+  /**
    * The retained RAW row for a full record identity, or `null`.
    *
    * The published slice cannot answer this: it is keyed on the bare id, which
@@ -613,9 +618,18 @@ export function createRecordTable<TRow, TSlice>(
     return Math.max(recency.revisionOf(held), recencyRevision.get(key) ?? 0);
   }
 
+  let batchDepth = 0;
+  let batchChanged = false;
+  let batchRetractions = false;
+
   function recompute(
     withRetractions: boolean,
   ): RecordTablePublication<TSlice> | null {
+    if (batchDepth > 0) {
+      batchChanged = true;
+      batchRetractions ||= withRetractions;
+      return null;
+    }
     const currentUserId = hooks.getCurrentUserId();
     // Record provenance for any pending mutation this table now backs, BEFORE
     // the change gate below can early-return.
@@ -636,6 +650,22 @@ export function createRecordTable<TRow, TSlice>(
 
   return {
     current: () => slice,
+    batch(body) {
+      batchDepth += 1;
+      let publication: RecordTablePublication<TSlice> | null = null;
+      try {
+        body();
+      } finally {
+        batchDepth -= 1;
+        if (batchDepth === 0 && batchChanged) {
+          const withRetractions = batchRetractions;
+          batchChanged = false;
+          batchRetractions = false;
+          publication = recompute(withRetractions);
+        }
+      }
+      return publication;
+    },
     retainedRow: (rowKey: string) => rows.get(rowKey) ?? null,
     ingestSeq: () => ingestSeq,
     snapshotIncompleteSeq: () => snapshotIncompleteSeq,
