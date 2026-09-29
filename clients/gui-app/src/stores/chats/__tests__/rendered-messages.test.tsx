@@ -25,10 +25,10 @@ import type {
 import type { MessageSegment } from "@/stores/composer/chat-store";
 import { collectAssistantReplyText } from "@/lib/chat/collect-assistant-reply-text";
 import {
-  useRenderedMessages,
   type RenderedMessagesDisplayContext,
   type RenderedMessagesInput,
 } from "@/stores/chats/rendered-messages";
+import { useRenderedMessages } from "@/stores/chats/__tests__/rendered-messages-test-utils";
 import type {
   SubagentSegment,
   ToolSegment,
@@ -1408,8 +1408,10 @@ describe("useRenderedMessages", () => {
     });
     // `provider` comes from the sender's harnessId; the labels come from the
     // display context; reasoningEffort/serviceTier flow from the persisted
-    // message through the turn accumulator.
+    // message through the turn accumulator; the raw sender rides along so the
+    // row leaf can resolve its own presentation.
     expect(result.current[0]?.assistantMeta).toEqual({
+      sender: a.sender,
       provider: "claude",
       providerLabel: "Claude Code",
       profileLabel: null,

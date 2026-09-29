@@ -4,7 +4,9 @@ import {
   Suspense,
   use,
   useEffect,
+  useLayoutEffect,
   useState,
+  useSyncExternalStore,
   useTransition,
   type ReactElement,
   type ReactNode,
@@ -28,7 +30,18 @@ import {
   type TranscriptListRow,
 } from "@/stores/chats/transcript-list-rows";
 import type { ChatMessage as ChatMessageModel } from "@/stores/composer/chat-store";
-import { makeMessage, makeMessages } from "./chat-message-fixtures";
+import type { AgentSender } from "@traycer/protocol/persistence/epic/schemas";
+import { ChatRowStoreContext } from "@/components/chat/chat-row-presentation";
+import type {
+  ChatSessionStoreHandle,
+  LiveAssistantMessage,
+} from "@/stores/chats/chat-session-store";
+import { createTestChatSession } from "@/stores/chats/test-support/create-test-chat-session";
+import {
+  makeMessage,
+  makeMessageAt,
+  makeMessages,
+} from "./chat-message-fixtures";
 import {
   advanceLegendListFrames,
   enableLegendListBrowserScrollEvents,
@@ -85,6 +98,11 @@ const legendListPolicyProps = vi.hoisted(() => ({
     maintainScrollAtEndThreshold: unknown;
     maintainVisibleContentPosition: unknown;
   },
+  /** One entry per COMMITTED LegendList pass, recorded in a layout effect.
+   *  ChatTimeline's own layout effect (which advances the key baseline and
+   *  schedules a second, data:false pass) runs after its child's, so the
+   *  structural commit is `commits[0]`; `last` only sees the settled pass. */
+  commits: [] as unknown[],
 }));
 
 /** Armed only by the abandoned-transition regression test below; suspends
@@ -111,6 +129,9 @@ vi.mock("@legendapp/list/react", async (importOriginal) => {
   const CapturingLegendList = (
     props: LegendListProps<TranscriptListRow> & RefAttributes<LegendListRef>,
   ) => {
+    useLayoutEffect(() => {
+      legendListPolicyProps.commits.push(props.maintainVisibleContentPosition);
+    });
     legendListPolicyProps.last = {
       maintainScrollAtEnd: props.maintainScrollAtEnd,
       maintainScrollAtEndThreshold: props.maintainScrollAtEndThreshold,
@@ -370,13 +391,15 @@ describe("ChatTimeline", () => {
     const userRenderCountBefore = renderCounts.get("message-2") ?? 0;
     const streamingRenderCountBefore = renderCounts.get("message-3") ?? 0;
 
-    // Simulate a store rebuild: new array, new objects; only the streaming
-    // message's content differs. Structural sharing + memo should keep
-    // earlier rows from remounting / re-rendering.
+    // Simulate a store update: new array, the settled rows kept by reference
+    // (structural sharing is the producer's job, covered against the real row
+    // store in the StoreBackedHarness test below), and only the streaming
+    // message replaced. Memo should keep earlier rows from remounting /
+    // re-rendering.
     const nextMessages: ReadonlyArray<ChatMessageModel> = [
-      { ...baseMessages[0] },
-      { ...baseMessages[1] },
-      { ...baseMessages[2] },
+      baseMessages[0],
+      baseMessages[1],
+      baseMessages[2],
       {
         ...baseMessages[3],
         content: "partial reply token",
@@ -1649,12 +1672,195 @@ describe("ChatTimeline", () => {
         firstRowBefore,
       );
     });
+
+    // The tile publishes rows through `ChatRowStoreContext`; every test above
+    // feeds raw `rows` instead, so this is the one that drives the store path:
+    // a live token reaches the mounted row through its per-row subscription,
+    // a hidden pane keeps painting its last committed content, and a reveal
+    // shows the latest content in the same list mount.
+    it("streams through the row store, freezes while hidden, and reveals the latest content in the same mount", async () => {
+      const agent: AgentSender = {
+        type: "agent",
+        harnessId: "claude",
+        agentId: "claude-sonnet-4",
+        displayName: "Claude Sonnet 4",
+        reply: { expectsReply: false },
+        inReplyTo: null,
+      };
+      const live = (
+        text: string,
+        blocksVersion: number,
+      ): LiveAssistantMessage => ({
+        turnId: "turn-1",
+        blocks: [
+          {
+            type: "text",
+            blockId: "text-1",
+            text,
+            status: "streaming",
+            timestamp: 10 + blocksVersion,
+            providerNotice: null,
+          },
+        ],
+        startedAt: 2000,
+        blocksVersion,
+        imageResolutions: [],
+        imageResolutionsVersion: 0,
+        timestamp: 2000,
+        sender: agent,
+        reasoningEffort: null,
+        serviceTier: null,
+      });
+      const session: ChatSessionStoreHandle = createTestChatSession();
+      const { rows, store } = session;
+      const listRef = createRef<LegendListRef | null>();
+      // Stable across snapshot renders: a fresh Set or callback per render
+      // would invalidate the row context and re-render every settled row.
+      const backgroundToolBlockIds = new Set<string>();
+      const getMessageActions = (_message: ChatMessageModel) => null;
+      let setVisible: ((visible: boolean) => void) | null = null;
+
+      function StoreBackedHarness(): ReactElement {
+        const [visible, setVisibleState] = useState(true);
+        useEffect(() => {
+          setVisible = setVisibleState;
+        }, []);
+        const snapshotRows = useSyncExternalStore(
+          rows.subscribe,
+          () => rows.getState().rows,
+        );
+        return (
+          <div style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}>
+            <ChatRowStoreContext value={rows}>
+              <ChatTimeline
+                rows={snapshotRows}
+                visible={visible}
+                onVisibleRowRangeChange={undefined}
+                taskTitle="Test transcript"
+                backgroundToolBlockIds={backgroundToolBlockIds}
+                getMessageActions={getMessageActions}
+                nextStepActions={null}
+                listRef={listRef}
+                className="h-full"
+                data-testid="chat-timeline"
+              />
+            </ChatRowStoreContext>
+          </div>
+        );
+      }
+
+      try {
+        store.setState({
+          messages: [
+            {
+              role: "user",
+              messageId: "u-1",
+              sender: { type: "user", userId: "owner-1" },
+              message: {
+                kind: "user",
+                content: {
+                  type: "doc",
+                  content: [
+                    {
+                      type: "paragraph",
+                      content: [{ type: "text", text: "hello" }],
+                    },
+                  ],
+                },
+                browserAnnotations: [],
+              },
+              timestamp: 1000,
+              sessionAnchor: null,
+            },
+          ],
+          activeTurn: {
+            agentMode: "regular",
+            sameTurnSteeringSupported: false,
+            turnId: "turn-1",
+            status: "running",
+            harnessId: "claude",
+            model: "claude-sonnet-4-5",
+            profileId: null,
+            userMessageId: null,
+            startedAt: 1,
+            updatedAt: 2,
+            reasoningEffort: null,
+            serviceTier: null,
+          },
+          runStatus: "running",
+          liveAssistantMessage: live("alpha", 1),
+        });
+        const { container } = render(<StoreBackedHarness />);
+        await settleLegendList();
+        expect(container.textContent).toContain("alpha");
+        const scrollBefore = container.querySelector(
+          '[data-testid="chat-timeline"]',
+        );
+        const userRowBefore = container.querySelector(
+          '[data-message-id="u-1"]',
+        );
+        const listEntriesBefore = rows.getState().listEntries;
+        const userRenderCountBefore = renderCounts.get("u-1") ?? 0;
+        expect(scrollBefore).not.toBeNull();
+        expect(userRowBefore).not.toBeNull();
+
+        act(() => {
+          store.setState({ liveAssistantMessage: live("alpha beta", 2) });
+        });
+        await flushFrame();
+        expect(container.textContent).toContain("alpha beta");
+        expect(rows.getState().listEntries).toBe(listEntriesBefore);
+        expect(container.querySelector('[data-message-id="u-1"]')).toBe(
+          userRowBefore,
+        );
+        // The settled row is not re-rendered by the live token.
+        expect(renderCounts.get("u-1") ?? 0).toBe(userRenderCountBefore);
+
+        act(() => {
+          setVisible?.(false);
+        });
+        act(() => {
+          store.setState({ liveAssistantMessage: live("alpha beta gamma", 3) });
+        });
+        await flushFrame();
+        expect(container.textContent).toContain("alpha beta");
+        expect(container.textContent).not.toContain("gamma");
+        expect(container.querySelector('[data-testid="chat-timeline"]')).toBe(
+          scrollBefore,
+        );
+
+        act(() => {
+          setVisible?.(true);
+        });
+        await flushFrame();
+        expect(container.textContent).toContain("gamma");
+        expect(container.querySelector('[data-testid="chat-timeline"]')).toBe(
+          scrollBefore,
+        );
+        expect(container.querySelector('[data-message-id="u-1"]')).toBe(
+          userRowBefore,
+        );
+      } finally {
+        session.dispose();
+      }
+    });
   });
 });
+
+const MVCP_DATA_ON = { data: true, size: true };
+const MVCP_DATA_OFF = { data: false, size: true };
+
+/** The MVCP values LegendList committed while `action` ran. */
+function commitsDuring(action: () => void): unknown[] {
+  legendListPolicyProps.commits.length = 0;
+  act(action);
+  return [...legendListPolicyProps.commits];
+}
 
 describe("ChatTimeline LegendList strict-edge policy config", () => {
   beforeEach(() => {
     legendListPolicyProps.last = null;
+    legendListPolicyProps.commits.length = 0;
     installLegendListViewportMetrics();
   });
 
@@ -1696,14 +1902,12 @@ describe("ChatTimeline LegendList strict-edge policy config", () => {
         ? { ...message, content: `${message.content} more` }
         : { ...message },
     );
-    act(() => {
+    const commits = commitsDuring(() => {
       rerenderMessages(streamed, undefined, undefined);
     });
 
-    expect(legendListPolicyProps.last?.maintainVisibleContentPosition).toEqual({
-      data: false,
-      size: true,
-    });
+    expect(commits.length).toBeGreaterThan(0);
+    expect(commits).toEqual(commits.map(() => MVCP_DATA_OFF));
   });
 
   it("turns the MVCP data channel on for the commit that changes the key sequence", async () => {
@@ -1714,14 +1918,35 @@ describe("ChatTimeline LegendList strict-edge policy config", () => {
     // A row above the tail disappears - the shape a settled-row deletion, a
     // steer nesting into its assistant turn, or a moved setup card produces.
     const withRowRemoved = messages.filter((_, index) => index !== 1);
-    act(() => {
+    const commits = commitsDuring(() => {
       rerenderMessages(withRowRemoved, undefined, undefined);
     });
 
-    expect(legendListPolicyProps.last?.maintainVisibleContentPosition).toEqual({
-      data: true,
-      size: true,
+    expect(commits.at(0)).toEqual(MVCP_DATA_ON);
+  });
+
+  it("anchors a prepend after the timeline first populated from empty", async () => {
+    // An empty first commit must not leave the committed baseline empty: the
+    // first population is not a movement, but it is the baseline the next
+    // sequence change is measured against.
+    const messages = makeMessages(6);
+    const { rerenderMessages } = renderTimeline({ messages: [] });
+    await settleLegendList();
+
+    const population = commitsDuring(() => {
+      rerenderMessages(messages, undefined, undefined);
     });
+    expect(population.length).toBeGreaterThan(0);
+    expect(population).toEqual(population.map(() => MVCP_DATA_OFF));
+
+    const prepend = commitsDuring(() => {
+      rerenderMessages(
+        [makeMessageAt(-1, "user", -1), ...messages],
+        undefined,
+        undefined,
+      );
+    });
+    expect(prepend.at(0)).toEqual(MVCP_DATA_ON);
   });
 
   it("retires the data channel once the moved sequence has been rendered", async () => {
@@ -1730,28 +1955,24 @@ describe("ChatTimeline LegendList strict-edge policy config", () => {
     await settleLegendList();
 
     const withRowRemoved = messages.filter((_, index) => index !== 1);
-    act(() => {
+    const removal = commitsDuring(() => {
       rerenderMessages(withRowRemoved, undefined, undefined);
     });
-    expect(legendListPolicyProps.last?.maintainVisibleContentPosition).toEqual({
-      data: true,
-      size: true,
-    });
+    expect(removal.at(0)).toEqual(MVCP_DATA_ON);
+    // The baseline advanced when the removal COMMITTED, so the follow-up pass
+    // has already retired the channel.
+    expect(removal.at(-1)).toEqual(MVCP_DATA_OFF);
 
-    // A token on top of the new sequence. The baseline advanced when the
-    // removal COMMITTED, so this is content-only and needs no anchor.
+    // A token on top of the new sequence is content-only and needs no anchor.
     const streamed = withRowRemoved.map((message, index) =>
       index === withRowRemoved.length - 1
         ? { ...message, content: `${message.content} more` }
         : { ...message },
     );
-    act(() => {
+    const token = commitsDuring(() => {
       rerenderMessages(streamed, undefined, undefined);
     });
-
-    expect(legendListPolicyProps.last?.maintainVisibleContentPosition).toEqual({
-      data: false,
-      size: true,
-    });
+    expect(token.length).toBeGreaterThan(0);
+    expect(token).toEqual(token.map(() => MVCP_DATA_OFF));
   });
 });

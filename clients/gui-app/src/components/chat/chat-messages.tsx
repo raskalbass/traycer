@@ -204,6 +204,7 @@ interface ChatMessagesProps {
   hostId: string | null;
   /** The full derived, pinned-todo-stripped row history to hand to LegendList. */
   messages: ReadonlyArray<ChatMessageModel>;
+  projectedRows?: ReadonlyArray<TranscriptListRow>;
   /**
    * The transcript index on the windowed line (`chat.subscribe@1.8`), or
    * `null` on the legacy line where `messages` IS the whole transcript. The
@@ -1992,8 +1993,10 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
   // there. Computed before the mount-time restore initializers because they
   // resolve saved anchors against LIST indexes, which are row indexes.
   const listRows = useMemo(
-    () => transcriptListRows({ window: transcriptWindow, rendered: messages }),
-    [transcriptWindow, messages],
+    () =>
+      props.projectedRows ??
+      transcriptListRows({ window: transcriptWindow, rendered: messages }),
+    [transcriptWindow, messages, props.projectedRows],
   );
 
   // Restore the persisted reading position once, on mount (ticket 15: tries

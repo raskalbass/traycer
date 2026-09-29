@@ -1,3 +1,4 @@
+import { createChatRowStore } from "@/stores/chats/chat-row-store";
 import { createStore, useStore } from "zustand";
 import type { UseBoundStore, StoreApi } from "zustand";
 import {
@@ -543,6 +544,7 @@ export function createPublishedChatSessionHandle(
 ): PublishedChatSessionHandle {
   const state = publishedChatSessionState(input);
   const store = createStore<ChatSessionState>()(() => state);
+  const rows = createChatRowStore(store);
   const boundStore = Object.assign(
     <T>(selector: (value: ChatSessionState) => T): T =>
       useStore(store, selector),
@@ -553,6 +555,7 @@ export function createPublishedChatSessionHandle(
     chatId: input.chatId,
     userId: input.ownerUserId,
     store: boundStore,
+    rows: rows.store,
     deliveredNotices: {
       notices: new WeakSet(),
       retainedClientActionIds: new Set<string>(),
@@ -562,7 +565,7 @@ export function createPublishedChatSessionHandle(
     isSurfaceVisible: () => true,
     setSurfaceVisibility: () => undefined,
     clearSurfaceVisibility: () => undefined,
-    dispose: () => undefined,
+    dispose: rows.dispose,
     applyConversion: (update) => {
       const current = store.getState();
       const messages = reconcileRows(

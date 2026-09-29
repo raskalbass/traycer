@@ -1,3 +1,4 @@
+import { createChatRowStore, type ChatRowSnapshot } from "./chat-row-store";
 import {
   isDocumentVisible,
   subscribeDocumentVisibility,
@@ -150,6 +151,9 @@ import {
   worktreeStagingKeyString,
   type WorktreeStagingKey,
 } from "@/stores/worktree/worktree-intent-staging-store";
+// Runtime import, and cycle-free: `setup-card-rows` reaches
+// `setup-card-segment` only through `import type`, which is erased, and nothing
+// in its graph imports this store back.
 // Runtime import, and cycle-free: `setup-card-rows` reaches
 // `setup-card-segment` only through `import type`, which is erased, and nothing
 // in its graph imports this store back.
@@ -2183,6 +2187,7 @@ export interface ChatSessionStoreHandle {
   readonly chatId: string;
   readonly userId: string | null;
   readonly store: UseBoundStore<StoreApi<ChatSessionState>>;
+  readonly rows: StoreApi<ChatRowSnapshot>;
   readonly deliveredNotices: DeliveredNoticeTracker;
   /**
    * Completed restores already surfaced as toasts. Completion state remains in
@@ -3316,6 +3321,7 @@ export function createChatSessionStoreWithNotificationDependencies(
     }
   };
   let unsubscribeSendTimings: (() => void) | null = null;
+  let disposeRows: (() => void) | null = null;
   const notificationUserId = options.userId;
   const memory = ensureProcessMemoryRuntime(options.environment);
   const holderId = chatHolderId(options.hostId, options.epicId, options.chatId);
@@ -11304,6 +11310,7 @@ export function createChatSessionStoreWithNotificationDependencies(
       dispose: () => {
         if (disposed) return;
         unsubscribeSendTimings?.();
+        disposeRows?.();
         sendTimings.clear();
         // BEFORE `disposed = true` and before the store leaves
         // `liveChatSessionStores`, because abandonment has to actually land:
@@ -11489,6 +11496,8 @@ export function createChatSessionStoreWithNotificationDependencies(
     }
   });
 
+  const rows = createChatRowStore(store);
+  disposeRows = rows.dispose;
   liveChatSessionStores.add(store);
 
   return {
@@ -11496,6 +11505,7 @@ export function createChatSessionStoreWithNotificationDependencies(
     chatId: options.chatId,
     userId: options.userId,
     store,
+    rows: rows.store,
     deliveredNotices: {
       notices: new WeakSet<ChatErrorNotice>(),
       retainedClientActionIds: ownedStateAccount.createPrivateStringSet(
