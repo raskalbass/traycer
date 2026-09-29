@@ -19,6 +19,7 @@ import type {
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
 import type { HostRpcRegistry } from "@/lib/host";
+import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { PROVIDER_LOGIN_PACK_POLL_MS } from "@/components/providers/provider-login-start";
 import {
   useProviderProfileLoginFlow,
@@ -96,13 +97,16 @@ const PROVIDER_ID = "codex";
 interface Deferred<T> {
   readonly promise: Promise<T>;
   readonly resolve: (value: T) => void;
+  readonly reject: (error: Error) => void;
 }
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function startLoginAnswer(
@@ -196,18 +200,25 @@ function LoginFlowHarness(props: {
     mutationFn: () => new Promise<AwaitLoginResponse>(() => undefined),
     onMutate: () => ({ hostId: null }),
   });
-  const cancelLogin: CancelLoginMutation = useMutation<
+  const cancelLoginMutation: CancelLoginMutation = useMutation<
     CancelLoginResponse,
     HostRpcError,
     CancelLoginRequest,
     { readonly hostId: string | null }
   >({
-    mutationFn: (request) => {
-      props.cancelLoginImpl(request);
-      return Promise.resolve({ cancelled: true });
-    },
+    mutationFn: () => Promise.resolve({ cancelled: true }),
     onMutate: () => ({ hostId: null }),
   });
+  // Recorded when the flow sends the cancel, not when TanStack gets round to
+  // running `mutationFn` a few microtasks later: an assertion made right
+  // after a press has to see a cancel that press sent.
+  const cancelLogin: CancelLoginMutation = {
+    ...cancelLoginMutation,
+    mutate: (request, options) => {
+      props.cancelLoginImpl(request);
+      cancelLoginMutation.mutate(request, options);
+    },
+  };
   const submitLoginCode: SubmitLoginCodeMutation = useMutation<
     SubmitLoginCodeResponse,
     HostRpcError,
@@ -271,10 +282,11 @@ function LoginFlowHarness(props: {
 /** Records every `startLoginImpl` call as its own deferred answer, so a test
  *  resolves calls in whatever order it is exercising rather than the order
  *  they were dispatched in. */
-function startLoginRecorder(): {
+interface StartLoginRecorder {
   readonly impl: (request: StartLoginRequest) => Promise<StartLoginResponse>;
   readonly calls: Deferred<StartLoginResponse>[];
-} {
+}
+function startLoginRecorder(): StartLoginRecorder {
   const calls: Deferred<StartLoginResponse>[] = [];
   return {
     calls,
@@ -289,6 +301,7 @@ function startLoginRecorder(): {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("useProviderProfileLoginFlow - releasing a login the host is still holding (create mode)", () => {
@@ -582,82 +595,250 @@ describe("useProviderProfileLoginFlow - releasing a login the host is still hold
 });
 
 /**
- * Reauth of the ambient login (`existingProfileId` null): the in-chat banner's
- * OAuth reconnect. `providers.cancelLogin` for it is keyed by the provider
- * alone, so a cancel sent for a login this press never started can end one
- * another surface started for the same account.
+ * Reauth of a target the flow names before the host has answered: the ambient
+ * login (`existingProfileId` null, the in-chat banner's OAuth reconnect) or a
+ * managed profile (the Settings reauth panel). `providers.cancelLogin` is
+ * keyed by that target alone, so a cancel sent for a login this press never
+ * started can end one another surface started for the same target.
  */
-describe("useProviderProfileLoginFlow - cancelling an ambient reauth while the pack downloads", () => {
-  async function cancelDuringDownload(
-    inFlightAnswer: StartLoginResponse,
-  ): Promise<Mock<(request: CancelLoginRequest) => void>> {
-    vi.useFakeTimers();
-    const recorder = startLoginRecorder();
-    const cancelLoginImpl = vi.fn<(request: CancelLoginRequest) => void>();
-    render(
-      <LoginFlowHarness
-        mode="reauth"
-        existingProfileId={null}
-        loginCapability={GUI_OPENS_BROWSER}
-        startLoginImpl={recorder.impl}
-        cancelLoginImpl={cancelLoginImpl}
-      />,
-      { wrapper: queryClientWrapper() },
+const REAUTH_TARGETS = [
+  { target: "an ambient reauth", existingProfileId: null },
+  { target: "a profile reauth", existingProfileId: "p1" },
+] as const;
+
+interface ReauthHarness {
+  readonly recorder: StartLoginRecorder;
+  readonly cancelLoginImpl: Mock<(request: CancelLoginRequest) => void>;
+  readonly unmount: () => void;
+}
+
+function renderReauth(existingProfileId: string | null): ReauthHarness {
+  const recorder = startLoginRecorder();
+  const cancelLoginImpl = vi.fn<(request: CancelLoginRequest) => void>();
+  const view = render(
+    <LoginFlowHarness
+      mode="reauth"
+      existingProfileId={existingProfileId}
+      loginCapability={GUI_OPENS_BROWSER}
+      startLoginImpl={recorder.impl}
+      cancelLoginImpl={cancelLoginImpl}
+    />,
+    { wrapper: queryClientWrapper() },
+  );
+  return { recorder, cancelLoginImpl, unmount: view.unmount };
+}
+
+async function pressStart(): Promise<void> {
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    await Promise.resolve();
+  });
+}
+
+function pressCancel(): void {
+  fireEvent.click(screen.getByRole("button", { name: "cancel" }));
+}
+
+function flowState(): string | null {
+  return screen.getByTestId("flow-state").textContent;
+}
+
+describe.each(REAUTH_TARGETS)(
+  "useProviderProfileLoginFlow - cancelling $target before the host holds a login",
+  ({ existingProfileId }) => {
+    const heldLogin: CancelLoginRequest = {
+      providerId: PROVIDER_ID,
+      profileId: existingProfileId,
+    };
+
+    /** Cancel while the pack downloads - the second question still on its
+     *  way - then let that question answer. */
+    async function cancelDuringDownload(
+      inFlightAnswer: StartLoginResponse,
+    ): Promise<Mock<(request: CancelLoginRequest) => void>> {
+      vi.useFakeTimers();
+      const { recorder, cancelLoginImpl } = renderReauth(existingProfileId);
+      await pressStart();
+      await act(async () => {
+        recorder.calls[0].resolve(PACK_PREPARING_ANSWER);
+        await vi.advanceTimersByTimeAsync(PROVIDER_LOGIN_PACK_POLL_MS);
+      });
+      expect(recorder.calls).toHaveLength(2);
+
+      // Nothing runs on the host while the pack downloads, so the press ends
+      // the flow without a host call - knowing the target up front does not
+      // mean anything is running for it.
+      pressCancel();
+      expect(flowState()).toBe("cancelled");
+      expect(cancelLoginImpl).not.toHaveBeenCalled();
+
+      await act(async () => {
+        recorder.calls[1].resolve(inFlightAnswer);
+        await Promise.resolve();
+      });
+      expect(flowState()).toBe("cancelled");
+      return cancelLoginImpl;
+    }
+
+    /** Cancel before the first question has answered at all. */
+    async function cancelBeforeFirstAnswer(
+      firstAnswer: StartLoginResponse,
+    ): Promise<Mock<(request: CancelLoginRequest) => void>> {
+      const { recorder, cancelLoginImpl } = renderReauth(existingProfileId);
+      await pressStart();
+      expect(recorder.calls).toHaveLength(1);
+
+      // Nothing has said yet what this press started, so the answer decides.
+      pressCancel();
+      expect(flowState()).toBe("starting");
+      expect(cancelLoginImpl).not.toHaveBeenCalled();
+
+      await act(async () => {
+        recorder.calls[0].resolve(firstAnswer);
+        await Promise.resolve();
+      });
+      expect(flowState()).toBe("cancelled");
+      expect(recorder.calls).toHaveLength(1);
+      return cancelLoginImpl;
+    }
+
+    it("sends no cancel when the call already on its way answers that the pack is still preparing", async () => {
+      const cancelLoginImpl = await cancelDuringDownload(PACK_PREPARING_ANSWER);
+      expect(cancelLoginImpl).not.toHaveBeenCalled();
+    });
+
+    it("sends no cancel when the call already on its way answers that the host did not start a login", async () => {
+      const cancelLoginImpl = await cancelDuringDownload(startLoginAnswer({}));
+      expect(cancelLoginImpl).not.toHaveBeenCalled();
+    });
+
+    it("releases a login the call already on its way left still starting", async () => {
+      const cancelLoginImpl = await cancelDuringDownload(
+        startLoginAnswer({ pending: "starting" }),
+      );
+      expect(cancelLoginImpl).toHaveBeenCalledTimes(1);
+      expect(cancelLoginImpl).toHaveBeenCalledWith(heldLogin);
+    });
+
+    it("releases a login the call already on its way started", async () => {
+      const cancelLoginImpl = await cancelDuringDownload(
+        startLoginAnswer({ started: true, url: "https://example.test/oauth" }),
+      );
+      expect(cancelLoginImpl).toHaveBeenCalledTimes(1);
+      expect(cancelLoginImpl).toHaveBeenCalledWith(heldLogin);
+    });
+
+    it("sends no cancel when the first answer, landing after the press, is that the pack is still preparing", async () => {
+      const cancelLoginImpl = await cancelBeforeFirstAnswer(
+        PACK_PREPARING_ANSWER,
+      );
+      expect(cancelLoginImpl).not.toHaveBeenCalled();
+    });
+
+    it("releases the login the first answer, landing after the press, started", async () => {
+      const cancelLoginImpl = await cancelBeforeFirstAnswer(
+        startLoginAnswer({ started: true, url: "https://example.test/oauth" }),
+      );
+      expect(cancelLoginImpl).toHaveBeenCalledTimes(1);
+      expect(cancelLoginImpl).toHaveBeenCalledWith(heldLogin);
+    });
+
+    it("sends no cancel when the start call fails after the press", async () => {
+      const { recorder, cancelLoginImpl } = renderReauth(existingProfileId);
+      await pressStart();
+      pressCancel();
+
+      await act(async () => {
+        recorder.calls[0].reject(new Error("host went away"));
+        await Promise.resolve();
+      });
+      expect(flowState()).toBe("cancelled");
+      expect(cancelLoginImpl).not.toHaveBeenCalled();
+    });
+
+    it("releases at once a login the host has already said it is still starting", async () => {
+      const { recorder, cancelLoginImpl } = renderReauth(existingProfileId);
+      await pressStart();
+      await act(async () => {
+        recorder.calls[0].resolve(startLoginAnswer({ pending: "starting" }));
+        await Promise.resolve();
+      });
+      expect(recorder.calls).toHaveLength(2);
+
+      pressCancel();
+      expect(flowState()).toBe("cancelled");
+      expect(cancelLoginImpl).toHaveBeenCalledTimes(1);
+      expect(cancelLoginImpl).toHaveBeenCalledWith(heldLogin);
+    });
+  },
+);
+
+/**
+ * The Settings reauth panel shows Cancel from the moment it mounts, and
+ * unmounts on the press - so whatever the answer holds is settled by a hook
+ * nobody renders any more.
+ */
+describe("useProviderProfileLoginFlow - Cancel on a profile reauth panel", () => {
+  function cancelledEvents(
+    track: Mock<Analytics["track"]>,
+  ): readonly unknown[][] {
+    return track.mock.calls.filter(
+      ([event]) => event === AnalyticsEvent.ProviderProfileLinkCancelled,
     );
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "start" }));
-      await Promise.resolve();
-    });
-    await act(async () => {
-      recorder.calls[0].resolve(PACK_PREPARING_ANSWER);
-      await vi.advanceTimersByTimeAsync(PROVIDER_LOGIN_PACK_POLL_MS);
-    });
-    expect(recorder.calls).toHaveLength(2);
-
-    // Nothing runs on the host while the pack downloads, so the press ends
-    // the flow without a host call.
-    fireEvent.click(screen.getByRole("button", { name: "cancel" }));
-    expect(screen.getByTestId("flow-state").textContent).toBe("cancelled");
-    expect(cancelLoginImpl).not.toHaveBeenCalled();
-
-    await act(async () => {
-      recorder.calls[1].resolve(inFlightAnswer);
-      await Promise.resolve();
-    });
-    expect(screen.getByTestId("flow-state").textContent).toBe("cancelled");
-    return cancelLoginImpl;
   }
 
-  it("sends no cancel when the call already on its way answers that the pack is still preparing", async () => {
-    const cancelLoginImpl = await cancelDuringDownload(PACK_PREPARING_ANSWER);
+  it("ends the flow before its first start without cancelling a login it never asked for", () => {
+    const { recorder, cancelLoginImpl } = renderReauth("p1");
+
+    pressCancel();
+    expect(recorder.calls).toHaveLength(0);
+    expect(flowState()).toBe("cancelled");
     expect(cancelLoginImpl).not.toHaveBeenCalled();
   });
 
-  it("sends no cancel when the call already on its way answers that the host did not start a login", async () => {
-    const cancelLoginImpl = await cancelDuringDownload(startLoginAnswer({}));
+  it("releases the login the start call reports after the panel is gone, and reports the press once", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    const { recorder, cancelLoginImpl, unmount } = renderReauth("p1");
+    await pressStart();
+    pressCancel();
+    unmount();
+
+    await act(async () => {
+      recorder.calls[0].resolve(
+        startLoginAnswer({ started: true, url: "https://example.test/oauth" }),
+      );
+      await Promise.resolve();
+    });
+    expect(cancelLoginImpl).toHaveBeenCalledTimes(1);
+    expect(cancelLoginImpl).toHaveBeenCalledWith({
+      providerId: PROVIDER_ID,
+      profileId: "p1",
+    });
+    expect(cancelledEvents(track)).toEqual([
+      [
+        AnalyticsEvent.ProviderProfileLinkCancelled,
+        { provider: PROVIDER_ID, mode: "reauth" },
+      ],
+    ]);
+  });
+
+  it("still reports the press when the start call fails after the panel is gone", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    const { recorder, cancelLoginImpl, unmount } = renderReauth("p1");
+    await pressStart();
+    pressCancel();
+    unmount();
+
+    await act(async () => {
+      recorder.calls[0].reject(new Error("host went away"));
+      await Promise.resolve();
+    });
     expect(cancelLoginImpl).not.toHaveBeenCalled();
-  });
-
-  it("releases a login the call already on its way left still starting", async () => {
-    const cancelLoginImpl = await cancelDuringDownload(
-      startLoginAnswer({ pending: "starting" }),
-    );
-    expect(cancelLoginImpl).toHaveBeenCalledTimes(1);
-    expect(cancelLoginImpl).toHaveBeenCalledWith({
-      providerId: PROVIDER_ID,
-      profileId: null,
-    });
-  });
-
-  it("releases a login the call already on its way started", async () => {
-    const cancelLoginImpl = await cancelDuringDownload(
-      startLoginAnswer({ started: true, url: "https://example.test/oauth" }),
-    );
-    expect(cancelLoginImpl).toHaveBeenCalledTimes(1);
-    expect(cancelLoginImpl).toHaveBeenCalledWith({
-      providerId: PROVIDER_ID,
-      profileId: null,
-    });
+    expect(cancelledEvents(track)).toEqual([
+      [
+        AnalyticsEvent.ProviderProfileLinkCancelled,
+        { provider: PROVIDER_ID, mode: "reauth" },
+      ],
+    ]);
   });
 });

@@ -418,10 +418,10 @@ export function useProviderProfileLoginFlow(
   // legitimately `null` and would otherwise collide with this ref's own
   // "nothing cancelled yet" initial value.
   const cancelledRef = useRef(false);
-  // `finishCancellation` can now be reached twice for one press: once from
-  // `cancel` itself, and again when a start call that was already in flight
-  // answers. The second visit may still have a login to cancel on the host;
-  // it has nothing left to report.
+  // One press can reach the report twice: once from `cancel` itself, and
+  // again when a start call that was already in flight answers. The second
+  // visit may still have a login to cancel on the host; it has nothing left
+  // to report.
   const cancellationReportedRef = useRef(false);
   // The target the host is holding a live login for while the flow is still
   // `starting` - known from the first "still starting" answer onwards. Until
@@ -886,11 +886,17 @@ export function useProviderProfileLoginFlow(
         // not a `catch`, so a throw in the success arm above is never
         // misread as a refused start.
         (error: unknown) => {
-          if (startAbandoned()) return;
+          if (attemptIdRef.current !== thisAttemptId) return;
+          // A start that failed reports no login, and a failure below sends
+          // no cancel for one either, so a Cancel pressed while it was on its
+          // way has nothing on the host to release. Ahead of the unmount
+          // check, as in the answer's arm: a reauth panel unmounts on the
+          // press, and the press is still reported.
           if (cancelRequestedRef.current) {
-            finishCancellation(null);
+            reportCancellation();
             return;
           }
+          if (unmountedRef.current) return;
           fail(failureMessages.notStarted, analyticsBlockerFromError(error));
         },
       );
@@ -903,7 +909,6 @@ export function useProviderProfileLoginFlow(
       existingProfileId,
       fail,
       failureMessages,
-      finishCancellation,
       loginCapability,
       mode,
       providerId,
@@ -966,10 +971,6 @@ export function useProviderProfileLoginFlow(
     if (commitPending) return;
     cancelRequestedRef.current = true;
     if (state.kind === "starting") {
-      if (mode === "reauth" && existingProfileId !== null) {
-        finishCancellation(existingProfileId);
-        return;
-      }
       // The host has said which login it is holding: cancel that one now
       // rather than after the call attached to it gives up its wait.
       const liveLogin = liveLoginRef.current;
@@ -977,11 +978,16 @@ export function useProviderProfileLoginFlow(
         finishCancellation(liveLogin.profileId);
         return;
       }
-      // Nothing is running on the host while the pack downloads, so there
-      // is nothing to cancel there yet - and sending the cancel anyway would
-      // spend the one this flow gets. A question already on its way may
-      // still start a login; that one is cancelled when its answer lands
+      // Until then nothing is known to be running for this press, even for
+      // a reauth that names its profile up front: the answer may be that the
+      // pack is still preparing or that no login started, and a cancel keyed
+      // by that profile would end a login another surface started for it. A
+      // cancel that reaches the host before the login exists finds nothing,
+      // and spends the one this flow gets on it. So the answer decides
       // (`beginLogin`).
+      //
+      // Nothing is running on the host while the pack downloads, so the
+      // press ends the flow at once.
       if (state.progress.kind === "downloading") {
         reportCancellation();
         return;
@@ -997,12 +1003,14 @@ export function useProviderProfileLoginFlow(
       finishCancellation(state.profileId);
       return;
     }
+    // The reauth panel shows Cancel before its first start. This flow has
+    // asked the host for nothing yet, so the press only ends it.
     if (
       mode === "reauth" &&
       state.kind === "start" &&
       existingProfileId !== null
     ) {
-      finishCancellation(existingProfileId);
+      reportCancellation();
     }
   }, [
     commitPending,
@@ -1085,8 +1093,9 @@ export function useProviderProfileLoginFlow(
 
   // The start leg's pending flag is `starting`, never `startLogin.isPending`.
   // `beginLogin` enters `starting` right before `mutateAsync`, and only that
-  // promise's answer leaves it (or a known-profile reauth cancel, which
-  // unmounts its panel with it). Where the observer was detached (see
+  // promise's answer leaves it (or a Cancel that ends the flow at once: one
+  // pressed while the pack downloads, or once the host has named the login
+  // it holds). Where the observer was detached (see
   // `beginLogin`), `isPending` instead stays true forever: it would pin the
   // step on "Opening the sign-in page…" and keep Retry disabled.
   return {
