@@ -1,18 +1,15 @@
 import { useEffect, type ReactNode } from "react";
-import { useQueryClient, type QueryFilters } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { ProvidersChangedStreamClient } from "@traycer-clients/shared/host-transport/providers-changed-stream-client";
 import { acquireHostConnection } from "@traycer-clients/shared/host-client/host-connection-registry";
 import { isReopenableHostStreamClose } from "@traycer-clients/shared/host-client/host-connection-reconnect-engine";
-import {
-  PROVIDER_INVALIDATIONS,
-  isMutableProviderQuery,
-} from "@/hooks/providers/invalidations";
+import { PROVIDER_INVALIDATIONS } from "@/hooks/providers/invalidations";
 import {
   useStreamHostId,
   useStreamMethodSupport,
   useWsStreamClient,
 } from "@/lib/host/stream-runtime-context";
-import { hostQueryKeys } from "@/lib/query-keys";
+import { invalidateProviderFamilyQueries } from "@/lib/query-keys/providers-query-keys";
 
 const HEALTHY_SESSION_RESET_MS = 30_000;
 
@@ -53,20 +50,12 @@ export function ProvidersChangedStreamMount(): ReactNode {
           : [...changedProviders];
         invalidateAllProviders = false;
         changedProviders.clear();
-        for (const method of PROVIDER_INVALIDATIONS) {
-          const filters: QueryFilters = {
-            queryKey: hostQueryKeys.methodScope(hostId, method),
-            predicate: (query) =>
-              providerIds.some((id) =>
-                isMutableProviderQuery(query.queryKey, id),
-              ),
-          };
-          // A pre-event read can return stale data. Cancel even an initial
-          // read, which invalidateQueries alone would join instead of replace.
-          void queryClient.cancelQueries(filters).then(() => {
-            if (!disposed) return queryClient.invalidateQueries(filters);
-          });
-        }
+        invalidateProviderFamilyQueries(
+          queryClient,
+          hostId,
+          PROVIDER_INVALIDATIONS,
+          providerIds,
+        );
       }, 50);
     };
 

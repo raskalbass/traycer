@@ -461,7 +461,7 @@ describe("ingestCloudDraftSummary - cloud image recovery", () => {
     const bytes = new Uint8Array([91, 92, 93]);
     const hash = await sha256HexOf(bytes);
     const cloudSummary = summary();
-    const ingestOnce = (): Promise<void> =>
+    const ingestOnce = (): Promise<boolean> =>
       ingestCloudDraftSummary({
         hostId: INGESTING_HOST,
         // Captured where the head read was issued.

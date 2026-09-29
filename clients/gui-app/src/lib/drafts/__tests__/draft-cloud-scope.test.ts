@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   IStreamSession,
@@ -5,6 +6,7 @@ import type {
 } from "@traycer-clients/shared/host-transport/i-stream-session";
 import type { DraftWrite } from "@traycer/protocol/host";
 import {
+  acquireCloudDraftIngest,
   acquireDraftMirrorSession,
   draftsCloudScopeId,
   flushAbsentOwnCloudDrafts,
@@ -20,6 +22,7 @@ import {
   useLandingDraftStore,
   type LandingDraftTab,
 } from "@/stores/home/landing-draft-store";
+import { useAuthStore } from "@/stores/auth/auth-store";
 import { EMPTY_LANDING_DRAFT_CONTENT } from "@/stores/home/landing-draft-content";
 
 const HOST_ID = "host-scope";
@@ -28,6 +31,7 @@ const SCOPE_ID = "scp_testdraftsscopeid000001";
 afterEach(() => {
   resetDraftMirrorCoordinatorForTests();
   useLandingDraftStore.setState({ drafts: [], activeDraftId: null });
+  useAuthStore.setState(useAuthStore.getInitialState(), true);
 });
 
 function streamHarness(): {
@@ -308,5 +312,70 @@ describe("flushAbsentOwnCloudDrafts", () => {
     expect(flushAbsentOwnCloudDrafts(new Map(), 0, new Set())).toEqual([]);
     expect(stream.sentFrames).toEqual([]);
     releaseDraftMirrorSession(HOST_ID);
+  });
+});
+
+describe("acquireCloudDraftIngest - absent own row nudge", () => {
+  it("nudges an absent own row once per settled snapshot, however many mounts see it, and again for the next snapshot", async () => {
+    const stream = streamHarness();
+    acquireDraftMirrorSession({
+      hostId: HOST_ID,
+      client: listNullClient() as never,
+      streamClient: stream.client as never,
+      timing: undefined,
+    });
+    await vi.waitFor(() => {
+      expect(stream.subscribeCalls.count).toBe(1);
+    });
+    useLandingDraftStore.setState({
+      drafts: [publishedOwnRow("absent-own", {})],
+      activeDraftId: null,
+    });
+    // The ingest acts only for the signed-in account it was acquired under.
+    useAuthStore.setState({
+      status: "signed-in",
+      contextMetadata: { userId: "user-1", username: "user-1" },
+    });
+    const queryClient = new QueryClient();
+    const flushFrames = (): unknown[] =>
+      stream.sentFrames.filter(
+        (frame) =>
+          typeof frame === "object" &&
+          frame !== null &&
+          "kind" in frame &&
+          frame.kind === "flush",
+      );
+    const mount = (fenceSeq: number): (() => void) =>
+      acquireCloudDraftIngest({
+        queryClient,
+        client: {} as never,
+        hostId: HOST_ID,
+        scopeId: SCOPE_ID,
+        readOwner: "user-1",
+        chats: [],
+        settled: true,
+        fenceSeq,
+      });
+
+    const first = mount(0);
+    await vi.waitFor(() => {
+      expect(flushFrames()).toHaveLength(1);
+    });
+
+    // The same snapshot seen again, by this mount's rerun and by a second tab.
+    const second = mount(0);
+    const third = mount(0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(flushFrames()).toHaveLength(1);
+
+    // A newer snapshot starts over.
+    const next = mount(1);
+    await vi.waitFor(() => {
+      expect(flushFrames()).toHaveLength(2);
+    });
+
+    for (const release of [first, second, third, next]) release();
+    releaseDraftMirrorSession(HOST_ID);
+    queryClient.clear();
   });
 });

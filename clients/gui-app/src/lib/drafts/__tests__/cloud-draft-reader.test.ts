@@ -71,6 +71,13 @@ describe("readCloudDraft", () => {
     expect(outcome.kind).toBe("ok");
     if (outcome.kind !== "ok") return;
     expect(outcome.record.kind).toBe("stash-entry");
+    // The head's own metadata rides with it: the apply's revision comes from
+    // what this read resolved, not from the listing that prompted it.
+    expect(outcome.summary).toMatchObject({
+      identity: IDENTITY,
+      headSha256: sha256,
+      throughRecordSeq: 1,
+    });
   });
 
   it("refuses a digest mismatch before parse", async () => {

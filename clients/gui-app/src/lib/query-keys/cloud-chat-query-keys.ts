@@ -1,4 +1,7 @@
-import type { CloudChatIdentity } from "@traycer/protocol/host/epic/cloud-chat";
+import type {
+  CloudChatIdentity,
+  CloudChatSummary,
+} from "@traycer/protocol/host/epic/cloud-chat";
 import { hostQueryKeys } from "@/lib/query-keys/host-query-keys";
 
 /**
@@ -60,6 +63,23 @@ export const cloudChatQueryKeys = {
       identity.ownerUserId,
       identity.chatId,
       recordHeadSha256,
+    ] as const,
+
+  draftHead: (
+    hostId: string,
+    viewerUserId: string,
+    scopeId: string,
+    summary: CloudChatSummary,
+  ) =>
+    [
+      ...cloudChatQueryKeys.scope(hostId, viewerUserId),
+      "draft-head",
+      scopeId,
+      summary.ownerHostId,
+      summary.identity.taskId,
+      summary.identity.ownerUserId,
+      summary.identity.chatId,
+      summary.headSha256,
     ] as const,
 
   /**

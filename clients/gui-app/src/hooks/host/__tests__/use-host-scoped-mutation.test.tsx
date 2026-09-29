@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, renderHook } from "@testing-library/react";
+import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { HostRpcRegistry } from "@/lib/host";
 import type { RequestOfMethod } from "@traycer-clients/shared/host-transport/host-messenger";
@@ -82,7 +82,7 @@ describe("useHostScopedMutationForClient generic invalidation", () => {
     mutationMocks.captured = [];
   });
 
-  it("invalidates the classic providers.list scope but never an immutable plugin icon entry", () => {
+  it("invalidates the classic providers.list scope but never an immutable plugin icon entry", async () => {
     const { queryClient } = setup();
     const classicKey = hostQueryKeys.method<HostRpcRegistry, "providers.list">(
       "host-A",
@@ -95,11 +95,14 @@ describe("useHostScopedMutationForClient generic invalidation", () => {
 
     fireSuccess("host-A", "claude-code");
 
-    expect(queryClient.getQueryState(classicKey)?.isInvalidated).toBe(true);
+    // The provider family's invalidation coalesces on a microtask.
+    await waitFor(() => {
+      expect(queryClient.getQueryState(classicKey)?.isInvalidated).toBe(true);
+    });
     expect(queryClient.getQueryState(iconKey)?.isInvalidated).not.toBe(true);
   });
 
-  it("does not invalidate another host's scope", () => {
+  it("does not invalidate another host's scope", async () => {
     const { queryClient } = setup();
     const otherHostKey = hostQueryKeys.method<
       HostRpcRegistry,
@@ -108,6 +111,8 @@ describe("useHostScopedMutationForClient generic invalidation", () => {
     queryClient.setQueryData(otherHostKey, { providers: [], native: null });
 
     fireSuccess("host-A", "claude-code");
+    // Let a would-be microtask invalidation land before asserting its absence.
+    for (let hop = 0; hop < 20; hop += 1) await Promise.resolve();
 
     expect(queryClient.getQueryState(otherHostKey)?.isInvalidated).toBe(false);
   });

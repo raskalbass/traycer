@@ -1,3 +1,21 @@
+import {
+  hashKey,
+  QueryObserver,
+  type QueryClient,
+} from "@tanstack/react-query";
+import { webCryptoSha256Hex } from "@traycer-clients/shared/cloud-chat/bytes";
+import { cloudChatQueryKeys } from "@/lib/query-keys/cloud-chat-query-keys";
+import {
+  authorizesCloudCapability,
+  useAuthStore,
+} from "@/stores/auth/auth-store";
+import { cloudChatReadRefusedWithoutVerdict } from "@/lib/chats/cloud-chat-read-port";
+import {
+  readCloudDraft,
+  type CloudDraftReadOutcome,
+} from "./cloud-draft-reader";
+import { draftDocumentFromCloudHead } from "./cloud-draft-apply";
+import { stampHostRpcMethod } from "@/lib/host-rpc-policy/host-method-policy-table";
 import type { HostRequester } from "@traycer-clients/shared/host-client/host-client";
 import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
 import type { HostRpcRegistry } from "@/lib/host";
@@ -130,6 +148,358 @@ import {
   resolveLandingDraftRetirementOwner,
 } from "./landing-draft-retirement";
 
+interface CloudIngestEntry {
+  readonly chatId: string;
+  removalEpoch: number;
+  requestedRemovalEpoch: number;
+  generation: number;
+  refs: number;
+  phase: "reading" | "applying" | "complete" | "uncommitted";
+  releaseRead: () => void;
+  resumeRead: () => void;
+}
+
+interface CloudIngestScope {
+  readonly entries: Map<string, CloudIngestEntry>;
+  fenceSeq: number;
+  readonly nudged: Set<string>;
+}
+
+let cloudIngestScopes = new WeakMap<
+  QueryClient,
+  Map<string, CloudIngestScope>
+>();
+const cloudMirrorRemovalEpochs = new Map<string, number>();
+useAuthStore.subscribe((state, previous) => {
+  if (
+    state.contextMetadata?.userId !== previous.contextMetadata?.userId ||
+    (state.status !== previous.status &&
+      !authorizesCloudCapability(state.status))
+  ) {
+    cloudIngestScopes = new WeakMap();
+    cloudMirrorRemovalEpochs.clear();
+    landingAppliesByDraft.clear();
+  }
+});
+
+/** Read ownership ends with the last consumer; a handed-off apply owns itself. */
+export function acquireCloudDraftIngest(input: {
+  readonly queryClient: QueryClient;
+  readonly client: HostRequester<HostRpcRegistry>;
+  readonly hostId: string;
+  readonly scopeId: string;
+  readonly readOwner: string;
+  readonly chats: readonly CloudChatSummary[];
+  readonly settled: boolean;
+  readonly fenceSeq: number;
+}): () => void {
+  if (
+    currentDraftBlobOwnerId() !== input.readOwner ||
+    !authorizesCloudCapability(useAuthStore.getState().status)
+  )
+    return () => undefined;
+  let scopes = cloudIngestScopes.get(input.queryClient);
+  if (scopes === undefined) {
+    scopes = new Map();
+    cloudIngestScopes.set(input.queryClient, scopes);
+  }
+  const scopeKey = JSON.stringify([
+    input.readOwner,
+    input.hostId,
+    input.scopeId,
+  ]);
+  let scope = scopes.get(scopeKey);
+  if (scope === undefined) {
+    scope = { entries: new Map(), fenceSeq: -1, nudged: new Set() };
+    scopes.set(scopeKey, scope);
+  }
+  const releases = input.chats
+    .filter((summary) => summary.ownerHostId !== input.hostId)
+    .map((summary) => acquireCloudDraftHead(input, scope, summary));
+  if (input.settled) {
+    const currentHeads = new Set(
+      input.chats.map((summary) =>
+        hashKey(
+          cloudChatQueryKeys.draftHead(
+            input.hostId,
+            input.readOwner,
+            input.scopeId,
+            summary,
+          ),
+        ),
+      ),
+    );
+    const listed = new Map<string, Set<string>>();
+    for (const chat of input.chats) {
+      const owners = listed.get(chat.identity.chatId) ?? new Set<string>();
+      owners.add(chat.ownerHostId);
+      listed.set(chat.identity.chatId, owners);
+    }
+    const dropped = new Set(
+      sweepAbsentCloudDraftMirrors(input.hostId, listed, input.fenceSeq),
+    );
+    for (const [key, entry] of scope.entries) {
+      if (
+        (dropped.has(entry.chatId) || !currentHeads.has(key)) &&
+        entry.refs === 0 &&
+        entry.phase !== "applying"
+      ) {
+        scope.entries.delete(key);
+      }
+    }
+    if (scope.fenceSeq !== input.fenceSeq) {
+      scope.fenceSeq = input.fenceSeq;
+      scope.nudged.clear();
+    }
+    for (const id of flushAbsentOwnCloudDrafts(
+      listed,
+      input.fenceSeq,
+      scope.nudged,
+    )) {
+      scope.nudged.add(id);
+    }
+  }
+  return () => {
+    for (const release of releases) release();
+  };
+}
+
+function acquireCloudDraftHead(
+  input: {
+    readonly queryClient: QueryClient;
+    readonly client: HostRequester<HostRpcRegistry>;
+    readonly hostId: string;
+    readonly scopeId: string;
+    readonly readOwner: string;
+  },
+  scope: CloudIngestScope,
+  summary: CloudChatSummary,
+): () => void {
+  const queryKey = cloudChatQueryKeys.draftHead(
+    input.hostId,
+    input.readOwner,
+    input.scopeId,
+    summary,
+  );
+  const key = hashKey(queryKey);
+  let entry = scope.entries.get(key);
+  const removalEpoch =
+    cloudMirrorRemovalEpochs.get(summary.identity.chatId) ?? 0;
+  if (entry === undefined) {
+    entry = {
+      chatId: summary.identity.chatId,
+      removalEpoch,
+      requestedRemovalEpoch: removalEpoch,
+      generation: 0,
+      refs: 0,
+      phase: "uncommitted",
+      releaseRead: () => undefined,
+      resumeRead: () => undefined,
+    };
+    scope.entries.set(key, entry);
+  }
+  entry.refs += 1;
+  entry.requestedRemovalEpoch = removalEpoch;
+  const ownedEntry = entry;
+  const startRead = (): void => {
+    const removalEpoch = cloudMirrorRemovalEpochs.get(ownedEntry.chatId) ?? 0;
+    ownedEntry.releaseRead();
+    ownedEntry.phase = "reading";
+    ownedEntry.removalEpoch = removalEpoch;
+    ownedEntry.generation += 1;
+    const generation = ownedEntry.generation;
+    reserveCloudDraftIngestFence(ownedEntry.chatId);
+    const scopeKey = JSON.stringify([
+      input.readOwner,
+      input.hostId,
+      input.scopeId,
+    ]);
+    const ownsScope = (): boolean => {
+      const liveScope = cloudScopeIdByHost.get(input.hostId);
+      return (
+        cloudIngestScopes.get(input.queryClient)?.get(scopeKey) === scope &&
+        scope.entries.get(key) === ownedEntry &&
+        ownedEntry.generation === generation &&
+        (liveScope === undefined || liveScope === input.scopeId)
+      );
+    };
+    const isCurrent = (): boolean =>
+      ownsScope() &&
+      (cloudMirrorRemovalEpochs.get(ownedEntry.chatId) ?? 0) === removalEpoch;
+    const observer = new QueryObserver<CloudDraftReadOutcome>(
+      input.queryClient,
+      {
+        queryKey,
+        queryFn: ({ signal }) =>
+          readCloudDraft({
+            identity: summary.identity,
+            sha256Hex: webCryptoSha256Hex,
+            port: {
+              resolveHead: (identity) => {
+                if (
+                  currentDraftBlobOwnerId() !== input.readOwner ||
+                  !authorizesCloudCapability(useAuthStore.getState().status)
+                ) {
+                  return Promise.reject(
+                    cloudChatReadRefusedWithoutVerdict(
+                      "epic.resolveCloudChatHead",
+                    ),
+                  );
+                }
+                return input.client.requestWithSignal(
+                  "epic.resolveCloudChatHead",
+                  identity,
+                  signal,
+                );
+              },
+              readPart: (request) =>
+                input.client.requestWithSignal(
+                  "epic.readCloudChatPart",
+                  {
+                    ...request.identity,
+                    sha256: request.sha256,
+                    declaredByteLength: request.declaredByteLength,
+                  },
+                  signal,
+                ),
+            },
+          }),
+        staleTime: (query) => (query.state.data?.kind === "ok" ? Infinity : 0),
+        gcTime: 5 * 60_000,
+        retry: 2,
+        retryDelay: (attempt) => 2_000 * 2 ** attempt,
+        meta: stampHostRpcMethod(undefined, "epic.resolveCloudChatHead"),
+      },
+    );
+    const handoff = (): void => {
+      const result = observer.getCurrentResult();
+      if (
+        ownedEntry.generation !== generation ||
+        ownedEntry.phase !== "reading" ||
+        ownedEntry.refs === 0
+      )
+        return;
+      if (result.isError && result.fetchStatus === "idle") {
+        ownedEntry.phase = "uncommitted";
+        appLogger.warn("[cloud-drafts] head read failed", {
+          error: describeLogError(result.error),
+        });
+        return;
+      }
+      if (!result.isSuccess) return;
+      if (!isCurrent()) {
+        ownedEntry.phase = "uncommitted";
+        return;
+      }
+      if (
+        currentDraftBlobOwnerId() !== input.readOwner ||
+        !authorizesCloudCapability(useAuthStore.getState().status)
+      )
+        return;
+      if (result.data.kind !== "ok") {
+        if (result.fetchStatus !== "idle") return;
+        ownedEntry.phase = "uncommitted";
+        return;
+      }
+      ownedEntry.phase = "applying";
+      const resolvedSummary = result.data.summary;
+      const document = draftDocumentFromCloudHead(
+        resolvedSummary,
+        result.data.record,
+      );
+      // This promise deliberately has no observer signal: installation has custody now.
+      void applyCloudDraftHead(
+        input,
+        resolvedSummary,
+        document,
+        isCurrent,
+      ).then((installed) => {
+        if (ownedEntry.generation !== generation) return;
+        const currentRemovalEpoch =
+          cloudMirrorRemovalEpochs.get(ownedEntry.chatId) ?? 0;
+        const removed = currentRemovalEpoch !== removalEpoch;
+        ownedEntry.phase = installed && !removed ? "complete" : "uncommitted";
+        if (
+          removed &&
+          ownedEntry.requestedRemovalEpoch === currentRemovalEpoch &&
+          ownedEntry.refs > 0 &&
+          ownsScope()
+        ) {
+          startRead();
+        } else if (
+          ownedEntry.phase === "uncommitted" &&
+          ownedEntry.refs === 0 &&
+          scope.entries.get(key) === ownedEntry
+        ) {
+          scope.entries.delete(key);
+        }
+      });
+    };
+    // Reuse the entry: every existing lease still owns this recovery read.
+    ownedEntry.resumeRead = handoff;
+    ownedEntry.releaseRead = observer.subscribe(handoff);
+    handoff();
+  };
+  if (
+    ownedEntry.phase !== "applying" &&
+    (ownedEntry.phase === "uncommitted" ||
+      ownedEntry.removalEpoch !== removalEpoch)
+  ) {
+    startRead();
+  } else {
+    ownedEntry.resumeRead();
+  }
+  return () => {
+    ownedEntry.refs -= 1;
+    // StrictMode and directory updates reacquire within the same commit.
+    queueMicrotask(() => {
+      if (ownedEntry.refs !== 0) return;
+      ownedEntry.releaseRead();
+      ownedEntry.releaseRead = () => undefined;
+      ownedEntry.resumeRead = () => undefined;
+      if (
+        ownedEntry.phase !== "applying" &&
+        ownedEntry.phase !== "complete" &&
+        scope.entries.get(key) === ownedEntry
+      )
+        scope.entries.delete(key);
+    });
+  };
+}
+
+async function applyCloudDraftHead(
+  input: { readonly hostId: string; readonly readOwner: string },
+  summary: CloudChatSummary,
+  document: DraftDocument,
+  isCurrent: () => boolean,
+): Promise<boolean> {
+  let applyFence = landingAppliesByDraft.get(document.draftId);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (
+      !isCurrent() ||
+      landingAppliesByDraft.get(document.draftId) !== applyFence
+    )
+      return false;
+    try {
+      const applying = ingestCloudDraftSummary({ ...input, summary, document });
+      // Only another apply supersedes this retry; an abandoned read cannot.
+      applyFence = landingAppliesByDraft.get(document.draftId);
+      return await applying;
+    } catch (error: unknown) {
+      if (attempt === 2) {
+        appLogger.warn("[cloud-drafts] head apply failed", {
+          error: describeLogError(error),
+        });
+        return false;
+      }
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, 2_000 * 2 ** attempt),
+      );
+    }
+  }
+  return false;
+}
+
 type SessionEntry = {
   readonly session: DraftMirrorSession;
   refCount: number;
@@ -208,6 +578,15 @@ let landingAdoptionHostId: string | null = null;
  */
 let cloudIngestSeq = 0;
 const cloudIngestSeqByDraft = new Map<string, number>();
+// Publication precedence survives entry pruning and cached-head reacquisition.
+const landingAppliesByDraft = new Map<
+  string,
+  {
+    readonly ownerHostId: string;
+    readonly revision: number;
+    readonly seq: number;
+  }
+>();
 /**
  * View state of landing rows a successor may inherit, keyed by the
  * superseded id: a row a host `delete` frame removed while open in this
@@ -698,7 +1077,7 @@ async function prefetchDocumentBlobs(
     );
     if (
       document.kind === "landing" &&
-      cloudIngestSeqByDraft.get(document.draftId) !== applySeq
+      landingAppliesByDraft.get(document.draftId)?.seq !== applySeq
     ) {
       return "abandoned";
     }
@@ -716,6 +1095,51 @@ async function prefetchDocumentBlobs(
   } finally {
     releasePendingIngestImageHashes(holderId);
   }
+}
+
+function admitLandingApply(document: DraftDocument): boolean {
+  if (document.kind !== "landing") return true;
+  const previous = landingAppliesByDraft.get(document.draftId);
+  const existing = useLandingDraftStore
+    .getState()
+    .drafts.find((draft) => draft.id === document.draftId);
+  if (
+    (previous?.ownerHostId === document.ownerHostId &&
+      previous.revision > document.revision) ||
+    (existing?.ownerHostId === document.ownerHostId &&
+      existing.hostRevision > document.revision)
+  )
+    return false;
+  knownLandingDraftIds.add(document.draftId);
+  // The absence-sweep fence is reserved here, synchronously at the start
+  // of EVERY landing apply - a host session's live echo as much as a
+  // cloud-head ingest - and before the blob reads below: a directory
+  // request dispatched earlier must not sweep a row this apply installs.
+  cloudIngestSeq += 1;
+  cloudIngestSeqByDraft.set(document.draftId, cloudIngestSeq);
+  landingAppliesByDraft.set(document.draftId, {
+    ownerHostId: document.ownerHostId,
+    revision: document.revision,
+    seq: cloudIngestSeq,
+  });
+  return true;
+}
+
+function installLandingDocument(
+  document: Extract<DraftDocument, { kind: "landing" }>,
+  applyOwner: string | null,
+): boolean {
+  // Re-checked after the blob reads: a delete routed meanwhile retired it.
+  if (rejectRetiredLandingDocument(document)) return false;
+  if (!applyStillOwned(applyOwner, document)) return false;
+  // A re-key moves the row to this document's id; the row is live and its
+  // hashes are rooted under the new identity.
+  if (rekeyLandingTabInPlace(document)) return true;
+  if (!applyLandingHostDocument(document, document.portable.content)) {
+    return false;
+  }
+  inheritLandingTab(document);
+  return true;
 }
 
 /**
@@ -746,19 +1170,9 @@ async function applyHostDocument(
    */
   stashImages: ReadonlyMap<string, ImageBlob> | null,
 ): Promise<boolean> {
-  if (document.kind === "landing") {
-    knownLandingDraftIds.add(document.draftId);
-    // The absence-sweep fence is reserved here, synchronously at the start
-    // of EVERY landing apply - a host session's live echo as much as a
-    // cloud-head ingest - and before the blob reads below: a directory
-    // request dispatched earlier must not sweep a row this apply installs.
-    cloudIngestSeq += 1;
-    cloudIngestSeqByDraft.set(document.draftId, cloudIngestSeq);
-  }
-  // This apply's own reservation. The blob read below can outlast a newer
-  // apply of the same row (or a newer directory run's reservation before
-  // its head read), and cloud heads carry revision 0 so nothing later
-  // fences an older head by revision: whoever reserved last wins the row.
+  if (!admitLandingApply(document)) return false;
+  // Read reservations protect against absence sweeps, but only another
+  // admitted apply may supersede an install that is waiting for its images.
   const applySeq = cloudIngestSeq;
   // The ACCOUNT this apply belongs to, captured before any await.
   //
@@ -786,6 +1200,11 @@ async function applyHostDocument(
     applyOwner,
   );
   if (prefetched === "abandoned") return false;
+  if (
+    document.kind === "landing" &&
+    landingAppliesByDraft.get(document.draftId)?.seq !== applySeq
+  )
+    return false;
   // A stash row WAS converted into a landing draft, so its hashes are rooted.
   if (prefetched === "ingested") return true;
   if (!applyStillOwned(applyOwner, document)) return false;
@@ -797,17 +1216,7 @@ async function applyHostDocument(
     return true;
   }
   if (document.kind === "landing") {
-    // Re-checked after the blob reads: a delete routed meanwhile retired it.
-    if (rejectRetiredLandingDocument(document)) return false;
-    if (!applyStillOwned(applyOwner, document)) return false;
-    // A re-key moves the row to this document's id; the row is live and its
-    // hashes are rooted under the new identity.
-    if (rekeyLandingTabInPlace(document)) return true;
-    if (!applyLandingHostDocument(document, document.portable.content)) {
-      return false;
-    }
-    inheritLandingTab(document);
-    return true;
+    return installLandingDocument(document, applyOwner);
   }
   if (document.kind === "chat-composer") {
     return applyComposerHostDocument(document);
@@ -1274,8 +1683,11 @@ export function resetDraftMirrorCoordinatorForTests(): void {
   interviewBindingRefs.clear();
   newChatHostByEpicId.clear();
   landingAdoptionHostId = null;
+  cloudIngestScopes = new WeakMap();
+  cloudMirrorRemovalEpochs.clear();
   cloudIngestSeq = 0;
   cloudIngestSeqByDraft.clear();
+  landingAppliesByDraft.clear();
   inheritableLandingTabs.clear();
   retiredStashIdsThisSession.clear();
   warnedUnboundComposer.clear();
@@ -1383,15 +1795,15 @@ export async function ingestCloudDraftSummary(input: {
    * cannot ask who it belongs to, it can only be told.
    */
   readonly readOwner: string | null;
-}): Promise<void> {
-  if (input.summary.ownerHostId === input.hostId) return;
+}): Promise<boolean> {
+  if (input.summary.ownerHostId === input.hostId) return false;
   // A host-bound surface is never a replica here. `applyComposerHostDocument`
   // keys on `target.chatId`, so ingesting another host's chat-composer draft
   // overwrites the row for a chat that lives on THAT host - flipping the
   // owning host's own live draft to `origin: "replica"`, which would make
   // the chat composer fork it on the next keystroke. Every tile mount
   // re-ran this.
-  if (draftKindIsHostBound(input.document.kind)) return;
+  if (draftKindIsHostBound(input.document.kind)) return false;
   // The absence-sweep fence is reserved by `applyHostDocument` at its
   // (synchronous) start, before the blob reads: an older directory request
   // settling in that window already sees this row as newer than its
@@ -1404,7 +1816,7 @@ export async function ingestCloudDraftSummary(input: {
   // started under A and finished under B would install A's text under B with
   // every check agreeing.
   const ingestOwner = input.readOwner;
-  if (currentDraftBlobOwnerId() !== ingestOwner) return;
+  if (currentDraftBlobOwnerId() !== ingestOwner) return false;
   // A stash row's bytes have to arrive WITH it. `ingestRemote` is idempotent
   // by entry id and the images ride the same durable write as the row, so
   // there is no second chance after the apply - which is why this fetch is
@@ -1432,22 +1844,24 @@ export async function ingestCloudDraftSummary(input: {
   // `null` for a stash document too - no hashes, no mounted client, a read that
   // threw - and every one of those still awaited, so every one of them still
   // needs the account re-asked before this document is applied.
-  if (fetchesStashImages && currentDraftBlobOwnerId() !== ingestOwner) return;
+  if (fetchesStashImages && currentDraftBlobOwnerId() !== ingestOwner)
+    return false;
   const installed = await applyHostDocument(input.document, stashImages);
   // No row took it, so this document roots nothing and there is nothing for
   // recovery to fetch FOR - whether it was retired, fenced by a pending
   // delete, beaten by a newer apply, refused as an older revision, or kept out
   // by a dirty local row. The owner re-check below covers only the last of
   // those, which is why it is not enough on its own.
-  if (!installed) return;
+  if (!installed) return false;
   // An apply that abandoned installed no row, so this document roots nothing
   // and there is nothing for recovery to fetch FOR. Running it anyway is not
   // merely wasted: recording its sources spends slots in a shared, per-digest
   // candidate list and can evict the address of the account that IS being
   // served. `applyHostDocument` swallows its own abandonment, so the condition
   // is re-derived here rather than returned from it.
-  if (currentDraftBlobOwnerId() !== ingestOwner) return;
+  if (currentDraftBlobOwnerId() !== ingestOwner) return false;
   await recoverIngestedCloudDraftImages(input);
+  return true;
 }
 
 /**
@@ -1626,9 +2040,10 @@ export function cloudDraftIngestSeq(): number {
  * apply; a read with a terminal outcome simply leaves this reservation,
  * which protects the row until a later snapshot.
  */
-export function reserveCloudDraftIngestFence(draftId: string): void {
+export function reserveCloudDraftIngestFence(draftId: string): number {
   cloudIngestSeq += 1;
   cloudIngestSeqByDraft.set(draftId, cloudIngestSeq);
+  return cloudIngestSeq;
 }
 
 /**
@@ -1645,7 +2060,7 @@ export function sweepAbsentCloudDraftMirrors(
   listed: ReadonlyMap<string, ReadonlySet<string>>,
   fenceSeq: number,
 ): readonly string[] {
-  return dropForeignLandingMirrorsAbsent(hostId, listed, (draft) => {
+  const dropped = dropForeignLandingMirrorsAbsent(hostId, listed, (draft) => {
     if ((cloudIngestSeqByDraft.get(draft.id) ?? 0) > fenceSeq) return false;
     if (draft.origin === "replica") return true;
     // A row with no recorded publication state is treated as unpublished.
@@ -1656,6 +2071,17 @@ export function sweepAbsentCloudDraftMirrors(
       !sessions.has(draft.adoption.hostId)
     );
   });
+  for (const draftId of dropped) {
+    cloudMirrorRemovalEpochs.set(
+      draftId,
+      (cloudMirrorRemovalEpochs.get(draftId) ?? 0) + 1,
+    );
+    const seq = reserveCloudDraftIngestFence(draftId);
+    const previous = landingAppliesByDraft.get(draftId);
+    if (previous !== undefined)
+      landingAppliesByDraft.set(draftId, { ...previous, seq });
+  }
+  return dropped;
 }
 
 /**
