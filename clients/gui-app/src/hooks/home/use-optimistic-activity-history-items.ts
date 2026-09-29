@@ -137,7 +137,8 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-function snapshot(): ActivitySnapshot {
+/** The activity store's published snapshot (`useSyncExternalStore`'s read). */
+export function historyActivitySnapshot(): ActivitySnapshot {
   return currentSnapshot;
 }
 
@@ -380,23 +381,12 @@ function compareLegacyProjectedRows(
   return (right.stampAt ?? 0) - (left.stampAt ?? 0);
 }
 
-/** Loaded-row projection shared by the panel, drawer, and tray. */
+/**
+ * Loaded-row projection shared by the panel, drawer, and tray. Render passes
+ * the stamps of its subscribed {@link historyActivitySnapshot}, never the live
+ * Map.
+ */
 export function projectOptimisticHistoryItems(
-  userId: string,
-  pageItems: readonly HistoryItem[],
-  backfilled: readonly HistoryItem[],
-  nowMs: number,
-): readonly HistoryItem[] {
-  return projectHistoryItemsWithStamps(currentSnapshot.stamps, {
-    userId,
-    pageItems,
-    backfilled,
-    nowMs,
-  });
-}
-
-/** Render reads the subscribed snapshot's stamps, never the live Map. */
-function projectHistoryItemsWithStamps(
   activityStamps: ReadonlyMap<string, ActivityStamp>,
   input: {
     readonly userId: string;
@@ -602,7 +592,7 @@ export function useOptimisticActivityHistoryItems(
   const workingEpicIds = useOwnTurnEpicIds(input.userId);
   const activitySnapshot = useSyncExternalStore(
     subscribe,
-    snapshot,
+    historyActivitySnapshot,
     () => EMPTY_SNAPSHOT,
   );
   const cloudAuthorized = useAuthStore((state) =>
@@ -752,7 +742,7 @@ export function useOptimisticActivityHistoryItems(
   }, [activitySnapshot, refreshEnabled, input.userId]);
   if (!input.enabled || input.userId === null) return input.items;
   if (input.items.length === 0 && backfilled.length === 0) return EMPTY_ITEMS;
-  return projectHistoryItemsWithStamps(activitySnapshot.stamps, {
+  return projectOptimisticHistoryItems(activitySnapshot.stamps, {
     userId: input.userId,
     pageItems: input.items,
     backfilled,
