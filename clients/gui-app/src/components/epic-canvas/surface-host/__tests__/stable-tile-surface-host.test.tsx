@@ -1,3 +1,4 @@
+import { resizeObserverEntryFor } from "@/__tests__/resize-observer-entry";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
@@ -76,7 +77,10 @@ Object.defineProperty(globalThis, "ResizeObserver", {
 
 function triggerResizeObserverCallbacks(): void {
   for (const instance of controllableResizeObserverInstances) {
-    instance.callback([], instance);
+    instance.callback(
+      [...instance.observed].map(resizeObserverEntryFor),
+      instance,
+    );
   }
 }
 
@@ -964,11 +968,11 @@ describe("StableTileSurfaceHost geometry retention while hidden (confirmed scrol
    * only; a SEPARATE effect keyed on `[instanceId, slotElement, visible]`
    * calls `refreshTileSurfaceGeometrySlot` instead of re-registering. A pane
    * tab reselection republishes the same `geometryAnchorElement` with a
-   * different `presentation` - it must not re-observe the slot, and refresh
-   * must still pick up the slot's CURRENT rect on re-show even when no
-   * ResizeObserver batch ever fires for it while hidden.
+   * different `presentation` - it must not re-observe the slot, and re-show
+   * reapplies the CACHED box without reading the slot: ResizeObserver and
+   * explicit topology remeasures own fresh reads.
    */
-  it("a presentation-only toggle does not re-observe the slot, and refresh still applies the slot's current rect with no RO callback", () => {
+  it("a presentation-only toggle does not re-observe or re-read the slot, and only the observer's report applies a moved slot", () => {
     seedOneChat();
     const slot = document.createElement("div");
     document.body.appendChild(slot);
@@ -998,51 +1002,49 @@ describe("StableTileSurfaceHost geometry retention while hidden (confirmed scrol
     const observeCallsAfterMount = observeSpy.mock.calls.length;
     expect(observeCallsAfterMount).toBeGreaterThan(0);
 
-    // Going hidden must not synchronously re-measure the slot at all: the
-    // refresh effect is gated on `visible`, so its only job while hiding is
-    // to skip.
-    const rectCallsBeforeHide = slotRectSpy.mock.calls.length;
+    // Hide, move the slot's real rect, and re-show with NO observer batch:
+    // the re-show is a presentation change, so it replays the cached box and
+    // reads nothing.
     act(() => {
       publishWithAnchor("chat-1", slot, {
         topLevelVisible: false,
         topLevelFocused: false,
       });
     });
-    expect(slotRectSpy.mock.calls.length).toBe(rectCallsBeforeHide);
-
-    // The slot's real DOM rect moves while hidden - no RO batch fires for it
-    // here, so refresh alone must pick this up on re-show.
     setSlotRect({ left: 40, top: 60, width: 500, height: 400 });
-
+    const rectCallsBeforeShow = slotRectSpy.mock.calls.length;
     act(() => {
       publishWithAnchor("chat-1", slot, {
         topLevelVisible: true,
         topLevelFocused: false,
       });
     });
-
-    // The slot was never re-registered.
     expect(observeSpy.mock.calls.length).toBe(observeCallsAfterMount);
-    // Refresh applied the slot's current rect, not a stale cached one.
+    expect(slotRectSpy.mock.calls.length).toBe(rectCallsBeforeShow);
+    expect(record.style.transform).toBe("translate(10px, 20px)");
+    expect(record.style.width).toBe("300px");
+    expect(record.style.height).toBe("200px");
+
+    // The observer reporting the resize is what reads the new box.
+    act(() => {
+      triggerResizeObserverCallbacks();
+    });
     expect(record.style.transform).toBe("translate(40px, 60px)");
     expect(record.style.width).toBe("500px");
     expect(record.style.height).toBe("400px");
-    expect(slotRectSpy.mock.calls.length).toBeGreaterThan(rectCallsBeforeHide);
 
-    // A second hide/show cycle, this time re-showing onto a slot that has
-    // genuinely gone to 0x0 while hidden (e.g. its pane collapsed) - refresh
-    // must apply that real zero rect rather than leaving the stale 500x400.
-    const rectCallsBeforeSecondHide = slotRectSpy.mock.calls.length;
+    // A second hide/show cycle onto a slot that genuinely went to 0x0 while
+    // hidden (its pane collapsed): the observer's report is applied, so the
+    // real zero rect wins over the stale 500x400.
     act(() => {
       publishWithAnchor("chat-1", slot, {
         topLevelVisible: false,
         topLevelFocused: false,
       });
     });
-    expect(slotRectSpy.mock.calls.length).toBe(rectCallsBeforeSecondHide);
-
     setSlotRect({ left: 40, top: 60, width: 0, height: 0 });
     act(() => {
+      triggerResizeObserverCallbacks();
       publishWithAnchor("chat-1", slot, {
         topLevelVisible: true,
         topLevelFocused: false,
@@ -1052,9 +1054,6 @@ describe("StableTileSurfaceHost geometry retention while hidden (confirmed scrol
     expect(observeSpy.mock.calls.length).toBe(observeCallsAfterMount);
     expect(record.style.width).toBe("0px");
     expect(record.style.height).toBe("0px");
-    expect(slotRectSpy.mock.calls.length).toBeGreaterThan(
-      rectCallsBeforeSecondHide,
-    );
 
     observeSpy.mockRestore();
     slot.remove();

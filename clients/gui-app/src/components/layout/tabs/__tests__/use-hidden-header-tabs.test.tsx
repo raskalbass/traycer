@@ -6,15 +6,9 @@ import {
   screen,
   type RenderResult,
 } from "@testing-library/react";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-  type MockInstance,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resizeObserverEntryFor } from "@/__tests__/resize-observer-entry";
+import { resetTileSurfaceGeometryCoordinatorForTesting } from "@/components/epic-canvas/surface-host/tile-surface-geometry-coordinator";
 import { useHiddenHeaderTabs } from "@/components/layout/tabs/use-hidden-header-tabs";
 import type { TaskTabLayout } from "@/lib/layout/layout-arrangement";
 
@@ -38,6 +32,8 @@ interface Geometry {
 let geometry: Geometry;
 let activeKey: string | null = null;
 let resizeObservers: ControllableResizeObserver[] = [];
+/** Every offset the strip wrote to the viewport's `scrollLeft`, in order. */
+let scrollWrites: number[] = [];
 
 /**
  * Deferred `requestAnimationFrame`, so a test controls exactly when the
@@ -84,16 +80,16 @@ async function settle(): Promise<void> {
 
 class ControllableResizeObserver {
   readonly observed = new Set<Element>();
-  private readonly callback: () => void;
-  constructor(callback: () => void) {
+  private readonly callback: ResizeObserverCallback;
+  constructor(callback: ResizeObserverCallback) {
     this.callback = callback;
     resizeObservers.push(this);
   }
   // Like the real observer, deliver an initial notification once a target is
-  // observed; the hook relies on it for its first measurement.
+  // observed; the strip relies on it for its first measurement.
   observe(target: Element): void {
     this.observed.add(target);
-    this.callback();
+    this.callback([resizeObserverEntryFor(target)], this);
   }
   unobserve(target: Element): void {
     this.observed.delete(target);
@@ -103,7 +99,7 @@ class ControllableResizeObserver {
   }
   /** Simulate the browser reporting a resize on an already-observed target. */
   trigger(): void {
-    this.callback();
+    this.callback([...this.observed].map(resizeObserverEntryFor), this);
   }
 }
 
@@ -144,9 +140,17 @@ function installGeometry(): void {
   define("offsetWidth", (el) =>
     el.hasAttribute("data-hidden-tabs-control") ? geometry.controlWidth : 0,
   );
-  define("scrollLeft", (el) =>
-    el.dataset.testid === "viewport" ? geometry.scrollLeft : 0,
-  );
+  Object.defineProperty(HTMLElement.prototype, "scrollLeft", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.dataset.testid === "viewport" ? geometry.scrollLeft : 0;
+    },
+    set(this: HTMLElement, value: number) {
+      if (this.dataset.testid !== "viewport") return;
+      scrollWrites.push(value);
+      geometry.scrollLeft = value;
+    },
+  });
   Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
     configurable: true,
     value(this: HTMLElement): DOMRect {
@@ -210,6 +214,9 @@ function Harness(props: {
       <button type="button" onClick={() => revealTab("b")}>
         reveal-b
       </button>
+      <button type="button" onClick={() => revealTab("d")}>
+        reveal-d
+      </button>
       <button type="button" onClick={() => revealTab("missing")}>
         reveal-missing
       </button>
@@ -270,15 +277,18 @@ async function fireScroll(element: HTMLElement): Promise<void> {
 
 beforeEach(() => {
   resizeObservers = [];
+  scrollWrites = [];
   activeKey = null;
   geometry = overflowingGeometry();
   vi.stubGlobal("ResizeObserver", ControllableResizeObserver);
+  resetTileSurfaceGeometryCoordinatorForTesting();
   installGeometry();
   installRaf();
 });
 
 afterEach(() => {
   cleanup();
+  resetTileSurfaceGeometryCoordinatorForTesting();
   uninstallGeometry();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -489,30 +499,24 @@ describe("useHiddenHeaderTabs", () => {
     });
   });
 
-  it("reveal scrolls the tab into view and focuses it", async () => {
-    const scroll = vi
-      .spyOn(Element.prototype, "scrollIntoView")
-      .mockImplementation(() => undefined);
+  it("reveal scrolls a clipped tab into view from cached bounds and focuses it", async () => {
     await mount("scroll", ["a", "b", "c", "d"]);
-    scroll.mockClear();
-    fireEvent.click(screen.getByText("reveal-b"));
-    expect(scroll).toHaveBeenCalledTimes(1);
-    expect(scroll).toHaveBeenCalledWith({
-      block: "nearest",
-      inline: "nearest",
-    });
-    expect(scroll.mock.contexts[0]).toBe(screen.getByText("b"));
-    expect(document.activeElement).toBe(screen.getByText("b"));
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
+    scrollWrites = [];
+    fireEvent.click(screen.getByText("reveal-d"));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    // 'd' spans 320..420 of the 400px viewport: the least scroll showing it.
+    expect(scrollWrites).toEqual([20]);
+    expect(document.activeElement).toBe(screen.getByText("d"));
+    expect(rectSpy).not.toHaveBeenCalled();
   });
 
   it("reveal of an unknown key is a no-op", async () => {
-    const scroll = vi
-      .spyOn(Element.prototype, "scrollIntoView")
-      .mockImplementation(() => undefined);
     await mount("scroll", ["a", "b"]);
-    scroll.mockClear();
+    scrollWrites = [];
     fireEvent.click(screen.getByText("reveal-missing"));
-    expect(scroll).not.toHaveBeenCalled();
+    expect(scrollWrites).toEqual([]);
   });
 
   describe("active tab re-reveal", () => {
@@ -521,39 +525,37 @@ describe("useHiddenHeaderTabs", () => {
     async function renderWithActive(
       active: string,
       layout: TaskTabLayout,
-    ): Promise<MockInstance<Element["scrollIntoView"]>> {
+    ): Promise<void> {
       activeKey = active;
-      const scroll = vi
-        .spyOn(Element.prototype, "scrollIntoView")
-        .mockImplementation(() => undefined);
       await mount(layout, KEYS);
-      // Mount itself reveals the active tab; only later calls are under test.
-      scroll.mockClear();
-      return scroll;
+      // Mount itself reveals the active tab; only later writes are under test.
+      scrollWrites = [];
     }
 
-    it("does not snap back when a manual scroll makes the active tab visible", async () => {
-      // 'd' sits at content 320..420, clipped at mount; scrolling to 20
-      // brings it fully into view, via the cached bounds.
-      const scroll = await renderWithActive("d", "scroll");
+    it("does not snap back when a manual scroll moves the active tab out of view and back", async () => {
+      // 'd' sits at content 320..420, clipped at mount, so mount scrolls to 20.
+      await renderWithActive("d", "scroll");
+      expect(geometry.scrollLeft).toBe(20);
+      geometry.scrollLeft = 0;
+      await fireScroll(screen.getByTestId("viewport"));
       geometry.scrollLeft = 20;
       await fireScroll(screen.getByTestId("viewport"));
-      expect(scroll).not.toHaveBeenCalled();
+      expect(scrollWrites).toEqual([]);
     });
 
     it("does not snap back when a manual scroll hides the active tab", async () => {
-      const scroll = await renderWithActive("b", "scroll");
+      await renderWithActive("b", "scroll");
       // 'b' sits at content 160..300; scrolling to 70 clips it on the left,
       // via the cached bounds - no fresh tab rect is read for this.
       geometry.scrollLeft = 70;
       await fireScroll(screen.getByTestId("viewport"));
-      expect(scroll).not.toHaveBeenCalled();
+      expect(scrollWrites).toEqual([]);
       expect(hidden()).toContain("b");
     });
 
     it("does not reveal a hidden active tab when the edge slots narrow the viewport", async () => {
       geometry.scrollWidth = 400;
-      const scroll = await renderWithActive("a", "scroll");
+      await renderWithActive("a", "scroll");
       expect(hidden()).toBe("|");
       geometry.scrollWidth = 600;
       await fireResize();
@@ -562,39 +564,34 @@ describe("useHiddenHeaderTabs", () => {
       // reports that too.
       await fireResize();
       expect(hidden()).toBe("a|d");
-      expect(scroll).not.toHaveBeenCalled();
+      expect(scrollWrites).toEqual([]);
     });
 
     it("reveals the active tab when the viewport shrinks while it was visible", async () => {
       geometry.scrollWidth = 400;
-      const scroll = await renderWithActive("b", "scroll");
-      geometry.outerWidth = 300;
+      await renderWithActive("b", "scroll");
+      // 'b' spans 60..200 of the viewport; at 150px wide its end is clipped.
+      geometry.viewport = { left: 100, right: 250 };
+      geometry.outerWidth = 150;
       await fireResize();
-      expect(scroll).toHaveBeenCalled();
-      for (const context of scroll.mock.contexts) {
-        expect(context).toBe(screen.getByText("b"));
-      }
+      expect(scrollWrites).toEqual([50]);
     });
 
     it("tracks an aria-selected-only change, so a later shrink reveals the new active tab", async () => {
       geometry.scrollWidth = 400;
       activeKey = "b";
-      const scroll = vi
-        .spyOn(Element.prototype, "scrollIntoView")
-        .mockImplementation(() => undefined);
       const view = await mount("scroll", KEYS);
       // Both tabs stay visible and no child is added or removed: only the
-      // selection attribute moves, which the hook must observe by itself.
+      // selection attribute moves, which the strip must observe by itself.
       activeKey = "c";
       view.rerender(<Harness layout="scroll" keys={KEYS} />);
       await settle();
-      scroll.mockClear();
-      geometry.outerWidth = 300;
+      scrollWrites = [];
+      // 'c' spans 200..320; at 250px wide it is clipped ('b' would not be).
+      geometry.viewport = { left: 100, right: 350 };
+      geometry.outerWidth = 250;
       await fireResize();
-      expect(scroll).toHaveBeenCalled();
-      for (const context of scroll.mock.contexts) {
-        expect(context).toBe(screen.getByText("c"));
-      }
+      expect(scrollWrites).toEqual([70]);
     });
   });
 
@@ -760,45 +757,34 @@ describe("useHiddenHeaderTabs", () => {
       initialGeometry();
       midFlipGeometry();
       activeKey = "c";
-      const scroll = vi
-        .spyOn(Element.prototype, "scrollIntoView")
-        .mockImplementation(() => undefined);
       await mountFrames(reorderedFrames(TRANSLATE_72, TRANSLATE_MINUS_72));
       // Rendered 264..456 looks clipped, but C's final 192..384 is visible.
-      scroll.mockClear();
+      scrollWrites = [];
+      geometry.viewport = { left: 0, right: 360 };
       geometry.outerWidth = 360;
       await fireResize();
-      expect(scroll).toHaveBeenCalled();
-      for (const context of scroll.mock.contexts) {
-        expect(context).toBe(screen.getByText("c"));
-      }
+      // Shrunk to 360, C's final end (384) is clipped by 24.
+      expect(scrollWrites).toEqual([24]);
     });
   });
 
   describe("frame batching and the bounds cache", () => {
-    it("coalesces resize and scroll signals into one measurement per frame", async () => {
+    it("coalesces scroll signals into one frame that reads no rects", async () => {
       await mount("scroll", ["a", "b", "c", "d"]);
-      const rectSpy = vi.spyOn(
-        screen.getByTestId("viewport"),
-        "getBoundingClientRect",
-      );
+      const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
       rectSpy.mockClear();
       geometry.scrollLeft = 20;
       act(() => {
-        for (const observer of resizeObservers) observer.trigger();
+        fireEvent.scroll(screen.getByTestId("viewport"));
         fireEvent.scroll(screen.getByTestId("viewport"));
       });
-      // Two distinct signal sources, still exactly one pending frame, and no
-      // measurement has actually run yet.
       expect(rafCallbacks.size).toBe(1);
-      expect(rectSpy).not.toHaveBeenCalled();
       await settle();
-      // Coalesced into exactly one measurement pass, not one per signal.
-      expect(rectSpy).toHaveBeenCalledTimes(1);
+      expect(rectSpy).not.toHaveBeenCalled();
       expect(hidden()).toBe("a|");
     });
 
-    it("tracks a selection-only change from the cached bounds, reading no tab rects and re-subscribing nothing", async () => {
+    it("tracks a selection-only change from the cached bounds, reading no rects and re-subscribing nothing", async () => {
       activeKey = "a";
       const view = await mount("scroll", ["a", "b", "c", "d"]);
       expect(hidden()).toBe("a|d");
@@ -807,27 +793,20 @@ describe("useHiddenHeaderTabs", () => {
         ControllableResizeObserver.prototype,
         "observe",
       );
-      const revealSpy = vi
-        .spyOn(Element.prototype, "scrollIntoView")
-        .mockImplementation(() => undefined);
+      const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
       rectSpy.mockClear();
       observeSpy.mockClear();
-      revealSpy.mockClear();
-      activeKey = "b";
+      scrollWrites = [];
+      activeKey = "d";
       view.rerender(<Harness layout="scroll" keys={["a", "b", "c", "d"]} />);
       await settle();
-      const tabRectReads = rectSpy.mock.instances.filter(
-        (instance) =>
-          instance instanceof HTMLElement &&
-          instance.dataset.headerTabKey !== undefined,
-      );
-      expect(tabRectReads).toEqual([]);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(rectSpy).not.toHaveBeenCalled();
       expect(observeSpy).not.toHaveBeenCalled();
-      // The cache is reused, but the newly-selected tab is still revealed.
-      expect(revealSpy).toHaveBeenCalledTimes(1);
-      expect(revealSpy.mock.contexts[0]).toBe(screen.getByText("b"));
-      // The membership list is unaffected - only the active-tab tracking ran.
-      expect(hidden()).toBe("a|d");
+      // The newly-selected 'd' (320..420) is revealed from the cached bounds,
+      // and the membership follows the new offset.
+      expect(scrollWrites).toEqual([20]);
+      expect(hidden()).toBe("a|");
     });
 
     it("invalidates cached bounds on a tab identity change without re-subscribing resize targets", async () => {
@@ -849,33 +828,6 @@ describe("useHiddenHeaderTabs", () => {
   });
 
   describe("active tab reveal regressions (W1-A review)", () => {
-    /**
-     * `scrollIntoView` has no real layout to act on in jsdom, so it must be a
-     * fake with a real side effect: it nudges `geometry.scrollLeft` just
-     * enough to bring the target's box (found via `boxFor`) into the CURRENT
-     * viewport, exactly like a real "nearest" scroll would. Both regressions
-     * below hinge on whether that side effect is correctly trusted (or
-     * re-triggered) by the next measurement pass.
-     */
-    function installNearestScrollMock(
-      boxFor: (element: HTMLElement) => Box | undefined,
-    ): MockInstance<Element["scrollIntoView"]> {
-      return vi
-        .spyOn(Element.prototype, "scrollIntoView")
-        .mockImplementation(function (this: Element) {
-          if (!(this instanceof HTMLElement)) return;
-          const box = boxFor(this);
-          if (box === undefined) return;
-          const viewportWidth =
-            geometry.viewport.right - geometry.viewport.left;
-          if (box.left < geometry.scrollLeft) {
-            geometry.scrollLeft = box.left;
-          } else if (box.right > geometry.scrollLeft + viewportWidth) {
-            geometry.scrollLeft = box.right - viewportWidth;
-          }
-        });
-    }
-
     it("re-reveals the active tab after opening it overflows a fitting strip and edge controls narrow the viewport", async () => {
       geometry.outerWidth = 300;
       geometry.controlWidth = 40;
@@ -888,12 +840,7 @@ describe("useHiddenHeaderTabs", () => {
       activeKey = null;
       const view = await mount("scroll", ["a", "b"]);
       expect(hidden()).toBe("|");
-
-      const scrollSpy = installNearestScrollMock((element) => {
-        const key = element.dataset.headerTabKey;
-        return key === undefined ? undefined : geometry.tabs[key];
-      });
-      scrollSpy.mockClear();
+      scrollWrites = [];
 
       // Open a new, wide, LAST tab and select it in the same update - this is
       // what makes a previously-fitting strip overflow for the first time.
@@ -905,8 +852,7 @@ describe("useHiddenHeaderTabs", () => {
 
       // First measurement: overflow just detected, using the OLD (full,
       // control-free) viewport. The reveal lands 'c' exactly at that edge.
-      expect(scrollSpy).toHaveBeenCalledTimes(1);
-      expect(geometry.scrollLeft).toBe(20);
+      expect(scrollWrites).toEqual([20]);
       expect(controlCount()).toBe(2);
 
       // Mounting the two edge controls narrows the strip's own rendered box -
@@ -914,10 +860,9 @@ describe("useHiddenHeaderTabs", () => {
       geometry.viewport = { left: 0, right: 220 };
       await fireResize();
 
-      // 'c' is genuinely clipped again by the narrower viewport. The hook
-      // must re-reveal it rather than trust a visibility snapshot that was
-      // taken before the first scroll's effect had actually landed.
-      expect(scrollSpy).toHaveBeenCalledTimes(2);
+      // 'c' is genuinely clipped again by the narrower viewport and must be
+      // re-revealed, not trusted from the snapshot taken before that shrink.
+      expect(scrollWrites).toEqual([20, 100]);
       expect(geometry.scrollLeft).toBe(100);
     });
 
@@ -992,10 +937,6 @@ describe("useHiddenHeaderTabs", () => {
             right: box.right - geometry.scrollLeft,
           });
         });
-      const scrollSpy = installNearestScrollMock((element) => {
-        const slot = element.dataset.slot;
-        return slot === undefined ? undefined : slotBoxes[slot];
-      });
 
       const view = render(
         <SplitHarness
@@ -1006,7 +947,7 @@ describe("useHiddenHeaderTabs", () => {
       await settle();
       // Selected left member ('x') visible; right member ('y') offscreen.
       expect(hidden()).toBe("|y");
-      scrollSpy.mockClear();
+      scrollWrites = [];
 
       // Reverse views: the selected tab identity ('x') moves onto the RIGHT
       // (offscreen) physical slot; 'y' takes the left, visible slot. Neither
@@ -1019,11 +960,10 @@ describe("useHiddenHeaderTabs", () => {
       );
       await settle();
 
-      expect(hidden()).toBe("|x");
       // The selected tab is now genuinely offscreen and must be re-revealed,
-      // even though its string key never changed.
-      expect(scrollSpy).toHaveBeenCalledTimes(1);
-      expect(geometry.scrollLeft).toBe(200);
+      // even though its string key never changed; 'y' scrolls off the left.
+      expect(scrollWrites).toEqual([200]);
+      expect(hidden()).toBe("y|");
 
       rectSpy.mockRestore();
     });

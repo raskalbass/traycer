@@ -219,6 +219,7 @@ import {
   type ReactNode,
 } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { shallow } from "zustand/shallow";
 import {
   BASE_PAD_LEFT,
   EMPTY_PENDING_LIST,
@@ -1204,12 +1205,16 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
   );
   // A sibling can move without changing its index when a preceding subtree
   // grows, reorders or finishes exiting. Share only these geometry inputs.
-  const layoutDependency = JSON.stringify([
+  const rootKeys = useMemo(
+    () => listEntries.map((entry) => entry.key),
+    [listEntries],
+  );
+  const layoutDependency = useChatTreeLayoutRevision(
     selectableIds,
-    listEntries.map((entry) => entry.key),
-    [...expandedIds].sort(),
+    rootKeys,
+    expandedIds,
     completedExits,
-  ]);
+  );
   // What the live region announces. Counted from the MATCHES, not `listEntries`:
   // that list holds only local roots (nested matches render recursively beneath
   // them, so two siblings under one parent would announce as one) and it counts
@@ -1444,7 +1449,11 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
                 {/* One clock for the tree's rows, owner cards and name labels
                     alike: the first waits, the next row's opens at once. */}
                 <HoverCardGroup>
-                  <SidebarContent>
+                  <MotionSidebarContent
+                    layoutRoot
+                    layoutScroll
+                    layoutDependency={layoutDependency}
+                  >
                     <SidebarGroup className="min-h-0 flex-1">
                       <SidebarGroupContent
                         ref={treeRegionRef}
@@ -1459,7 +1468,7 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
                         {messageHits.node}
                       </SidebarGroupContent>
                     </SidebarGroup>
-                  </SidebarContent>
+                  </MotionSidebarContent>
                 </HoverCardGroup>
               </SidebarFilterVisibilityContext.Provider>
             </SidebarSortClockContext.Provider>
@@ -1510,7 +1519,40 @@ function PendingCreateRow({ depth, name }: { depth: number; name: string }) {
 }
 
 // Geometry updates reach the Motion shell without rerunning row data hooks.
-const ChatTreeLayoutContext = createContext("");
+function useChatTreeLayoutRevision(
+  selectableIds: ReadonlyArray<string>,
+  rootKeys: ReadonlyArray<string>,
+  expandedIds: ReadonlySet<string>,
+  completedExits: number,
+): number {
+  const [layout, setLayout] = useState({
+    selectableIds,
+    rootKeys,
+    expandedIds,
+    completedExits,
+    revision: 0,
+  });
+  let layoutDependency = layout.revision;
+  if (
+    !shallow(layout.selectableIds, selectableIds) ||
+    !shallow(layout.rootKeys, rootKeys) ||
+    !shallow(layout.expandedIds, expandedIds) ||
+    layout.completedExits !== completedExits
+  ) {
+    layoutDependency += 1;
+    setLayout({
+      selectableIds,
+      rootKeys,
+      expandedIds,
+      completedExits,
+      revision: layoutDependency,
+    });
+  }
+  return layoutDependency;
+}
+
+const MotionSidebarContent = m.create(SidebarContent);
+const ChatTreeLayoutContext = createContext(0);
 
 interface ChatNodeProps {
   epicId: string;

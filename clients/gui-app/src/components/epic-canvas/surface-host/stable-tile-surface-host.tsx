@@ -195,8 +195,7 @@ function TileSurfaceRecord(props: {
   useLayoutEffect(() => {
     // Keep the observer attached across selection. Re-observing the same
     // slot would enqueue an initial RO delivery and an all-slot geometry pass.
-    // A synchronous refresh still applies visible zero rects and opens the
-    // mount latch before paint, including for a record born hidden at 0x0.
+    // Reapply the cached box; resize and topology changes own fresh reads.
     if (visible && slotElement !== null) {
       refreshTileSurfaceGeometrySlot(instanceId);
     }

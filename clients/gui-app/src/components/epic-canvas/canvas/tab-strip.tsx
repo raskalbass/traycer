@@ -1,3 +1,5 @@
+import { HORIZONTAL_STRIP_AXIS } from "../dnd/strip-axis";
+import { registerTabStripGeometry } from "../surface-host/tile-surface-geometry-coordinator";
 import { useBrowserAttention } from "@/hooks/notifications/use-browser-attention";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { NOTIFICATION_STATUS_TONES } from "@/components/notifications/notification-indicator-tones";
@@ -143,9 +145,7 @@ export interface TabStripProps {
   readonly tabId: string;
   readonly groupId: string;
   readonly tabs: ReadonlyArray<EpicCanvasTileRef>;
-  // For the auto-scroll effect only. Per-tab active/preview/globally-active
-  // state is read inside `TabItem` via `useTabActivation`, NOT threaded through
-  // the map - see the `tabs.map(...)` note below.
+  // Selection is rendered by TabItem; the geometry owner observes aria-selected.
   readonly activeTabId: string | null;
   readonly onSelectTab: (groupId: string, tabId: string) => void;
   readonly onCloseTab: (groupId: string, tabId: string) => void;
@@ -166,33 +166,6 @@ export interface TabStripProps {
   >;
 }
 
-function useTabElementRegistry() {
-  const tabRefs = useRef<Map<string, HTMLElement> | null>(null);
-
-  const getTabElements = useCallback(() => {
-    if (tabRefs.current === null) {
-      tabRefs.current = new Map();
-    }
-    return tabRefs.current;
-  }, []);
-
-  const setTabRef = useCallback(
-    (id: string) => (el: HTMLElement | null) => {
-      const tabElements = getTabElements();
-      if (el === null) tabElements.delete(id);
-      else tabElements.set(id, el);
-    },
-    [getTabElements],
-  );
-
-  const getTabElement = useCallback(
-    (id: string) => tabRefs.current?.get(id),
-    [],
-  );
-
-  return { setTabRef, getTabElement };
-}
-
 /**
  * VS Code-style tab strip. Renders one tab item per canvas tile ref, with
  * preview-mode italic, hover/active close buttons, top-border accent on
@@ -207,7 +180,6 @@ export function TabStrip(props: TabStripProps) {
     tabId,
     groupId,
     tabs,
-    activeTabId,
     onSelectTab,
     onCloseTab,
     onPromotePreview,
@@ -223,7 +195,7 @@ export function TabStrip(props: TabStripProps) {
     runTileStripCommitHandoff(groupId);
   });
   const handleWheel = useHorizontalWheelScroll();
-  const { setTabRef, getTabElement } = useTabElementRegistry();
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const stripEndDropData = useMemo<EpicCanvasDropTargetData>(
     () => ({
       kind: "artifact-tab-strip-end",
@@ -238,13 +210,14 @@ export function TabStrip(props: TabStripProps) {
     data: stripEndDropData,
   });
 
-  // Auto-scroll active tab into view when it changes.
   useEffect(() => {
-    if (activeTabId === null) return;
-    const el = getTabElement(activeTabId);
-    if (el === undefined) return;
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [activeTabId, getTabElement]);
+    if (scroller === null) return;
+    return registerTabStripGeometry(scroller, HORIZONTAL_STRIP_AXIS, () => {});
+  }, [scroller]);
+  const setScrollerRef = useMemo(
+    () => mergeRefs<HTMLDivElement>(stripEndDropRef, setScroller),
+    [stripEndDropRef],
+  );
 
   // Double-clicking the empty area after the tabs opens a blank tab in this
   // group (browser new-tab gesture). Guarded to the strip-end container itself
@@ -316,7 +289,7 @@ export function TabStrip(props: TabStripProps) {
       >
         <div className="relative flex min-w-0 flex-1 items-stretch">
           <div
-            ref={stripEndDropRef}
+            ref={setScrollerRef}
             data-testid="tab-strip-end"
             onWheel={handleWheel}
             onDoubleClick={handleStripEndDoubleClick}
@@ -334,7 +307,6 @@ export function TabStrip(props: TabStripProps) {
               return (
                 <TabItem
                   key={tab.instanceId}
-                  domRef={setTabRef(tab.instanceId)}
                   tab={tab}
                   epicId={epicId}
                   tabId={tabId}
@@ -475,7 +447,6 @@ interface TabItemProps {
     TabStripContextMenuProps,
     "canRename" | "onCopyFilePath" | "onEditTitle" | "onOpenUsage"
   >;
-  readonly domRef: (el: HTMLElement | null) => void;
 }
 
 // Ticket 12's chat cost line: the tab's own overflow (this context menu),
@@ -685,7 +656,6 @@ function TabItemBody(
     onPromotePreview,
     canRenameTabs,
     menuProps,
-    domRef,
   } = props;
   // Read this tab's active/preview/globally-active state per tab so the strip's
   // map need not depend on the group's `activeTabId`; an active-switch then
@@ -755,8 +725,8 @@ function TabItemBody(
     tab.type === "chat" ? tab.id : null,
   );
   const setRef = useMemo(
-    () => mergeRefs<HTMLElement>(domRef, dragRef, dropRef),
-    [domRef, dragRef, dropRef],
+    () => mergeRefs<HTMLElement>(dragRef, dropRef),
+    [dragRef, dropRef],
   );
 
   const { copy } = useClipboardCopy({
