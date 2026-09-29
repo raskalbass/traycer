@@ -211,19 +211,27 @@ function useObservedHeight(): {
   const ref = useCallback((nextElement: HTMLDivElement | null) => {
     setElement(nextElement);
   }, []);
+  // The observer writes the height and the snapshot only returns it, so a
+  // render of this panel never forces layout.
+  const observedHeight = useRef(0);
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
+      observedHeight.current = 0;
       if (element === null) return () => {};
-      const observer = new ResizeObserver(onStoreChange);
-      observer.observe(element);
+      const observer = new ResizeObserver((entries) => {
+        observedHeight.current =
+          entries.at(-1)?.borderBoxSize[0]?.blockSize ?? 0;
+        onStoreChange();
+      });
+      observer.observe(element, { box: "border-box" });
       return () => observer.disconnect();
     },
     [element],
   );
-  const getSnapshot = useCallback(() => {
-    if (element === null) return 0;
-    return element.getBoundingClientRect().height;
-  }, [element]);
+  const getSnapshot = useCallback(
+    () => (element === null ? 0 : observedHeight.current),
+    [element],
+  );
   const getServerSnapshot = useCallback(() => 0, []);
   return {
     ref,

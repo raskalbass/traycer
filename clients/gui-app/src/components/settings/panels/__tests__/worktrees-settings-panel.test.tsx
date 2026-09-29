@@ -43,6 +43,7 @@ import {
   useWorktreeDeleteRun,
 } from "@/components/settings/panels/use-worktree-delete-run";
 import { hostQueryKeys } from "@/lib/query-keys";
+import { installFakeResizeObserver } from "@/__tests__/fake-resize-observer";
 import {
   DEFAULT_WORKTREE_SORT_MODE,
   EMPTY_WORKTREE_TIER_FILTERS,
@@ -1212,6 +1213,33 @@ describe("WorktreesList delete flow", () => {
     ).toBe("true");
   });
 
+  it("never reads the action bar's layout while the list re-renders", () => {
+    const resizeObservers = installFakeResizeObserver();
+    try {
+      renderDefault();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select worktree feat-clean" }),
+      );
+      const actionBar = screen.getByTestId("worktrees-selection-action-bar");
+      const observer = resizeObservers
+        .live()
+        .find((candidate) => candidate.target === actionBar);
+      if (observer === undefined) throw new Error("action bar is not observed");
+      const layoutReads = vi.spyOn(actionBar, "getBoundingClientRect");
+      act(() => observer.emit({ inline: 600, block: 100 }));
+
+      // Each selection change re-renders the panel around the observed bar.
+      for (const branch of ["feat-dirty", "feat-busy", "feat-dirty"]) {
+        fireEvent.click(
+          screen.getByRole("checkbox", { name: `Select worktree ${branch}` }),
+        );
+      }
+      expect(layoutReads).not.toHaveBeenCalled();
+    } finally {
+      resizeObservers.restore();
+    }
+  });
+
   it("selecting the first row does not insert a new top bar that shifts the list", () => {
     renderDefault();
     const scrollRegion = screen.getByTestId("worktrees-virtual-scroll");
@@ -1309,42 +1337,34 @@ describe("WorktreesList delete flow", () => {
   });
 
   it("grows the scroll clearance to match a taller (wrapped) action bar instead of the fixed minimum", () => {
-    renderDefault();
+    const resizeObservers = installFakeResizeObserver();
+    try {
+      renderDefault();
 
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Select worktree feat-clean" }),
-    );
-    const actionBar = screen.getByTestId("worktrees-selection-action-bar");
-    // Simulate the bar wrapping to two lines (narrow width, or the
-    // `Checking` notice pushing it taller) by measuring taller than the
-    // seeded minimum clearance.
-    Object.defineProperty(actionBar, "getBoundingClientRect", {
-      configurable: true,
-      value: () => ({
-        x: 0,
-        y: 0,
-        width: 300,
-        height: 96,
-        top: 0,
-        right: 300,
-        bottom: 96,
-        left: 0,
-        toJSON: () => ({}),
-      }),
-    });
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select worktree feat-clean" }),
+      );
+      const actionBar = screen.getByTestId("worktrees-selection-action-bar");
+      const observer = resizeObservers
+        .live()
+        .find((candidate) => candidate.target === actionBar);
+      if (observer === undefined) throw new Error("action bar is not observed");
+      // The bar wrapping to two lines (narrow width, or the `Checking` notice
+      // pushing it taller) reports a border box taller than the seeded
+      // minimum clearance.
+      act(() => observer.emit({ inline: 300, block: 96 }));
 
-    // Force a re-render of the same mounted action bar (no unmount, so the
-    // mocked node and its override survive) so the height observer's
-    // snapshot is re-read against the taller measurement.
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Select worktree feat-dirty" }),
-    );
-
-    const scrollRegion = screen.getByTestId("worktrees-virtual-scroll");
-    // 96px measured height + the bar's own gap/offset clearance (32px),
-    // clearly exceeding the 64px seeded minimum - proving the clearance
-    // tracks the bar's real rendered height rather than a hard-coded value.
-    expect(scrollRegion.style.paddingBottom).toBe("128px");
+      const scrollRegion = screen.getByTestId("worktrees-virtual-scroll");
+      // 96px observed height + the bar's own gap/offset clearance (32px),
+      // clearly exceeding the 64px seeded minimum - proving the clearance
+      // tracks the bar's real rendered height rather than a hard-coded value.
+      expect(scrollRegion.style.paddingBottom).toBe("128px");
+      // Shorter than the seeded minimum: the floor holds.
+      act(() => observer.emit({ inline: 600, block: 10 }));
+      expect(scrollRegion.style.paddingBottom).toBe("64px");
+    } finally {
+      resizeObservers.restore();
+    }
   });
 
   it("renders an actionable select-all control with enabled foreground contrast", () => {
