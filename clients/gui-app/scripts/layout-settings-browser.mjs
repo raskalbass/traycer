@@ -904,10 +904,11 @@ async function checkNarrowSelectors(client, origin) {
     `${SELECT_TRIGGER("Provider")}.querySelector('.truncate').textContent.trim()`,
   );
   await openSelect(client, "Provider");
-  const next = await evaluate(
+  const optionNames = await evaluate(
     client,
-    `[...document.querySelectorAll('[data-slot="select-positioner"]:not([hidden]) [role="listbox"] [role="option"] .truncate')].map((node) => node.textContent.trim()).find((name) => name !== ${JSON.stringify(current)}) ?? null`,
+    `[...document.querySelectorAll('[data-slot="select-positioner"]:not([hidden]) [role="listbox"] [role="option"] .truncate')].map((node) => node.textContent.trim())`,
   );
+  const next = optionNames.find((name) => name !== current) ?? null;
   await closeSelect(client);
   if (next === null) {
     failures.push("narrow select, Providers: only one provider to pick");
@@ -1376,15 +1377,15 @@ async function openSelect(client, label) {
 /** Opens the select named `label` and picks its option `option`, by pointer. */
 async function pickFromSelect(client, label, option) {
   await openSelect(client, label);
-  const point = await evaluate(
+  // Matched here, not in the page, so no page text is spliced into code.
+  const options = await evaluate(
     client,
-    `(() => {
-       const node = [...document.querySelectorAll('[data-slot="select-positioner"]:not([hidden]) [role="listbox"] [role="option"]')].find((candidate) => candidate.querySelector('.truncate')?.textContent.trim() === ${JSON.stringify(option)});
-       if (node === undefined) return null;
+    `[...document.querySelectorAll('[data-slot="select-positioner"]:not([hidden]) [role="listbox"] [role="option"]')].map((node) => {
        const r = node.getBoundingClientRect();
-       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-     })()`,
+       return { name: node.querySelector('.truncate')?.textContent.trim() ?? null, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+     })`,
   );
+  const point = options.find((candidate) => candidate.name === option) ?? null;
   if (point === null) {
     failures.push(`select ${label} has no option ${option}`);
     return;
