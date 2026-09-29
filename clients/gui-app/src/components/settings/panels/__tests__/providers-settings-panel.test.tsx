@@ -294,9 +294,19 @@ vi.mock("@/hooks/providers/use-providers-mcp-auth-mutation", () => ({
 // The candidates table's failed-pack arm reaches `providers.ensurePack`, which
 // goes through TanStack Query. Mocked here alongside the other provider
 // mutations so this panel test keeps rendering without a QueryClientProvider.
-vi.mock("@/hooks/providers/use-providers-ensure-pack-mutation", () => ({
-  useProvidersEnsurePack: () => ({ mutate: () => {}, isPending: false }),
-}));
+// `AddProviderProfileDialog` also reaches this through the login flow, which
+// calls `mutateAsync` before a retried start - see the `*ForClient` variant.
+vi.mock("@/hooks/providers/use-providers-ensure-pack-mutation", () => {
+  const useProvidersEnsurePack = () => ({
+    mutate: () => {},
+    mutateAsync: () => Promise.resolve({}),
+    isPending: false,
+  });
+  return {
+    useProvidersEnsurePack,
+    useProvidersEnsurePackForClient: useProvidersEnsurePack,
+  };
+});
 
 // Same reason: the MCP tab's scope picker reads the host's worktree listing,
 // which is a real TanStack query. This panel suite is about the tab shell, not
@@ -1184,7 +1194,15 @@ function codexWithManaged(managed: ProviderProfile): ProviderCliState {
     ...providerState({
       providerId: "codex",
       selected: { kind: "bundled" },
-      candidates: [],
+      candidates: [
+        {
+          kind: "bundled",
+          path: "/opt/traycer/bin/codex",
+          version: "1.0.0",
+          available: true,
+          versionPending: false,
+        },
+      ],
       envOverrides: [],
       profiles: [
         profile({
@@ -1233,7 +1251,15 @@ function codePasteReauthProviderState(): ProviderCliState {
     ...providerState({
       providerId: "codex",
       selected: { kind: "bundled" },
-      candidates: [],
+      candidates: [
+        {
+          kind: "bundled",
+          path: "/opt/traycer/bin/codex",
+          version: "1.0.0",
+          available: true,
+          versionPending: false,
+        },
+      ],
       envOverrides: [],
       profiles: [
         profile({
@@ -1309,7 +1335,15 @@ function codePasteCreateProviderState(): ProviderCliState {
     ...providerState({
       providerId: "codex",
       selected: { kind: "bundled" },
-      candidates: [],
+      candidates: [
+        {
+          kind: "bundled",
+          path: "/opt/traycer/bin/codex",
+          version: "1.0.0",
+          available: true,
+          versionPending: false,
+        },
+      ],
       envOverrides: [],
       profiles: [
         profile({
@@ -3241,7 +3275,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -3578,7 +3620,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profileWithAccent(
@@ -3880,7 +3930,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -3952,7 +4010,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -4018,7 +4084,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -4102,7 +4176,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -4176,7 +4258,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -4827,7 +4917,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -4921,7 +5019,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -4994,7 +5100,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -5099,7 +5213,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [createdProfile],
           }),
@@ -5141,7 +5263,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -5212,7 +5342,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -5293,14 +5431,30 @@ describe("<ProvidersSettingsPanel />", () => {
         providerState({
           providerId: "codex",
           selected: { kind: "bundled" },
-          candidates: [],
+          candidates: [
+            {
+              kind: "bundled",
+              path: "/opt/traycer/bin/codex",
+              version: "1.0.0",
+              available: true,
+              versionPending: false,
+            },
+          ],
           envOverrides: [],
         }),
         {
           ...providerState({
             providerId: "claude-code",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -5455,7 +5609,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -5619,7 +5781,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -5866,7 +6036,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -5971,7 +6149,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -6129,7 +6315,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "claude-code",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -6195,7 +6389,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "claude-code",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -6252,7 +6454,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -6378,7 +6588,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [ambient],
           }),
@@ -6479,7 +6697,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [ambient],
           }),
@@ -6571,7 +6797,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [ambient],
           }),
@@ -6689,7 +6923,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [ambient],
           }),
@@ -6863,7 +7105,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
@@ -6977,7 +7227,15 @@ describe("<ProvidersSettingsPanel />", () => {
           ...providerState({
             providerId: "codex",
             selected: { kind: "bundled" },
-            candidates: [],
+            candidates: [
+              {
+                kind: "bundled",
+                path: "/opt/traycer/bin/codex",
+                version: "1.0.0",
+                available: true,
+                versionPending: false,
+              },
+            ],
             envOverrides: [],
             profiles: [
               profile({
