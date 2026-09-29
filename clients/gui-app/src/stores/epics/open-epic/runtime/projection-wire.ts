@@ -1,3 +1,4 @@
+import { changedTableIds } from "./projection-table-changes";
 import type { EpicRuntimeProjection } from "./epic-runtime-projection";
 import { spliceIdSlice } from "./epic-projector";
 import {
@@ -42,16 +43,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function diffTable(
   before: Readonly<Record<string, unknown>>,
   value: Readonly<Record<string, unknown>>,
+  producedBefore: unknown,
 ): TableDelta | null {
   const upserts: Record<string, unknown> = {};
   const removed: string[] = [];
-  for (const id of Object.keys(value)) {
+  const changedIds = changedTableIds(
+    isRecord(producedBefore) ? producedBefore : before,
+    value,
+  );
+  for (const id of changedIds ?? Object.keys(value)) {
+    if (!Object.hasOwn(value, id)) {
+      if (Object.hasOwn(before, id)) removed.push(id);
+      continue;
+    }
     if (value[id] !== before[id] || !Object.hasOwn(before, id)) {
       upserts[id] = value[id];
     }
   }
-  for (const id of Object.keys(before)) {
-    if (!Object.hasOwn(value, id)) removed.push(id);
+  if (changedIds === null) {
+    for (const id of Object.keys(before)) {
+      if (!Object.hasOwn(value, id)) removed.push(id);
+    }
   }
   return Object.keys(upserts).length > 0 || removed.length > 0
     ? { upserts, removed }
@@ -65,10 +77,18 @@ type MutableProjectionPatch = {
 function stabilizeRecordSlices(
   next: MutableProjectionPatch,
   previous: Partial<EpicRuntimeProjection>,
+  producedBefore: Partial<EpicRuntimeProjection>,
 ): void {
   // Raw record tables rebuild rows on publication; the composed populations
   // already have this identity discipline from the projector.
-  if (next.chatRecords !== undefined && previous.chatRecords !== undefined) {
+  if (
+    next.chatRecords !== undefined &&
+    previous.chatRecords !== undefined &&
+    changedTableIds(
+      producedBefore.chatRecords?.byId ?? previous.chatRecords.byId,
+      next.chatRecords.byId,
+    ) === null
+  ) {
     next.chatRecords = spliceIdSlice(
       next.chatRecords,
       previous.chatRecords,
@@ -77,7 +97,11 @@ function stabilizeRecordSlices(
   }
   if (
     next.tuiAgentRecords !== undefined &&
-    previous.tuiAgentRecords !== undefined
+    previous.tuiAgentRecords !== undefined &&
+    changedTableIds(
+      producedBefore.tuiAgentRecords?.byId ?? previous.tuiAgentRecords.byId,
+      next.tuiAgentRecords.byId,
+    ) === null
   ) {
     next.tuiAgentRecords = spliceIdSlice(
       next.tuiAgentRecords,
@@ -93,11 +117,13 @@ export function createProjectionEncoder(): {
   snapshot(): Partial<EpicRuntimeProjection>;
 } {
   const previous: Partial<EpicRuntimeProjection> = {};
+  // Stabilization may copy a table; provenance names the producer's original.
+  const producedBefore: Partial<EpicRuntimeProjection> = {};
   return {
     snapshot: () => ({ ...previous }),
     encode(patch) {
       const next: Partial<EpicRuntimeProjection> = { ...patch };
-      stabilizeRecordSlices(next, previous);
+      stabilizeRecordSlices(next, previous, producedBefore);
       const full = { ...next };
       const sliceDeltas: SliceDelta[] = [];
       const aliases = new Map<object, string[]>();
@@ -123,13 +149,19 @@ export function createProjectionEncoder(): {
             fields[field] = value;
             continue;
           }
-          const delta = diffTable(before, value);
+          const producedSlice = producedBefore[key];
+          const producedTable: unknown =
+            producedSlice === undefined
+              ? undefined
+              : Reflect.get(producedSlice, field);
+          const delta = diffTable(before, value, producedTable);
           if (delta !== null) tables[field] = delta;
         }
         sliceDeltas.push({ key, fields, tables });
         delete next[key];
       }
       Object.assign(previous, full);
+      Object.assign(producedBefore, patch);
       for (const group of aliases.values()) {
         for (const key of group.slice(1)) {
           Reflect.set(previous, key, Reflect.get(previous, group[0]));

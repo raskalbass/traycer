@@ -1,3 +1,4 @@
+import { replaceSliceRows } from "./projection-table-changes";
 /**
  * The records lane's read model: `epic.state.subscribe@1.0` rows in, the same
  * raw populations the `@1` root doc produces out.
@@ -504,6 +505,30 @@ export function createEpicLaneStateReplica(
          */
         recency: null,
         buildSlice: (visibleRows) => buildLaneSlices(visibleRows),
+        updateSlice: (previous, changedRows, _currentUserId, previousRows) => {
+          // Claims and thread regrouping can change visibility/membership.
+          if (
+            changedRows.some((held, index) => {
+              const before = previousRows[index].row;
+              return (
+                held.row.kind !== "artifact" ||
+                before.kind !== "artifact" ||
+                held.row.record.id !== before.record.id
+              );
+            })
+          )
+            return null;
+          const changed = buildLaneSlices(changedRows);
+          const artifacts = replaceSliceRows(
+            previous.artifacts,
+            changed.artifacts,
+            artifactProjectionsEq,
+          );
+          if (artifacts === null) return null;
+          return artifacts === previous.artifacts
+            ? previous
+            : { ...previous, artifacts };
+        },
         slicesEq: laneSlicesEq,
         emptySlice: EMPTY_LANE_STATE_SLICES,
       },
