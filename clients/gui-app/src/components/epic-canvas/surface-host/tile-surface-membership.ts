@@ -60,9 +60,10 @@
  * alongside the inline `DeletedArtifactBody`.
  */
 import {
-  isTabCycleRepeating,
-  subscribeTabCycleActivity,
-} from "@/lib/keybindings/tab-cycle-activity";
+  paneDemand,
+  topLevelDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import type { EpicCanvasState } from "@/stores/epics/canvas/types";
 import type { TileLayoutNode } from "@/stores/epics/canvas/tile-tree";
@@ -94,7 +95,7 @@ const retainedCandidates = new WeakMap<
   TileLayoutNode,
   {
     readonly tiles: EpicCanvasState["tilesByInstanceId"];
-    readonly preserveHistory: boolean;
+    readonly demand: "preview" | "settled";
     readonly instanceIds: ReadonlyArray<string>;
   }
 >();
@@ -104,8 +105,12 @@ function retainedChatCandidates(
   tiles: EpicCanvasState["tilesByInstanceId"],
 ): ReadonlyArray<string> {
   const cached = retainedCandidates.get(node);
-  const preserveHistory = isTabCycleRepeating();
-  if (cached?.tiles === tiles && cached.preserveHistory === preserveHistory) {
+  const demand = node.kind === "pane" ? paneDemand(node.id) : "settled";
+  if (
+    node.kind === "pane" &&
+    cached?.tiles === tiles &&
+    cached.demand === demand
+  ) {
     return cached.instanceIds;
   }
   const instanceIds =
@@ -113,11 +118,11 @@ function retainedChatCandidates(
       ? retainedPaneChatInstanceIds({
           pane: node,
           cap: RETAINED_PANE_CHAT_CAP,
-          preserveHistory,
+          demand,
           tileFor: (instanceId) => tiles[instanceId],
         })
       : node.children.flatMap((child) => retainedChatCandidates(child, tiles));
-  retainedCandidates.set(node, { tiles, instanceIds, preserveHistory });
+  retainedCandidates.set(node, { tiles, instanceIds, demand });
   return instanceIds;
 }
 
@@ -177,13 +182,13 @@ function computeRetainedTopLevelRefKeys(): ReadonlyArray<string> {
           .map(tabRefKey)
           .filter((key) => knownRefKeys.has(key));
 
-  topLevelRecency = advanceTopLevelSurfaceRecency(
-    activeRefKeys,
-    topLevelRecency,
+  const settledKeys = activeRefKeys.filter(
+    (key) => topLevelDemand(key) === "settled",
   );
+  topLevelRecency = advanceTopLevelSurfaceRecency(settledKeys, topLevelRecency);
   return retainedTopLevelSurfaceKeys(
     availableRefKeys,
-    activeRefKeys,
+    settledKeys,
     topLevelRecency,
   );
 }
@@ -278,7 +283,7 @@ useEpicCanvasStore.subscribe((state, previous) => {
     recomputeMembership();
   }
 });
-subscribeTabCycleActivity(recomputeMembership);
+useSurfaceDemandStore.subscribe(recomputeMembership);
 useTabsStore.subscribe(recomputeMembership);
 useLandingDraftStore.subscribe(recomputeMembership);
 tabCommandCoordinator.subscribe(recomputeMembership);

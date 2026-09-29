@@ -1,3 +1,4 @@
+import { useSurfaceDemandStore } from "@/stores/tabs/surface-demand";
 import {
   pruneRecoveryTiles,
   withoutTabRecovery,
@@ -126,6 +127,12 @@ export function useEpicRouteSynchronization(
   );
   const activeArtifactId = useActiveEpicArtifactId(tabId);
   const canvas = useEpicCanvas(tabId);
+  const previewing = useSurfaceDemandStore(
+    (state) =>
+      state.topLevelPreviewKeys.includes(`epic:${tabId}`) ||
+      (canvas.activePaneId !== null &&
+        state.panePreviewTargets[canvas.activePaneId] !== undefined),
+  );
   const hasRestoredCanvas = canvas.root !== null;
   const nestedRouteTarget = useMemo(
     () =>
@@ -159,6 +166,7 @@ export function useEpicRouteSynchronization(
       activeArtifactId === focusArtifactId);
 
   useEffect(() => {
+    if (previewing) return;
     if (!snapshotLoaded) {
       return;
     }
@@ -210,6 +218,7 @@ export function useEpicRouteSynchronization(
       return;
     }
   }, [
+    previewing,
     snapshotLoaded,
     nestedFocusEnabled,
     hasRestoredCanvas,
@@ -235,6 +244,7 @@ export function useEpicRouteSynchronization(
   // tab-strip rename.
   const lastRestoredNestedTargetRef = useRef<NestedFocusTarget | null>(null);
   useEffect(() => {
+    if (previewing) return;
     if (!snapshotLoaded) return;
     if (!nestedFocusEnabled) return;
     if (!hasRestoredCanvas) return;
@@ -265,6 +275,7 @@ export function useEpicRouteSynchronization(
       window.cancelAnimationFrame(frame);
     };
   }, [
+    previewing,
     snapshotLoaded,
     nestedFocusEnabled,
     hasRestoredCanvas,
@@ -277,6 +288,7 @@ export function useEpicRouteSynchronization(
   ]);
 
   useEffect(() => {
+    if (previewing) return;
     if (!snapshotLoaded) return;
     if (
       focusArtifactId !== undefined &&
@@ -288,6 +300,7 @@ export function useEpicRouteSynchronization(
     if (target === null) return;
     handle.store.getState().setLastFocusedArtifactId(target);
   }, [
+    previewing,
     snapshotLoaded,
     focusArtifactId,
     focusedAt,
@@ -301,6 +314,7 @@ export function useEpicRouteSynchronization(
   ]);
 
   useEffect(() => {
+    if (previewing) return;
     if (!snapshotLoaded) return;
     if (focusThreadId === undefined) return;
     if (!legacyFocusHonorableAfterArtifactActivation) {
@@ -308,6 +322,7 @@ export function useEpicRouteSynchronization(
     }
     handle.store.getState().setLastFocusedThreadId(focusThreadId);
   }, [
+    previewing,
     snapshotLoaded,
     focusThreadId,
     focusedAt,
@@ -330,6 +345,7 @@ export function useEpicRouteSynchronization(
   // stale route state.
   const lastDeepLinkRef = useRef<string | null>(null);
   useEffect(() => {
+    if (previewing) return;
     if (!snapshotLoaded) return;
     if (focusThreadId === undefined) return;
     if (focusArtifactId === undefined) return;
@@ -342,6 +358,7 @@ export function useEpicRouteSynchronization(
     useLeftPanelStore.getState().setActivePanelIdAndExpand(tabId, "comments");
     useCommentThreadsStore.getState().setActiveThread(epicId, focusThreadId);
   }, [
+    previewing,
     snapshotLoaded,
     focusThreadId,
     focusArtifactId,
@@ -354,6 +371,7 @@ export function useEpicRouteSynchronization(
 
   const lastAutoOpenKey = useRef<string | null>(null);
   useEffect(() => {
+    if (previewing) return;
     if (!snapshotLoaded) return;
     if (
       shouldSuppressLegacyAutoOpen({
@@ -440,6 +458,7 @@ export function useEpicRouteSynchronization(
       MANUAL_TILE_OPEN,
     );
   }, [
+    previewing,
     snapshotLoaded,
     records,
     handle,
@@ -458,6 +477,7 @@ export function useEpicRouteSynchronization(
 
   const lastSyncedFocus = useRef<string | null>(persistedFocus);
   useEffect(() => {
+    if (previewing) return;
     if (!snapshotLoaded) return;
     // `activeArtifactId` is `null` for non-artifact tabs (terminal,
     // workspace-file). Don't sync that `null` into `lastFocusedArtifactId`
@@ -467,7 +487,7 @@ export function useEpicRouteSynchronization(
     if (activeArtifactId === lastSyncedFocus.current) return;
     lastSyncedFocus.current = activeArtifactId;
     handle.store.getState().setLastFocusedArtifactId(activeArtifactId);
-  }, [snapshotLoaded, activeArtifactId, handle]);
+  }, [previewing, snapshotLoaded, activeArtifactId, handle]);
 
   // The host whose projection feeds `records` - the EPIC SESSION's host, not
   // the app-wide active one this used to read. The two differ for the whole

@@ -40,11 +40,11 @@ function retained(pane: TilePane, cap: number): ReadonlyArray<string> {
     pane,
     tileFor,
     cap,
-    preserveHistory: false,
+    demand: "settled",
   });
 }
 
-/** Retention while a keyboard hold is previewing `pane.activeTabId`. */
+/** Retention while `pane.activeTabId` is only a preview target. */
 function retainedDuringHold(
   pane: TilePane,
   cap: number,
@@ -53,7 +53,7 @@ function retainedDuringHold(
     pane,
     tileFor,
     cap,
-    preserveHistory: true,
+    demand: "preview",
   });
 }
 
@@ -165,27 +165,46 @@ describe("retainedPaneChatInstanceIds", () => {
 });
 
 // A held Cmd+] repeat previews `pane.activeTabId` on every frame without
-// touching `activationHistory` (see `previewActiveTab` vs `setActiveTab` in
-// actions.ts). `preserveHistory: true` is how the two retention callers ask
-// for that: keep the settled window the cap already picked from history, and
-// admit the in-flight preview target as ONE extra slot on top of the cap -
-// never in place of a settled entry, and never counted twice.
-//
-// The settled-pair-survives-a-long-hold and cap+1 invariants are covered at
-// the integration level in `keybinding-provider.test.ts`'s "owner boundary"
-// suite (real dispatch driving real store state); this file keeps only the
-// one case that's specific to this pure function and not exercised there -
-// a non-chat preview target contributing no transit slot at all.
-describe("retainedPaneChatInstanceIds with preserveHistory: true (mid-hold preview)", () => {
-  it("adds no transit slot when the previewed tab is not a chat", () => {
+// touching `activationHistory` (`activatePaneTab` with `preview` vs
+// `settled` demand in actions.ts). Under preview demand retention must keep
+// exactly the settled window history already picked: the in-flight target
+// never takes a slot of its own (a cold one would otherwise force a stream
+// acquisition per frame), and never displaces a settled entry. A target that
+// is already in the settled window stays retained, once.
+describe("retainedPaneChatInstanceIds under preview demand", () => {
+  it("gives a never-settled preview target no slot and keeps the settled window intact", () => {
     const pane = paneWith({
-      tabInstanceIds: ["chat-a", "chat-b", "spec-1"],
-      activeTabId: "spec-1",
+      tabInstanceIds: ["chat-a", "chat-b", "chat-c"],
+      activeTabId: "chat-c",
       activationHistory: ["chat-a", "chat-b"],
     });
     expect(retainedDuringHold(pane, RETAINED_PANE_CHAT_CAP)).toEqual([
       "chat-a",
       "chat-b",
+    ]);
+  });
+
+  it("keeps an already-settled preview target retained without duplicating it", () => {
+    const pane = paneWith({
+      tabInstanceIds: ["chat-a", "chat-b"],
+      activeTabId: "chat-b",
+      activationHistory: ["chat-a", "chat-b"],
+    });
+    expect(retainedDuringHold(pane, RETAINED_PANE_CHAT_CAP)).toEqual([
+      "chat-a",
+      "chat-b",
+    ]);
+  });
+
+  it("settling the same target promotes it into the retained window", () => {
+    const pane = paneWith({
+      tabInstanceIds: ["chat-a", "chat-b", "chat-c"],
+      activeTabId: "chat-c",
+      activationHistory: ["chat-a", "chat-b"],
+    });
+    expect(retained(pane, RETAINED_PANE_CHAT_CAP)).toEqual([
+      "chat-c",
+      "chat-a",
     ]);
   });
 });

@@ -1,13 +1,11 @@
 import { createContext, useEffect, useState } from "react";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 import {
-  isTabCycleRepeating,
-  subscribeTabCycleActivity,
-} from "@/lib/keybindings/tab-cycle-activity";
-import {
-  COLD_ADMISSION_SETTLE_MS,
-  useTabCycleRepeating,
-} from "./cold-admission";
+  hasPreviewDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
+
+const RETAINED_PREWARM_INTERVAL_MS = 150;
 import type { ChatSessionStoreHandle } from "@/stores/chats/chat-session-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import {
@@ -23,11 +21,15 @@ export function useChatPrewarmEligible(
   handle: ChatSessionStoreHandle,
 ): boolean {
   const paneVisible = usePaneVisible();
-  const repeating = useTabCycleRepeating();
+  const previewing = useSurfaceDemandStore(
+    (state) =>
+      state.topLevelPreviewKeys.length > 0 ||
+      Object.keys(state.panePreviewTargets).length > 0,
+  );
   const [preparedFor, setPreparedFor] =
     useState<WeakRef<ChatSessionStoreHandle> | null>(null);
   const eligible = useEpicCanvasStore((state) => {
-    if (!paneVisible || repeating) return false;
+    if (!paneVisible || previewing) return false;
     const canvas = state.canvasByTabId[viewTabId];
     if (canvas?.root === null || canvas === undefined) return false;
     const pane = collectPanes(canvas.root).find((candidate) =>
@@ -75,7 +77,7 @@ function scheduleRetainedPrewarm(): void {
   if (
     retainedPrewarmTimer !== null ||
     retainedPrewarms.size === 0 ||
-    isTabCycleRepeating()
+    hasPreviewDemand()
   ) {
     return;
   }
@@ -90,7 +92,7 @@ function scheduleRetainedPrewarm(): void {
     } finally {
       scheduleRetainedPrewarm();
     }
-  }, COLD_ADMISSION_SETTLE_MS);
+  }, RETAINED_PREWARM_INTERVAL_MS);
 }
 
 export function prewarmRetainedChat(
@@ -116,7 +118,7 @@ export function prewarmRetainedChat(
   };
 }
 
-subscribeTabCycleActivity(() => {
+useSurfaceDemandStore.subscribe(() => {
   if (retainedPrewarmTimer !== null) clearTimeout(retainedPrewarmTimer);
   retainedPrewarmTimer = null;
   scheduleRetainedPrewarm();

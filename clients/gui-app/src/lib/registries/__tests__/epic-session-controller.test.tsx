@@ -58,8 +58,10 @@ import {
   setTestEffectiveHost,
 } from "@/lib/registries/test-support/epic-session-controller-test-support";
 import { TestEpicSessionTab } from "@/lib/registries/test-support/test-epic-session-tab";
-import { setTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
-import { COLD_ADMISSION_SETTLE_MS } from "@/lib/registries/cold-admission";
+import {
+  setTopLevelDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { useTabsStore } from "@/stores/tabs/store";
 import type { TabRef } from "@/stores/tabs/types";
 import { __syncEpicParkingOpenTabsForTests } from "@/lib/epics/epic-parking-open-tabs";
@@ -351,6 +353,12 @@ function PresentationProbe(props: {
   }, [onPresentation, presentation]);
   return null;
 }
+
+// Demand is process-global and the shared coordinator writes it on every
+// activation; each test starts from the initial store.
+beforeEach(() => {
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
+});
 
 describe("EpicSessionController: session lifecycle with no surface mounted", () => {
   let previousWorkerFactory: (() => RuntimeWorkerLike) | null = null;
@@ -2068,19 +2076,15 @@ describe("session-owned write-throughs", () => {
 });
 
 /**
- * W3-A on the controller's own imperative admission path (`startRun` in
- * `epic-session-controller.ts`), distinct from the chat plane's React-effect
- * gate: `coldTargetIsVisible` is re-checked INSIDE the deferred admit
- * callback, not before scheduling it, so a keyup alone (`repeating` going
- * false) is not sufficient - the target also has to be the header's active
- * tab AND surface-visible, or the callback bails and leaves `coldDeferred`
- * set for a later visibility event to complete.
+ * Explicit surface demand on the controller's own imperative acquisition path
+ * (`startRun` in `epic-session-controller.ts`), distinct from the chat plane's
+ * React-effect gate: a COLD top-level body never starts its session under
+ * `preview` demand (`topLevelDemand("epic:<tabId>")`), and starts the moment it
+ * settles. Warm entries are retained through a preview.
  */
-describe("EpicSessionController: deferred cold admission while the tab cycle repeats", () => {
+describe("EpicSessionController: cold acquisition under surface demand", () => {
   const EPIC_ID = "epic-cold-deferred";
   const TAB_ID = "tab-cold-deferred";
-  const OTHER_TAB_ID = "tab-other";
-
   function activateHeaderTab(tabId: string): void {
     const ref: TabRef = { kind: "epic", id: tabId };
     useTabsStore.setState({
@@ -2107,7 +2111,10 @@ describe("EpicSessionController: deferred cold admission while the tab cycle rep
   });
 
   afterEach(() => {
-    setTabCycleRepeating(false);
+    useSurfaceDemandStore.setState(
+      useSurfaceDemandStore.getInitialState(),
+      true,
+    );
     useTabsStore.setState(useTabsStore.getInitialState(), true);
     __getOpenEpicRegistryForTests().disposeAll();
     resetCanvasStore();
@@ -2117,37 +2124,69 @@ describe("EpicSessionController: deferred cold admission while the tab cycle rep
     vi.useRealTimers();
   });
 
-  it("needs BOTH the surface-visible flag and the live header tab; neither alone nor a keyup admits early", () => {
+  it("a cold body under preview demand never starts its session, and settling starts it without a timer", () => {
     vi.useFakeTimers();
-    setTabCycleRepeating(true);
-
-    // Unnamed: a real name (`TEST_EPIC_TAB_NAME`) starts an entry `suspended`
-    // until a surface resumes it, which would block `startRun` before cold
-    // admission is ever reached.
+    setTopLevelDemand([`epic:${TAB_ID}`], "preview");
     openTestEpicTab(TAB_ID, EPIC_ID, "");
-    expect(hasSession()).toBeFalsy();
-
-    // Both gates false: cancelled past the settle window, not merely delayed.
-    vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS + 50);
-    expect(hasSession()).toBeFalsy();
-
-    // Surface-visible alone is not enough - the header shows a different tab.
-    activateHeaderTab(OTHER_TAB_ID);
-    setEpicSurfaceVisibility(EPIC_ID, TAB_ID, true);
-    vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS + 50);
-    expect(hasSession()).toBeFalsy();
-
-    // Keyup alone is not enough either, same reason.
-    setTabCycleRepeating(false);
-    expect(hasSession()).toBeFalsy();
-    expect(__getOpenEpicRegistryForTests().peek(EPIC_ID)).toBeNull();
-
-    // Both gates true: the real tab becomes the header's active one and the
-    // surface re-fires visible.
-    setEpicSurfaceVisibility(EPIC_ID, TAB_ID, false);
     activateHeaderTab(TAB_ID);
     setEpicSurfaceVisibility(EPIC_ID, TAB_ID, true);
 
+    // Visible and header-active, yet still only a preview: nothing, however
+    // long it lingers.
+    vi.advanceTimersByTime(10_000);
+    expect(hasSession()).toBeFalsy();
+    expect(__getOpenEpicRegistryForTests().peek(EPIC_ID)).toBeNull();
+
+    setTopLevelDemand([`epic:${TAB_ID}`], "settled");
     expect(hasSession()).toBe(true);
+  });
+
+  it("a settled body starts its session, and that warm session survives its own later preview", () => {
+    setTopLevelDemand([`epic:${TAB_ID}`], "settled");
+    openTestEpicTab(TAB_ID, EPIC_ID, "");
+    activateHeaderTab(TAB_ID);
+    setEpicSurfaceVisibility(EPIC_ID, TAB_ID, true);
+    expect(hasSession()).toBe(true);
+
+    setTopLevelDemand([`epic:${TAB_ID}`], "preview");
+    expect(hasSession()).toBe(true);
+  });
+
+  it("a sessionless epic the cursor passed through is never acquired at any notification while the cursor moves on and settles elsewhere", () => {
+    const OTHER_EPIC_ID = "epic-cold-target";
+    const OTHER_TAB_ID = "tab-cold-target";
+    const registry = __getOpenEpicRegistryForTests();
+    const acquiredWhileGone: string[] = [];
+    // Every registry notification and every demand write is a chance for a
+    // departed preview to look settled; sample both.
+    const sample = (label: string): void => {
+      if (registry.peek(EPIC_ID) !== null) acquiredWhileGone.push(label);
+    };
+    const unsubscribeRegistry = registry.subscribe(() => sample("registry"));
+    const unsubscribeDemand = useSurfaceDemandStore.subscribe(() =>
+      sample("demand"),
+    );
+
+    try {
+      setTopLevelDemand([`epic:${TAB_ID}`], "preview");
+      openTestEpicTab(TAB_ID, EPIC_ID, "");
+      openTestEpicTab(OTHER_TAB_ID, OTHER_EPIC_ID, "");
+
+      // Cursor: A (preview) -> B (preview) -> B (settled).
+      setTopLevelDemand([`epic:${OTHER_TAB_ID}`], "preview");
+      sample("after-move");
+      setTopLevelDemand([`epic:${OTHER_TAB_ID}`], "settled");
+      sample("after-settle");
+    } finally {
+      unsubscribeRegistry();
+      unsubscribeDemand();
+    }
+
+    expect(acquiredWhileGone).toEqual([]);
+    expect(
+      getEpicSessionController().readEntryStatusForTests(OTHER_EPIC_ID)
+        ?.hasSession,
+    ).toBe(true);
+    expect(hasSession()).toBeFalsy();
   });
 });

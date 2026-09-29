@@ -108,17 +108,10 @@
  * construction stamp in the same module generation, or `requireConstructionHostStamp`
  * throws (F1). This module imports the registry; the registry never imports it.
  */
-import { admitColdResource } from "./cold-admission";
 import {
-  isTabCycleRepeating,
-  subscribeTabCycleActivity,
-} from "@/lib/keybindings/tab-cycle-activity";
-import {
-  isEpicSurfaceVisible,
-  subscribeEpicSurfaceVisibility,
-} from "@/lib/browser-view/tiles/surface-host-opened-tab";
-import { useTabsStore } from "@/stores/tabs/store";
-import { selectHostActiveSurfaceRefs } from "@/stores/tabs/selectors";
+  topLevelDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { appLogger } from "@/lib/logger";
 import type { OpenEpicStoreHandle } from "@/stores/epics/open-epic/store";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
@@ -434,8 +427,6 @@ interface ControllerEntry {
   suspended: boolean;
   /** A `failed` presentation with no live handle, observable to a later surface. */
   constructionFailed: boolean;
-  /** A transient cold target stays deferred while its retained pane is hidden. */
-  coldDeferred: boolean;
   requestedHostId: string | null;
   /**
    * Whether `requestedHostId` is still the CREATE-HOST SEED rather than a
@@ -1004,7 +995,6 @@ function createEpicSessionController(): EpicSessionController {
       demandHeld: false,
       suspended: false,
       constructionFailed: false,
-      coldDeferred: false,
       requestedHostId,
       seededCreateHost: requestedHostId !== null,
       lastEffectiveHostId: effectiveHostId,
@@ -1451,15 +1441,16 @@ function createEpicSessionController(): EpicSessionController {
     entry.suspended = false;
   }
 
-  function coldTargetIsVisible(entry: ControllerEntry): boolean {
-    // Header activation writes the layout before React publishes its surface
-    // leases. Check both so keyup cannot admit the previous retained surface.
-    return (
-      isEpicSurfaceVisible(entry.epicId) &&
-      selectHostActiveSurfaceRefs(useTabsStore.getState()).some(
-        (ref) => ref.kind === "epic" && entry.tabs.has(ref.id),
-      )
-    );
+  function hasSettledSurfaceDemand(entry: ControllerEntry): boolean {
+    const attached = surfaces.get(entry.epicId);
+    const tabIds =
+      attached === undefined || attached.size === 0
+        ? entry.tabs.keys()
+        : attached;
+    for (const tabId of tabIds) {
+      if (topLevelDemand(`epic:${tabId}`) === "settled") return true;
+    }
+    return false;
   }
 
   /**
@@ -1470,7 +1461,7 @@ function createEpicSessionController(): EpicSessionController {
     entry: ControllerEntry,
     inputs: ReconcileInputs,
   ): string | null {
-    if (entry.coldDeferred && !coldTargetIsVisible(entry)) return null;
+    if (entry.session === null && !hasSettledSurfaceDemand(entry)) return null;
     if (!inputs.ownershipClaimed || inputs.parked || entry.suspended) {
       return null;
     }
@@ -1819,15 +1810,7 @@ function createEpicSessionController(): EpicSessionController {
     const createHandle = handleFactoryFor(entry, env, inputs);
     const current = settleSessionIdentity(entry, inputs);
     if (current === null || (wantsDemand(entry) && !entry.demandHeld)) {
-      const existing = registry.peek(entry.epicId);
-      const warm = existing !== null && !isEpicSessionHandleDead(existing);
-      if (!warm && isTabCycleRepeating()) entry.coldDeferred = true;
-      run.cleanup = admitColdResource(warm, isTabCycleRepeating(), () => {
-        if (run.cancelled || entries.get(entry.epicId) !== entry) return;
-        if (entry.coldDeferred && !coldTargetIsVisible(entry)) return;
-        entry.coldDeferred = false;
-        acquireForRun({ entry, run, inputs, createHandle });
-      });
+      acquireForRun({ entry, run, inputs, createHandle });
       return;
     }
     // Held but not yet shown: the run that acquired it was superseded before
@@ -2238,20 +2221,7 @@ function createEpicSessionController(): EpicSessionController {
 
   registry.subscribe(onRegistryChanged);
   subscribeEpicParking(onParkingChanged);
-  subscribeTabCycleActivity(() => {
-    if (isTabCycleRepeating()) return;
-    for (const entry of entries.values()) {
-      if (!entry.coldDeferred) continue;
-      cancelRun(entry);
-      requestReconcile(entry.epicId);
-    }
-  });
-  subscribeEpicSurfaceVisibility((epicId) => {
-    const entry = entries.get(epicId);
-    if (entry === undefined || !entry.coldDeferred) return;
-    cancelRun(entry);
-    requestReconcile(epicId);
-  });
+  useSurfaceDemandStore.subscribe(requestReconcileAll);
   useSelectionAuthorityStore.subscribe(requestReconcileAll);
   useAuthStore.subscribe((state, previous) => {
     const userId = state.profile?.userId ?? null;

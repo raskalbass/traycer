@@ -1,4 +1,9 @@
 import {
+  SurfaceDemandContext,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
+import { SurfacePreviewShell } from "./surface-preview-shell";
+import {
   Suspense,
   useCallback,
   useEffect,
@@ -117,7 +122,11 @@ export function TopLevelTabHost() {
   // `useMountedSurfaceKeys` uses below - so the activating render is the one
   // that mounts, with no empty frame in between.
   const [homeHasBeenActive, setHomeHasBeenActive] = useState(false);
-  if (homeIsActive && !homeHasBeenActive) setHomeHasBeenActive(true);
+  const homePreview = useSurfaceDemandStore((state) =>
+    state.topLevelPreviewKeys.includes("home:home"),
+  );
+  if (homeIsActive && !homePreview && !homeHasBeenActive)
+    setHomeHasBeenActive(true);
   const homeIsMounted = homeTabEnabled && homeHasBeenActive;
   useHomeTabDisabledFallback(homeTabEnabled, activeItemId);
   const hostBoundsRef = useRef<HTMLDivElement | null>(null);
@@ -207,7 +216,7 @@ export function TopLevelTabHost() {
       data-testid="top-level-tab-host"
     >
       <PhaseMigrationControllerHost />
-      {homeIsMounted ? (
+      {homeIsMounted || homeIsActive ? (
         <TopLevelSurfaceMount
           mount={homeMount}
           activateSurface={activateSurface}
@@ -353,6 +362,11 @@ function TopLevelSurfaceMount(props: {
   readonly activateSurface: TopLevelSurfaceActivator | null;
 }): ReactNode {
   const { mount, activateSurface } = props;
+  const preview = useSurfaceDemandStore((state) =>
+    state.topLevelPreviewKeys.includes(tabRefKey(mount.tab)),
+  );
+  const [mounted, setMounted] = useState(mount.activity.visible && !preview);
+  if (mount.activity.visible && !preview && !mounted) setMounted(true);
   const activate = useCallback(() => {
     activateSurface?.(mount.tab);
   }, [activateSurface, mount.tab]);
@@ -390,9 +404,17 @@ function TopLevelSurfaceMount(props: {
             visible={mount.activity.visible}
             focused={mount.activity.focused}
           >
-            <Suspense fallback={null}>
-              <TabSurface tab={mount.tab} />
-            </Suspense>
+            <SurfaceDemandContext.Provider
+              value={preview ? "preview" : "settled"}
+            >
+              {mounted ? (
+                <Suspense fallback={null}>
+                  <TabSurface tab={mount.tab} />
+                </Suspense>
+              ) : (
+                <SurfacePreviewShell />
+              )}
+            </SurfaceDemandContext.Provider>
           </SurfacePresentationBoundary>
         </TabSurfaceActivityProvider>
       </div>
@@ -456,21 +478,35 @@ function useMountedSurfaceKeys(
   availableRefKeys: ReadonlyArray<string>,
   activeRefKeys: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  const activeSignature = activeRefKeys.join("\u001f");
-  const [seenActiveSignature, setSeenActiveSignature] =
-    useState(activeSignature);
-  const [recency, setRecency] = useState<ReadonlyArray<string>>(activeRefKeys);
-
-  if (activeSignature !== seenActiveSignature) {
-    setSeenActiveSignature(activeSignature);
+  const previewKeys = useSurfaceDemandStore(
+    (state) => state.topLevelPreviewKeys,
+  );
+  const settledKeys = useMemo(() => {
+    const previews = new Set(previewKeys);
+    return activeRefKeys.filter((key) => !previews.has(key));
+  }, [activeRefKeys, previewKeys]);
+  const signature = settledKeys.join("\u001f");
+  const [seenSignature, setSeenSignature] = useState(signature);
+  const [recency, setRecency] = useState<ReadonlyArray<string>>(settledKeys);
+  if (signature !== seenSignature) {
+    setSeenSignature(signature);
     setRecency((previous) =>
-      advanceTopLevelSurfaceRecency(activeRefKeys, previous),
+      advanceTopLevelSurfaceRecency(settledKeys, previous),
     );
   }
-
   return useMemo(
-    () => retainedTopLevelSurfaceKeys(availableRefKeys, activeRefKeys, recency),
-    [activeRefKeys, availableRefKeys, recency],
+    () =>
+      Array.from(
+        new Set([
+          ...retainedTopLevelSurfaceKeys(
+            availableRefKeys,
+            settledKeys,
+            recency,
+          ),
+          ...activeRefKeys,
+        ]),
+      ),
+    [activeRefKeys, availableRefKeys, settledKeys, recency],
   );
 }
 

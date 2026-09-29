@@ -6,7 +6,6 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import { isTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
 import {
@@ -14,10 +13,9 @@ import {
   prewarmRetainedChat,
 } from "./chat-prewarm";
 import {
-  admitColdResource,
-  COLD_ADMISSION_SETTLE_MS,
-  useTabCycleRepeating,
-} from "./cold-admission";
+  useSurfaceDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import type { HostRpcRegistry } from "@traycer/protocol/host/registry";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChatStreamClient } from "@traycer-clients/shared/host-transport/chat-stream-client";
@@ -317,7 +315,14 @@ export function useChatSessionHandle(
   // Startup demand survives a hide until its tile handoff or timeout.
   const visible = demand === "startup" || (paneVisible && tabSelected);
   const prewarmPriority = demand === "startup" || paneVisible;
-  const repeating = useTabCycleRepeating();
+  const surfaceDemand = useSurfaceDemand();
+  const settled = demand === "startup" || surfaceDemand === "settled";
+  const prewarmPaused = useSurfaceDemandStore(
+    (state) =>
+      !visible &&
+      (state.topLevelPreviewKeys.length > 0 ||
+        Object.keys(state.panePreviewTargets).length > 0),
+  );
   const hostEntry = useHostDirectoryEntry(hostId);
   const lease = useHostLease(hostId);
   // Chat is a DURABLE per-tab stream: its `WsStreamClient` is OWNED by the
@@ -496,10 +501,16 @@ export function useChatSessionHandle(
     };
 
     const warm = registry.get(epicId, chatId, hostId, scopeKey);
-    // A warm session can outlive its body. Only this mount's admitted handle
-    // skips transit admission, so retained bodies stay intact during a hold.
+    // A retained snapshot can outlive its body and still serve a warm preview.
     const mounted = warm !== null && isMountedHandle(warm);
     if (!mounted) setHandle(null);
+    if (
+      surfaceDemand === "preview" &&
+      demand !== "startup" &&
+      !mounted &&
+      !warm?.store.getState().snapshotLoaded
+    )
+      return;
     const speculative = !visible;
     const acquire = (): (() => void) | void => {
       if (!visible && isEpicParked(epicId)) return;
@@ -507,7 +518,7 @@ export function useChatSessionHandle(
       // Preview admission must not start IndexedDB work during a held cycle.
       if (
         visible &&
-        !isTabCycleRepeating() &&
+        settled &&
         registry.get(epicId, chatId, hostId, scopeKey) === null &&
         shouldLoadDurableSkeletonForResume(cacheKey)
       ) {
@@ -554,7 +565,7 @@ export function useChatSessionHandle(
       );
       acquiredHandle = next;
       // Hidden neighbours share the normal warm pool and byte accountant.
-      // Only startup and visible (including transit) demand pin a session.
+      // Only startup and visible demand pin a session.
       if (speculative || demand === "startup") registry.markPresented(next);
       if (speculative) registry.releaseHandle(epicId, chatId, hostId, next);
       const refreshRetainedHandle = (): void => {
@@ -565,20 +576,13 @@ export function useChatSessionHandle(
         : () => {};
       setHandle(registry.peek(epicId, chatId, hostId) === next ? next : null);
 
-      // A slow snapshot is never "presented" merely because its skeleton was
-      // visible. Shared holders can independently promote the same handle.
-      let presentedTimer: number | null = null;
+      // A loaded, settled surface has been presented. A pending snapshot
+      // remains transient, so leaving it still releases an unused session.
       const observe = (): void => {
-        if (!visible || !next.store.getState().snapshotLoaded) {
-          if (presentedTimer !== null) clearTimeout(presentedTimer);
-          presentedTimer = null;
-          return;
-        }
-        if (presentedTimer !== null || !registry.isTransient(next)) return;
-        presentedTimer = window.setTimeout(() => {
+        if (visible && settled && next.store.getState().snapshotLoaded) {
           registry.markPresented(next);
           unsubscribe();
-        }, COLD_ADMISSION_SETTLE_MS);
+        }
       };
       const unsubscribe =
         visible && registry.isTransient(next)
@@ -587,18 +591,18 @@ export function useChatSessionHandle(
       observe();
       return () => {
         unsubscribe();
-        if (presentedTimer !== null) clearTimeout(presentedTimer);
         unsubscribeRetention();
         if (!speculative) registry.releaseHandle(epicId, chatId, hostId, next);
       };
     };
     // Eviction clears the retained handle without an immediate reacquisition
-    // loop under byte pressure. A later selection or repeat-settle requeues it.
-    if (speculative && (!mounted || registry.isTransient(warm))) {
-      setHandle(null);
-      return prewarmRetainedChat(prewarmPriority, acquire);
-    }
-    return admitColdResource(mounted, repeating, acquire);
+    // loop under byte pressure. A later settled selection requeues it.
+    const prewarm = speculative && (!mounted || registry.isTransient(warm));
+    if (prewarm) setHandle(null);
+    const release = prewarm
+      ? prewarmRetainedChat(prewarmPriority, acquire)
+      : acquire();
+    return () => release?.();
     // `openTransport` is referentially stable and reads its deps (auth, runner
     // host, credential source, directory) live, so the recovery wiring is never
     // a stale-capture risk and does not belong in this array. `transportKey` is
@@ -618,7 +622,9 @@ export function useChatSessionHandle(
     demand,
     visible,
     prewarmPriority,
-    repeating,
+    prewarmPaused,
+    surfaceDemand,
+    settled,
     openTransport,
     queryClient,
   ]);

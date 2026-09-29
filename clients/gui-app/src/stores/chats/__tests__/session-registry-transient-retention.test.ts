@@ -282,7 +282,7 @@ describe("ChatSessionRegistry transient retention", () => {
     markRestoring(acquiredRestoring);
 
     // Still held (not yet released): the visible-transit shape a mounted
-    // `useChatSessionHandle` produces mid cold-admission. Nothing else is
+    // `useChatSessionHandle` produces while it awaits its snapshot. Nothing else is
     // acquired yet, so there is no eligible candidate at all.
     expect(registry.evictOldestEligibleForByteBudget()).toBe(false);
     expect(restoring.closeCount()).toBe(0);
@@ -315,7 +315,7 @@ describe("ChatSessionRegistry transient retention", () => {
   // unresolved. `hasActiveChatWork`'s host-activity-plane fallback currently
   // requires `access?.role === "owner"`, so it cannot see a turn the host is
   // ALREADY reporting for this chat before the chat's own subscribe confirms
-  // ownership - a race a cold-admission window makes newly reachable.
+  // ownership - a race a not-yet-subscribed acquisition makes reachable.
   describe("host activity plane, for a not-yet-resolved (access: null) transient handle", () => {
     const HOST_B = "host-2";
 

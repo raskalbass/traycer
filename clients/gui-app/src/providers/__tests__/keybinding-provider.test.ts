@@ -16,9 +16,11 @@ import {
 } from "@/lib/keybindings/dispatch";
 import type { KeybindingRouterSource } from "@/lib/keybindings/router-adapter";
 import {
-  isTabCycleRepeating,
-  subscribeTabCycleActivity,
-} from "@/lib/keybindings/tab-cycle-activity";
+  hasPreviewDemand,
+  paneDemand,
+  topLevelDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { paneTabRefs } from "@/stores/epics/canvas/actions";
 import { collectPanes, findPaneById } from "@/stores/epics/canvas/tile-tree";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
@@ -33,7 +35,11 @@ import type {
   SystemOverlayKind,
 } from "@/stores/tabs/system-overlay-types";
 import { useTabsStore } from "@/stores/tabs/store";
-import { tabItemId } from "@/stores/tabs/layout";
+import {
+  tabActivationHistory,
+  tabItemId,
+  tabRefKey,
+} from "@/stores/tabs/layout";
 import { useKeybindingStore } from "@/stores/settings/keybinding-store";
 import { getDefaultBindings } from "@/lib/keybindings/actions";
 import { isMac } from "@/lib/keybindings/platform";
@@ -55,6 +61,7 @@ interface NavigateCall {
 interface MockRouter {
   readonly router: KeybindingRouter;
   readonly calls: Array<NavigateCall>;
+  readonly demands: Array<"preview" | "settled" | undefined>;
   readonly setPath: (next: string) => void;
 }
 
@@ -69,6 +76,17 @@ function setActiveSystemOverlay(kind: SystemOverlayKind): void {
     isOverlayActive: (candidate) => candidate === kind,
   });
 }
+
+// Preview demand is process-global transient state; a hold a test abandons must
+// not leak into the next test, and activations write it through the shared
+// coordinator, so every test also starts from the initial store.
+beforeEach(() => {
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
+});
+
+afterEach(() => {
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
+});
 
 function specRef(id: "spec-a" | "spec-b"): EpicNodeRef {
   return {
@@ -101,6 +119,7 @@ function canvasTabIds(tabId: string): ReadonlyArray<string> {
 function buildRouter(initialPath: string): MockRouter {
   synchronizeLayoutForRoute(initialPath);
   const calls: Array<NavigateCall> = [];
+  const demands: Array<"preview" | "settled" | undefined> = [];
   let pathname = initialPath;
   const router: KeybindingRouter = {
     getPathname: () => pathname,
@@ -129,6 +148,7 @@ function buildRouter(initialPath: string): MockRouter {
       pathname = `/settings/${sectionId}`;
     },
     navigateToTabIntent: (intent) => {
+      demands.push(intent.demand);
       if (intent.kind === "epic") {
         calls.push({ kind: "epic", epicId: intent.epicId, sectionId: null });
         pathname = `/epics/${intent.epicId}/${intent.tabId}`;
@@ -181,7 +201,7 @@ function buildRouter(initialPath: string): MockRouter {
   const setPath = (next: string) => {
     pathname = next;
   };
-  return { router, calls, setPath };
+  return { router, calls, demands, setPath };
 }
 
 function synchronizeLayoutForRoute(pathname: string): void {
@@ -1003,10 +1023,17 @@ describe("dispatchKeydownAction tab-cycle repeat coalescing", () => {
       useEpicCanvasStore.getState(),
       "prepareSetActiveTileTabFocusTarget",
     );
-    const previewSpy = vi.spyOn(
-      useEpicCanvasStore.getState(),
-      "preparePreviewTileTabFocusTarget",
-    );
+    const paneId =
+      useEpicCanvasStore.getState().canvasByTabId[tabId]?.activePaneId;
+    if (paneId === undefined || paneId === null) {
+      throw new Error("expected an active pane");
+    }
+    const historyOf = (): ReadonlyArray<string> => {
+      const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+      const pane =
+        canvas === undefined ? null : findPaneById(canvas.root, paneId);
+      return pane?.activationHistory ?? [];
+    };
 
     const start = paneState(tabId);
     if (start.activeId === null) throw new Error("expected an active pane tab");
@@ -1030,27 +1057,33 @@ describe("dispatchKeydownAction tab-cycle repeat coalescing", () => {
     expect(commitSpy).toHaveBeenCalledTimes(1);
 
     // A repeat-driven flush (what an rAF tick triggers while still held)
-    // previews the target - it moves the pane's visible selection without
-    // touching activationHistory, and never calls the real, history-recording
-    // commit. Still no `prepareSetActiveTileTabFocusTarget` call.
+    // previews the target - it moves the pane's visible selection and marks
+    // it as preview demand without touching activationHistory, and never
+    // calls the real, history-recording commit.
+    const historyBeforePreview = historyOf();
+    expect(hasPreviewDemand()).toBe(false);
     flushTabCycle(router);
     expect(expectedAfter(3)).not.toBe(expectedAfter(1));
     expect(expectedAfter(3)).not.toBe(start.activeId);
     expect(paneState(tabId).activeId).toBe(expectedAfter(3));
+    expect(paneDemand(paneId)).toBe("preview");
+    expect(historyOf()).toEqual(historyBeforePreview);
     expect(commitSpy).toHaveBeenCalledTimes(1);
-    expect(previewSpy).toHaveBeenCalledTimes(1);
 
     // Release (what keyup triggers): settles the previewed target through the
-    // real, history-recording activation - exactly once, at the final target.
+    // real, history-recording activation - exactly once, at the final target -
+    // and drops the preview demand.
     resetTabCycle(router);
     expect(paneState(tabId).activeId).toBe(expectedAfter(3));
+    expect(paneDemand(paneId)).toBe("settled");
+    expect(hasPreviewDemand()).toBe(false);
+    expect(historyOf()[0]).toBe(expectedAfter(3));
     expect(commitSpy).toHaveBeenCalledTimes(2);
-    expect(previewSpy).toHaveBeenCalledTimes(1);
   });
 
   it("commits a held repeat via the 100ms fallback timer when the animation frame never fires (occluded window)", () => {
     const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
-    const { router, calls } = buildRouter(`/epics/e1/${firstTabId}`);
+    const { router, calls, demands } = buildRouter(`/epics/e1/${firstTabId}`);
 
     vi.useFakeTimers();
     // Simulate an occluded/hidden window: rAF is scheduled but never fires.
@@ -1067,10 +1100,13 @@ describe("dispatchKeydownAction tab-cycle repeat coalescing", () => {
       vi.advanceTimersByTime(100);
       expect(calls.length).toBe(2);
       expect(calls[1].epicId).toBe("e3");
-      // A scheduled flush commits but does not clear the signal - only an
-      // explicit reset (keyup/pointerdown/etc.) does.
-      expect(isTabCycleRepeating()).toBe(true);
+      // The press activates normally; the scheduled flush only previews.
+      expect(demands).toEqual(["settled", "preview"]);
+      // A scheduled flush does not settle - only an explicit reset
+      // (keyup/pointerdown/etc.) does, and it settles the previewed target.
       resetTabCycle(router);
+      expect(demands).toEqual(["settled", "preview", "settled"]);
+      expect(calls[2].epicId).toBe("e3");
     } finally {
       vi.useRealTimers();
     }
@@ -1112,7 +1148,7 @@ describe("dispatchKeydownAction tab-cycle repeat coalescing", () => {
 // Owner-boundary coverage: the held-cycle preview `dispatchKeydownAction`
 // drives (repeat -> preview, keyup/reset -> real activation) is what
 // `retainedPaneChatInstanceIds` reads through `pane.activationHistory` /
-// `pane.activeTabId` and `isTabCycleRepeating()`'s `preserveHistory` flag.
+// `pane.activeTabId` and the pane's preview demand.
 // These tests exercise both real stores together, the way
 // `use-mounted-pane-tabs.ts` and `tile-surface-membership.ts` actually call
 // them - a bug in either side's contract (dispatch writing history it
@@ -1149,7 +1185,7 @@ describe("held Cmd+] cycling vs chat retention (owner boundary)", () => {
     return retainedPaneChatInstanceIds({
       pane,
       cap: RETAINED_PANE_CHAT_CAP,
-      preserveHistory: isTabCycleRepeating(),
+      demand: paneDemand(paneId),
       tileFor: (instanceId) => canvas.tilesByInstanceId[instanceId],
     });
   }
@@ -1164,7 +1200,7 @@ describe("held Cmd+] cycling vs chat retention (owner boundary)", () => {
     return pane?.activationHistory ?? [];
   }
 
-  it("keeps both settled chats retained while a hold previews ten other chats, never exceeding cap + 1", () => {
+  it("keeps both settled chats retained while a hold previews ten other chats, never growing past the cap", () => {
     const tabId = useEpicCanvasStore
       .getState()
       .openEpicTab("epic-chat-hold", "Chat Hold");
@@ -1197,7 +1233,8 @@ describe("held Cmd+] cycling vs chat retention (owner boundary)", () => {
       expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
       flushTabCycle(router);
       const duringHold = retainedChatsFor(tabId, paneId);
-      expect(duringHold.length).toBeLessThanOrEqual(RETAINED_PANE_CHAT_CAP + 1);
+      // The passing preview target takes no slot of its own.
+      expect(duringHold).toEqual(settled);
       expect(duringHold).toContain(settledA);
       expect(duringHold).toContain(settledB);
       expect(activationHistoryFor(tabId, paneId)).toEqual(settledHistory);
@@ -1206,7 +1243,7 @@ describe("held Cmd+] cycling vs chat retention (owner boundary)", () => {
     resetTabCycle(router);
   });
 
-  it("settles the held-cycle target through real activation on keyup, converging retention back to exactly the cap", () => {
+  it("settles the held-cycle target through real activation on keyup, then retains the target as an ordinary settled chat", () => {
     const tabId = useEpicCanvasStore
       .getState()
       .openEpicTab("epic-chat-settle", "Chat Settle");
@@ -1234,17 +1271,47 @@ describe("held Cmd+] cycling vs chat retention (owner boundary)", () => {
     flushTabCycle(router);
     expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
     flushTabCycle(router);
+    expect(paneDemand(paneId)).toBe("preview");
     expect(retainedChatsFor(tabId, paneId)).toEqual([
-      "chat3-instance",
       "chat1-instance",
       "chat4-instance",
     ]);
 
     // Keyup: flush (no-op here, nothing pending) then reset settles chat3.
+    // Observe every intermediate state the settle publishes: the tab the pane
+    // shows must never be evicted from retention once its demand is settled,
+    // and the settled window must never lose its most recent chat.
+    const observed: Array<{
+      readonly demand: "preview" | "settled";
+      readonly active: string | null;
+      readonly retained: ReadonlyArray<string>;
+    }> = [];
+    const record = (): void => {
+      const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+      const pane =
+        canvas === undefined ? null : findPaneById(canvas.root, paneId);
+      observed.push({
+        demand: paneDemand(paneId),
+        active: pane?.activeTabId ?? null,
+        retained: retainedChatsFor(tabId, paneId),
+      });
+    };
+    const unsubscribeCanvas = useEpicCanvasStore.subscribe(record);
+    const unsubscribeDemand = useSurfaceDemandStore.subscribe(record);
     flushTabCycle(router);
     resetTabCycle(router);
+    unsubscribeCanvas();
+    unsubscribeDemand();
 
-    expect(isTabCycleRepeating()).toBe(false);
+    expect(observed.length).toBeGreaterThan(0);
+    for (const state of observed) {
+      expect(state.retained).toContain("chat1-instance");
+      if (state.demand === "settled" && state.active !== null) {
+        expect(state.retained).toContain(state.active);
+      }
+    }
+
+    expect(hasPreviewDemand()).toBe(false);
     expect(activationHistoryFor(tabId, paneId)).toEqual([
       "chat3-instance",
       ...settledHistory.filter((id) => id !== "chat3-instance"),
@@ -1290,6 +1357,11 @@ describe("held Cmd+] cycling vs chat retention (owner boundary)", () => {
     flushTabCycle(router);
     resetTabCycle(router);
 
+    // The aborted cursor releases the preview it owned, so retention returns
+    // to the ordinary settled policy instead of staying pinned to a tab that
+    // no longer exists.
+    expect(paneDemand(paneId)).toBe("settled");
+    expect(hasPreviewDemand()).toBe(false);
     expect(activationHistoryFor(tabId, paneId)).toEqual(afterCloseHistory);
     expect(retainedChatsFor(tabId, paneId)).toEqual(afterCloseRetained);
   });
@@ -1394,6 +1466,51 @@ describe("<KeybindingProvider /> held-key tab cycling (header)", () => {
     expect(navigateCalls.length).toBe(2);
   });
 
+  it("settles a still-owned held preview through the controller when membership changes mid-hold, leaving route, history and demand consistent", () => {
+    const [aTabId, bTabId, cTabId] = useEpicCanvasStore.getState().openTabOrder;
+    const { navigateCalls } = renderHeaderCycleProvider(`/epics/e1/${aTabId}`);
+    vi.useFakeTimers();
+    try {
+      // Held from a settled A: the first event is a repeat, so B is only a
+      // preview - no route write, no history.
+      act(() =>
+        fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(bTabId);
+      expect(topLevelDemand(`epic:${bTabId}`)).toBe("preview");
+      expect(navigateCalls.length).toBe(0);
+
+      // An unrelated header tab disappears while B is still focused.
+      act(() => {
+        useTabsStore.setState((state) => ({
+          ...state,
+          items: state.items.filter(
+            (item) => !(item.kind === "tab" && item.ref.id === cTabId),
+          ),
+          stripOrder: state.stripOrder.filter((ref) => ref.id !== cTabId),
+        }));
+        window.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      });
+      act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The cursor still owned B, so B settles through ordinary activation.
+    expect(useEpicCanvasStore.getState().activeTabId).toBe(bTabId);
+    expect(hasPreviewDemand()).toBe(false);
+    expect(navigateCalls.length).toBe(1);
+    const navigateArgs = navigateCalls[0];
+    if (!Array.isArray(navigateArgs)) throw new Error("expected navigate args");
+    expect(navigateArgs[0]).toMatchObject({ params: { tabId: bTabId } });
+    expect(
+      tabActivationHistory(useTabsStore.getState()).map(tabRefKey)[0],
+    ).toBe(`epic:${bTabId}`);
+  });
+
   it("cancels an in-flight held repeat on pointerdown, before it can commit", () => {
     const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
     renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
@@ -1458,83 +1575,62 @@ describe("<KeybindingProvider /> held-key tab cycling (header)", () => {
     expect(useEpicCanvasStore.getState().activeTabId).toBe(afterPress);
   });
 
-  it("publishes the tab-cycle repeat signal only on true/false transitions, in step with commit and cancellation", () => {
+  it("holds preview demand only between the first committed repeat and the keyup or cancellation that settles it", () => {
     const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
     renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
-
-    const notifications: Array<{
-      repeating: boolean;
-      activeTabId: string | null;
-    }> = [];
-    const unsubscribe = subscribeTabCycleActivity(() => {
-      notifications.push({
-        repeating: isTabCycleRepeating(),
-        activeTabId: useEpicCanvasStore.getState().activeTabId,
-      });
-    });
-
+    vi.useFakeTimers();
     try {
-      // A single physical press must never set the signal.
+      // A single physical press is an ordinary activation: never a preview.
       act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
       const afterPress = useEpicCanvasStore.getState().activeTabId;
-      expect(isTabCycleRepeating()).toBe(false);
-      expect(notifications.length).toBe(0);
+      expect(hasPreviewDemand()).toBe(false);
 
-      // First repeat: the signal flips true before the deferred commit runs
-      // (the rAF/timer stub never fires within this synchronous test).
+      // Repeats only move the cursor: nothing is previewed until a frame (or
+      // the 100ms fallback, since no frame fires here) commits the target.
       act(() =>
         fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
       );
-      expect(isTabCycleRepeating()).toBe(true);
-      expect(useEpicCanvasStore.getState().activeTabId).toBe(afterPress);
-      expect(notifications).toEqual([
-        { repeating: true, activeTabId: afterPress },
-      ]);
-
-      // A further repeat keeps moving the cursor but must not re-notify.
       act(() =>
         fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
       );
-      expect(isTabCycleRepeating()).toBe(true);
-      expect(notifications.length).toBe(1);
+      expect(hasPreviewDemand()).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(hasPreviewDemand()).toBe(true);
 
-      // keyup flushes the target (commit), then publishes false.
+      // keyup settles the final target and releases the demand.
       act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
       const afterRelease = useEpicCanvasStore.getState().activeTabId;
-      expect(isTabCycleRepeating()).toBe(false);
+      expect(hasPreviewDemand()).toBe(false);
       expect(afterRelease).not.toBe(afterPress);
-      expect(notifications).toEqual([
-        { repeating: true, activeTabId: afterPress },
-        { repeating: false, activeTabId: afterRelease },
-      ]);
+      expect(topLevelDemand(`epic:${afterRelease}`)).toBe("settled");
 
-      // A second hold, this time cancelled by pointerdown before it commits.
+      // A second hold, cancelled by pointerdown before it commits, never
+      // previews at all and leaves nothing behind.
       act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
       const afterSecondPress = useEpicCanvasStore.getState().activeTabId;
       act(() =>
         fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
       );
-      expect(isTabCycleRepeating()).toBe(true);
-      expect(notifications.length).toBe(3);
+      expect(hasPreviewDemand()).toBe(false);
 
       act(() => {
         window.dispatchEvent(
           new PointerEvent("pointerdown", { bubbles: true }),
         );
       });
-      expect(isTabCycleRepeating()).toBe(false);
-      expect(notifications.length).toBe(4);
-      expect(notifications[3]).toEqual({
-        repeating: false,
-        activeTabId: afterSecondPress,
+      act(() => {
+        vi.advanceTimersByTime(100);
       });
+      expect(hasPreviewDemand()).toBe(false);
 
       // The cancelled session leaves nothing pending for keyup to flush.
       act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
       expect(useEpicCanvasStore.getState().activeTabId).toBe(afterSecondPress);
-      expect(notifications.length).toBe(4);
+      expect(hasPreviewDemand()).toBe(false);
     } finally {
-      unsubscribe();
+      vi.useRealTimers();
     }
   });
 });

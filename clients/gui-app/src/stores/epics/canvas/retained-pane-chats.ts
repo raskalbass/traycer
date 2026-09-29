@@ -59,10 +59,8 @@
  * The cap is deliberately PER PANE rather than canvas-global: per-pane
  * recency is the only recency the store actually has, and inventing a
  * cross-pane order would mean new persisted state whose sole purpose is a
- * memory bound. This cap keeps two settled chat bodies plus one active transit
- * per pane. The retention profile's top-level DOM cap limits hidden task
- * surfaces, each of which contains these panes; it never clips a visible pane's
- * transit slot. Neither count cap grants a stream lease: hidden neighbours are
+ * memory bound. This cap keeps two settled chat bodies per pane. The retention profile's top-level DOM cap limits hidden task
+ * surfaces, each of which contains these panes. Neither count cap grants a stream lease: hidden neighbours are
  * warm sessions, evictable by the single managed-data byte budget.
  */
 import type { EpicCanvasTileRef, TilePane } from "@/stores/epics/canvas/types";
@@ -104,8 +102,7 @@ export interface RetainedPaneChatInstancesInput {
    */
   readonly tileFor: (instanceId: string) => EpicCanvasTileRef | undefined;
   readonly cap: number;
-  /** Keep the settled window while a keyboard-cycle target passes through. */
-  readonly preserveHistory: boolean;
+  readonly demand: "preview" | "settled";
 }
 
 /**
@@ -136,18 +133,8 @@ export function retainedPaneChatInstanceIds(
   };
 
   const activeId = resolveActivePaneTab(pane.activeTabId, pane.tabInstanceIds);
-  if (!input.preserveHistory) consider(activeId);
+  if (input.demand === "settled") consider(activeId);
   for (const instanceId of pane.activationHistory) consider(instanceId);
-  if (
-    input.preserveHistory &&
-    activeId !== null &&
-    !retained.includes(activeId)
-  ) {
-    const tile = tileFor(activeId);
-    if (tile !== undefined && isRetainablePaneChat(tile)) {
-      retained.unshift(activeId);
-    }
-  }
 
   return retained;
 }

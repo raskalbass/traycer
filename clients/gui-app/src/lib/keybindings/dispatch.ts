@@ -1,4 +1,7 @@
-import { setTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
+import {
+  cancelPanePreview,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { cssEscape } from "@/lib/dom/css-escape";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { requestPaneOpenerFocus } from "@/lib/canvas/focus-pane-opener";
@@ -547,12 +550,14 @@ interface TabCycleSnapshot {
   readonly ids: ReadonlyArray<string>;
   readonly activeId: string | null;
   readonly commit: (id: string, preview: boolean) => void;
+  readonly cancelPreview: (id: string) => void;
 }
 
 interface TabCycleSession {
   readonly kind: TabCycleKind;
   readonly scope: string;
   readonly ids: ReadonlyArray<string>;
+  readonly cancelPreview: (id: string) => void;
   committedId: string | null;
   targetId: string;
   frame: number | null;
@@ -575,13 +580,36 @@ function readTabCycle(
     if (focused === null || tabs.length === 0) return null;
     return {
       scope: "header",
+      cancelPreview: (id) => {
+        const demand = useSurfaceDemandStore.getState();
+        const current = useTabsStore.getState();
+        const selected =
+          selectHostFocusedRef(current) ?? selectHostRouteBackingRef(current);
+        const tab = getHeaderTabs().find(
+          (candidate) => tabRefKey(candidate) === id,
+        );
+        if (
+          demand.topLevelPreviewKeys.includes(id) &&
+          selected !== null &&
+          tabRefKey(selected) === id &&
+          tab !== undefined
+        ) {
+          router.navigateToTabIntent({
+            ...tabResolveIntent(tab),
+            demand: "settled",
+          });
+        }
+      },
       ids: tabs.map(tabRefKey),
       // Activation updates the layout before the router commits its pathname.
       activeId: tabRefKey(focused),
-      commit: (id) => {
+      commit: (id, preview) => {
         const tab = tabs.find((candidate) => tabRefKey(candidate) === id);
         if (tab !== undefined)
-          router.navigateToTabIntent(tabResolveIntent(tab));
+          router.navigateToTabIntent({
+            ...tabResolveIntent(tab),
+            demand: preview ? "preview" : "settled",
+          });
       },
     };
   }
@@ -593,15 +621,21 @@ function readTabCycle(
   if (pane === null || pane.tabInstanceIds.length === 0) return null;
   return {
     scope: `${tab.tabId}:${pane.id}`,
+    cancelPreview: (id) => cancelPanePreview(pane.id, id),
     ids: pane.tabInstanceIds,
     activeId: pane.activeTabId,
     commit: (id, preview) => {
-      runNestedFocus(router, tab, () => {
-        const state = useEpicCanvasStore.getState();
-        return preview
-          ? state.preparePreviewTileTabFocusTarget(tab.tabId, pane.id, id)
-          : state.prepareSetActiveTileTabFocusTarget(tab.tabId, pane.id, id);
-      });
+      if (preview) {
+        useEpicCanvasStore
+          .getState()
+          .setTileTabDemand(tab.tabId, pane.id, id, "preview");
+      } else {
+        runNestedFocus(router, tab, () =>
+          useEpicCanvasStore
+            .getState()
+            .prepareSetActiveTileTabFocusTarget(tab.tabId, pane.id, id),
+        );
+      }
     },
   };
 }
@@ -631,15 +665,16 @@ export function resetTabCycle(router: KeybindingRouter): void {
   if (session === undefined) return;
   clearTabCycleTimers(session);
   tabCycles.delete(router);
-  if (session.kind === "canvas" && repeatingTabCycles.has(session)) {
+  if (repeatingTabCycles.has(session)) {
     const snapshot = readTabCycle(router, session.kind);
     // Settle only the selection we still own, never a cancelled pending target.
     if (cycleMatches(session, snapshot) && session.committedId !== null) {
       snapshot.commit(session.committedId, false);
+    } else if (session.committedId !== null) {
+      session.cancelPreview(session.committedId);
     }
   }
   repeatingTabCycles.delete(session);
-  setTabCycleRepeating(repeatingTabCycles.size > 0);
 }
 
 /** Re-read live membership and focus before any delayed write. */
@@ -698,6 +733,7 @@ function moveTabCycle(
     kind,
     scope: snapshot.scope,
     ids: snapshot.ids,
+    cancelPreview: snapshot.cancelPreview,
     committedId: snapshot.activeId,
     targetId,
     frame: null,
@@ -707,7 +743,6 @@ function moveTabCycle(
   tabCycles.set(router, session);
   if (repeat) {
     repeatingTabCycles.add(session);
-    setTabCycleRepeating(true);
   }
   if (!repeat) {
     flushTabCycle(router);

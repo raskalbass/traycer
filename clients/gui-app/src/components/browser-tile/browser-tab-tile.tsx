@@ -1,4 +1,4 @@
-import { useColdAdmission } from "@/lib/registries/cold-admission";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import type { PendingBrowserTabRequest } from "@/lib/browser-view/sessions/browser-sessions-coordinator";
 import { logBrowserOpenSpan } from "@/lib/browser-view/sessions/browser-open-perf";
 import {
@@ -927,11 +927,9 @@ export function BrowserTabTile(props: BrowserTabTileProps) {
   // remounts, and reachable as soon as the Start Page panel renders this body
   // with a store that re-keys refs in place.
   const attachRequestedTabIdRef = useRef<string | null>(null);
-  const attachAdmitted = useColdAdmission(
-    browserPeekFrameKey(props.node),
-    browserTabAlreadyLive(binding, tab, session),
-    props.visible,
-  );
+  const demand = useSurfaceDemand();
+  const attachAdmitted =
+    browserTabAlreadyLive(binding, tab, session) || demand === "settled";
   const shouldRequestAttach = shouldRequestTabAttach({
     canMaterializeElectron: sessions.canMaterializeElectron,
     inventoryReady: sessions.inventoryReady,

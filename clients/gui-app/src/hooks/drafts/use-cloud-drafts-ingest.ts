@@ -1,3 +1,4 @@
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { currentDraftBlobOwnerId } from "@/lib/drafts/draft-blob-transport";
 import { useEffect, useRef } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
@@ -55,6 +56,7 @@ export function useCloudDraftsIngest(
   client: HostClient<HostRpcRegistry> | null,
   hostId: string | null,
 ): void {
+  const demand = useSurfaceDemand();
   const directory = useCloudDraftsDirectory(client, hostId);
   // Destructured so the effect depends on the (stable) reader, not on the
   // directory object a method call would otherwise bind.
@@ -74,7 +76,13 @@ export function useCloudDraftsIngest(
     nudged.current = { fenceSeq: -1, ids: new Set() };
   }, [directory.scopeId]);
   useEffect(() => {
-    if (!directory.visible || client === null || hostId === null) return;
+    if (
+      demand !== "settled" ||
+      !directory.visible ||
+      client === null ||
+      hostId === null
+    )
+      return;
     // The verdict is re-read by the port before every head and part request,
     // as `use-cloud-chat-queries` does: a session demoted mid-ingest stops the
     // next read rather than the reads already in flight.
@@ -277,6 +285,7 @@ export function useCloudDraftsIngest(
     client,
     directory.chats,
     directory.settled,
+    demand,
     directory.visible,
     hostId,
     snapshotIngestSeq,

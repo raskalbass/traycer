@@ -1,3 +1,8 @@
+import {
+  setPaneDemand,
+  topLevelDemand,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import { readTabStripLayout } from "@/stores/tabs/store";
 import { captureHeaderLocation } from "@/lib/tab-recovery/header-layout";
 import {
@@ -101,7 +106,7 @@ import {
   resizeSplit,
   setActivePane,
   setActiveTab as setActiveTileTabCanvas,
-  previewActiveTab,
+  activatePaneTab,
   splitPaneAtEdge,
   splitPaneEmpty,
   toggleGitDiffBundleFileCollapsed,
@@ -652,11 +657,12 @@ export interface EpicCanvasStore {
     paneId: string,
     tileTabId: string,
   ) => NestedFocusTarget | null;
-  preparePreviewTileTabFocusTarget: (
+  setTileTabDemand: (
     tabId: string,
     paneId: string,
     tileTabId: string,
-  ) => NestedFocusTarget | null;
+    demand: ActiveSurfaceDemand,
+  ) => void;
   setActiveTilePane: (tabId: string, paneId: string) => void;
   prepareSetActiveTilePaneFocusTarget: (
     tabId: string,
@@ -1916,7 +1922,13 @@ export const useEpicCanvasStore = create<EpicCanvasStore>()(
             const tab = state.tabsById[tabId];
             if (tab === undefined) return state;
             const isOpen = state.openTabOrder.includes(tabId);
-            if (state.activeTabId === tabId && isOpen) return state;
+            if (
+              state.activeTabId === tabId &&
+              isOpen &&
+              (topLevelDemand(`epic:${tabId}`) === "preview" ||
+                state.mostRecentTabIdByEpicId[tab.epicId] === tabId)
+            )
+              return state;
             // Activation only moves order/active/recent pointers; the tab record
             // stays stable so header-strip / command-palette consumers (which read
             // tab metadata) don't re-render on every tab switch.
@@ -1925,10 +1937,10 @@ export const useEpicCanvasStore = create<EpicCanvasStore>()(
                 ? state.openTabOrder
                 : [...state.openTabOrder, tabId],
               activeTabId: tabId,
-              mostRecentTabIdByEpicId: {
-                ...state.mostRecentTabIdByEpicId,
-                [tab.epicId]: tabId,
-              },
+              mostRecentTabIdByEpicId:
+                topLevelDemand(`epic:${tabId}`) === "preview"
+                  ? state.mostRecentTabIdByEpicId
+                  : { ...state.mostRecentTabIdByEpicId, [tab.epicId]: tabId },
             };
           });
         },
@@ -2340,11 +2352,7 @@ export const useEpicCanvasStore = create<EpicCanvasStore>()(
         },
 
         setActiveTileTab: (tabId, paneId, tileTabId) => {
-          set((state) =>
-            updateTabCanvas(state, tabId, (canvas) =>
-              setActiveTileTabCanvas(canvas, paneId, tileTabId),
-            ),
-          );
+          get().setTileTabDemand(tabId, paneId, tileTabId, "settled");
         },
 
         prepareSetActiveTileTabFocusTarget: (tabId, paneId, tileTabId) => {
@@ -2356,16 +2364,18 @@ export const useEpicCanvasStore = create<EpicCanvasStore>()(
           return target;
         },
 
-        preparePreviewTileTabFocusTarget: (tabId, paneId, tileTabId) => {
+        setTileTabDemand: (tabId, paneId, tileTabId, demand) => {
+          const canvas = get().canvasByTabId[tabId];
+          const pane =
+            canvas === undefined ? null : findPaneById(canvas.root, paneId);
+          if (pane === null || !pane.tabInstanceIds.includes(tileTabId)) return;
+          if (demand === "preview") setPaneDemand(paneId, tileTabId, demand);
           set((state) =>
-            updateTabCanvas(state, tabId, (canvas) =>
-              previewActiveTab(canvas, paneId, tileTabId),
+            updateTabCanvas(state, tabId, (current) =>
+              activatePaneTab(current, paneId, tileTabId, demand),
             ),
           );
-          return exactNestedFocusTargetForTab(get(), tabId, {
-            paneId,
-            tileInstanceId: tileTabId,
-          });
+          if (demand === "settled") setPaneDemand(paneId, tileTabId, demand);
         },
 
         setActiveTilePane: (tabId, paneId) => {

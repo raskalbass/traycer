@@ -22,12 +22,7 @@
  */
 import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useStore } from "zustand";
-import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
-import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
-import {
-  admitColdResource,
-  useTabCycleRepeating,
-} from "@/lib/registries/cold-admission";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { useShallow } from "zustand/react/shallow";
 import { createSelector, lruMemoize } from "reselect";
 import { v4 as uuidv4 } from "uuid";
@@ -2041,10 +2036,7 @@ export function useEpicArtifactBodySubscribeAnswered(
  */
 export function useEpicArtifactBodyLease(artifactId: string | null): void {
   const handle = useOpenEpicHandle();
-  const paneVisible = usePaneVisible();
-  const tabSelected = useTabBodySelected();
-  const visible = paneVisible && tabSelected;
-  const repeating = useTabCycleRepeating();
+  const demand = useSurfaceDemand();
   const bodyDocKey = useStore(handle.store, (s) =>
     artifactId === null ? null : s.getArtifactBodyDocKey(artifactId),
   );
@@ -2056,11 +2048,9 @@ export function useEpicArtifactBodyLease(artifactId: string | null): void {
     if (artifactId === null || bodyDocKey === null) return;
     const warm =
       handle.store.getState().getArtifactFragment(artifactId) !== null;
-    if (!visible && !warm) return;
-    return admitColdResource(warm, repeating, () =>
-      handle.store.getState().acquireArtifactBodyLease(artifactId),
-    );
-  }, [handle, artifactId, bodyDocKey, visible, repeating]);
+    if (demand !== "settled" && !warm) return;
+    return handle.store.getState().acquireArtifactBodyLease(artifactId);
+  }, [handle, artifactId, bodyDocKey, demand]);
 }
 
 // ─── Agent activity (per-user notification-room presence) ─────────────────

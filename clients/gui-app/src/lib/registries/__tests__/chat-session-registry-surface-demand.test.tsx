@@ -10,8 +10,12 @@ import {
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { StrictMode, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { setTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
-import { COLD_ADMISSION_SETTLE_MS } from "@/lib/registries/cold-admission";
+import {
+  SurfaceDemandContext,
+  setTopLevelDemand,
+  useSurfaceDemandStore,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import { useChatPrewarmEligible } from "@/lib/registries/chat-prewarm";
 import {
   createChatSessionStore,
@@ -28,7 +32,8 @@ import {
 } from "@/stores/epics/canvas/__tests__/canvas-test-fixtures";
 import { getProcessMemoryRuntime } from "@/stores/replica-memory/process-memory-accountant";
 
-// W3-A cold-open admission timing. Reuses the lighter override-factory seam
+// Explicit surface demand gates chat acquisition: a cold surface under
+// `preview` demand stays a static shell, `settled` acquires at once. Reuses the lighter override-factory seam
 // (`__setChatStreamClientFactoryForTests`) rather than
 // `chat-session-registry.test.tsx`'s full HostClient/MockHostMessenger rig,
 // which exists for owner-identity discrimination this suite never exercises.
@@ -37,8 +42,8 @@ import { getProcessMemoryRuntime } from "@/stores/replica-memory/process-memory-
 // top-level `const`s would otherwise be initialized.
 const { EPIC_ID, HOST_ID, USER_ID } = vi.hoisted(() => ({
   EPIC_ID: "epic-1",
-  HOST_ID: "host-cold-admission",
-  USER_ID: "user-cold-admission",
+  HOST_ID: "host-surface-demand",
+  USER_ID: "user-surface-demand",
 }));
 
 vi.mock("@/lib/epic-selectors", () => ({
@@ -129,6 +134,16 @@ import {
 } from "@/lib/registries/chat-session-registry";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
+// What the surrounding `TopLevelTabHost` / pane would provide for the mounted
+// surface; tests flip it and rerender.
+const demandState: { value: ActiveSurfaceDemand } = { value: "settled" };
+
+// The hidden-prewarm queue pauses on any outstanding preview, wherever it is.
+const PREWARM_INTERVAL_MS = 150;
+function setPreviewDemand(active: boolean): void {
+  setTopLevelDemand(["epic:test"], active ? "preview" : "settled");
+}
+
 function QueryWrapper(props: { readonly children: ReactNode }): ReactNode {
   // Stable across this component instance's rerenders, matching the real
   // app's provider: a fresh client every render would also destabilize
@@ -140,9 +155,11 @@ function QueryWrapper(props: { readonly children: ReactNode }): ReactNode {
       }),
   );
   return (
-    <QueryClientProvider client={queryClient}>
-      {props.children}
-    </QueryClientProvider>
+    <SurfaceDemandContext.Provider value={demandState.value}>
+      <QueryClientProvider client={queryClient}>
+        {props.children}
+      </QueryClientProvider>
+    </SurfaceDemandContext.Provider>
   );
 }
 
@@ -154,7 +171,7 @@ function StrictWrapper(props: { readonly children: ReactNode }): ReactNode {
   );
 }
 
-describe("useChatSessionHandle cold-open admission (W3-A)", () => {
+describe("useChatSessionHandle surface demand", () => {
   let streamFactorySpy: Mock<ChatStreamClientFactory>;
 
   beforeEach(() => {
@@ -168,7 +185,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     });
     visibility.paneVisible = true;
     visibility.tabSelected = true;
-    setTabCycleRepeating(false);
+    demandState.value = "settled";
+    useSurfaceDemandStore.setState(
+      useSurfaceDemandStore.getInitialState(),
+      true,
+    );
+    setPreviewDemand(false);
     streamFactorySpy = vi.fn<ChatStreamClientFactory>(() => ({
       sendAction: () => undefined,
       close: () => undefined,
@@ -182,7 +204,10 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
 
   afterEach(() => {
     cleanup();
-    setTabCycleRepeating(false);
+    useSurfaceDemandStore.setState(
+      useSurfaceDemandStore.getInitialState(),
+      true,
+    );
     skeletonHydration.enabled = false;
     skeletonHydration.starts = 0;
     __setChatStreamClientFactoryForTests(null);
@@ -190,69 +215,58 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     useAuthStore.setState({ profile: null, status: "signed-out" });
   });
 
-  it("hydrates settled cold opens without hydrating held previews", () => {
-    vi.useFakeTimers();
-    try {
-      skeletonHydration.enabled = true;
-      setTabCycleRepeating(true);
-      const held = renderHook(
-        () => useChatSessionHandle("chat-held", HOST_ID, true, "surface"),
-        { wrapper: QueryWrapper },
-      );
-      act(() => {
-        vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS * 2);
-      });
-      // Delayed admission still opens the stream, but never hydrates.
-      expect(streamFactorySpy).toHaveBeenCalledTimes(1);
-      expect(skeletonHydration.starts).toBe(0);
+  it("hydrates a settled cold open from the durable skeleton, never a held preview", () => {
+    skeletonHydration.enabled = true;
+    demandState.value = "preview";
+    const held = renderHook(
+      () => useChatSessionHandle("chat-held", HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper },
+    );
+    // A preview neither opens a stream nor touches storage.
+    expect(held.result.current).toBeNull();
+    expect(streamFactorySpy).not.toHaveBeenCalled();
+    expect(skeletonHydration.starts).toBe(0);
+    held.unmount();
 
-      held.unmount();
-      act(() => {
-        setTabCycleRepeating(false);
-      });
-      renderHook(
-        () => useChatSessionHandle("chat-settled", HOST_ID, true, "surface"),
-        { wrapper: QueryWrapper },
-      );
+    demandState.value = "settled";
+    renderHook(
+      () => useChatSessionHandle("chat-settled", HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper },
+    );
 
-      expect(skeletonHydration.starts).toBe(1);
-      expect(streamFactorySpy).toHaveBeenCalledTimes(2);
-      expect(streamFactorySpy).toHaveBeenLastCalledWith(
-        EPIC_ID,
-        "chat-settled",
-        expect.anything(),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(skeletonHydration.starts).toBe(1);
+    expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+    expect(streamFactorySpy).toHaveBeenLastCalledWith(
+      EPIC_ID,
+      "chat-settled",
+      expect.anything(),
+    );
   });
 
-  it("admits nothing while cycling through many cold chats, then admits exactly the final one once settled", () => {
+  it("a cold surface under preview demand opens no stream however the target changes, and settling acquires exactly the final target", () => {
     vi.useFakeTimers();
     try {
-      setTabCycleRepeating(true);
-      const { rerender } = renderHook(
+      demandState.value = "preview";
+      const { result, rerender } = renderHook(
         ({ chatId }: { chatId: string }) =>
           useChatSessionHandle(chatId, HOST_ID, true, "surface"),
         { wrapper: QueryWrapper, initialProps: { chatId: "chat-0" } },
       );
-
       for (let index = 1; index <= 9; index += 1) {
-        act(() => {
-          vi.advanceTimersByTime(50);
-        });
         act(() => {
           rerender({ chatId: `chat-${index}` });
         });
       }
+      // No timer may admit a preview target: only settling does.
       act(() => {
-        vi.advanceTimersByTime(50);
+        vi.advanceTimersByTime(10_000);
       });
+      expect(result.current).toBeNull();
       expect(streamFactorySpy).not.toHaveBeenCalled();
 
-      // Settle: no further activity for the remaining window.
+      demandState.value = "settled";
       act(() => {
-        vi.advanceTimersByTime(100);
+        rerender({ chatId: "chat-9" });
       });
       expect(streamFactorySpy).toHaveBeenCalledTimes(1);
       expect(streamFactorySpy).toHaveBeenCalledWith(
@@ -260,18 +274,16 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         "chat-9",
         expect.anything(),
       );
+      expect(result.current).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("admits immediately on a single non-repeat open", () => {
-    setTabCycleRepeating(false);
+  it("acquires immediately on a single settled open", () => {
     renderHook(
       () => useChatSessionHandle("chat-solo", HOST_ID, true, "surface"),
-      {
-        wrapper: QueryWrapper,
-      },
+      { wrapper: QueryWrapper },
     );
 
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
@@ -282,8 +294,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     );
   });
 
-  it("commits the final target once when repeat ends in the same update, never acquiring a stale intermediate target", () => {
-    setTabCycleRepeating(true);
+  it("acquires the final target once when its settle lands in the same update, never a stale intermediate target", () => {
+    demandState.value = "preview";
     const { rerender } = renderHook(
       ({ chatId }: { chatId: string }) =>
         useChatSessionHandle(chatId, HOST_ID, true, "surface"),
@@ -295,10 +307,10 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     });
     expect(streamFactorySpy).not.toHaveBeenCalled();
 
-    // Keyup: final target and `repeating: false` land in one React update.
+    // Keyup: final target and settled demand land in one React update.
+    demandState.value = "settled";
     act(() => {
       rerender({ chatId: "chat-final" });
-      setTabCycleRepeating(false);
     });
 
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
@@ -309,16 +321,16 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     );
   });
 
-  it("reacquires a warm, already-presented chat on keyup after a repeat-time remount, without advancing the settle timer or rebuilding its transport", () => {
-    setTabCycleRepeating(false);
+  it("keeps a warm, already-presented chat mounted through a preview without rebuilding its transport", () => {
     const first = renderHook(
       () => useChatSessionHandle("chat-warm", HOST_ID, true, "surface"),
       { wrapper: QueryWrapper },
     );
-    expect(first.result.current).not.toBeNull();
     const handle = first.result.current;
     if (handle === null) throw new Error("expected a handle");
-    __getChatSessionRegistryForTests().markPresented(handle);
+    act(() => {
+      handle.store.setState({ snapshotLoaded: true });
+    });
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
 
     // Not transient anymore, so closing the tab parks it warm.
@@ -327,28 +339,18 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
       __getChatSessionRegistryForTests().peek(EPIC_ID, "chat-warm", HOST_ID),
     ).toBe(handle);
 
-    // A brand-new mount is not "this mount's own warm handle", even though
-    // the registry already has one - it is paced like any other cold body,
-    // not exempted by someone else's warmth.
-    setTabCycleRepeating(true);
-    const second = renderHook(
+    // Previewing a warm chat shows its retained body; only a cold one stays a
+    // shell.
+    demandState.value = "preview";
+    const previewed = renderHook(
       () => useChatSessionHandle("chat-warm", HOST_ID, true, "surface"),
       { wrapper: QueryWrapper },
     );
-    expect(second.result.current).toBeNull();
-    expect(streamFactorySpy).toHaveBeenCalledTimes(1);
-
-    // Keyup lands admission at once - no 150ms wait needed - and the registry
-    // hands back the SAME warm store: no second transport.
-    act(() => {
-      setTabCycleRepeating(false);
-    });
-    expect(second.result.current).toBe(handle);
+    expect(previewed.result.current).toBe(handle);
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
   });
 
-  it("clears a stale handle the instant its identity changes mid-repeat, before the new target's deferred admission ever runs", () => {
-    setTabCycleRepeating(false);
+  it("clears a stale handle the instant the target changes under preview, and reacquires nothing until settled", () => {
     const { result, rerender } = renderHook(
       ({ chatId }: { chatId: string }) =>
         useChatSessionHandle(chatId, HOST_ID, true, "surface"),
@@ -358,12 +360,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     const handleX = result.current;
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
 
-    // Mid-repeat, the caller swaps to a different, never-opened chat. Its
-    // admission is deferred (cold + repeating), but the OLD chat's handle
-    // must not linger on screen in the meantime.
-    act(() => {
-      setTabCycleRepeating(true);
-    });
+    demandState.value = "preview";
     act(() => {
       rerender({ chatId: "chat-y" });
     });
@@ -373,34 +370,8 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     expect(streamFactorySpy).toHaveBeenCalledTimes(1);
   });
 
-  it("cancels a pending cold admission when the tab is hidden mid-repeat, rather than merely delaying it", () => {
-    vi.useFakeTimers();
-    try {
-      setTabCycleRepeating(true);
-      const { rerender } = renderHook(
-        () => useChatSessionHandle("chat-hidden", HOST_ID, true, "surface"),
-        { wrapper: QueryWrapper },
-      );
-
-      act(() => {
-        vi.advanceTimersByTime(80);
-      });
-      act(() => {
-        visibility.paneVisible = false;
-        rerender();
-      });
-
-      act(() => {
-        vi.advanceTimersByTime(1_000);
-      });
-      expect(streamFactorySpy).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("under StrictMode double-invoked effects, acquires exactly once", async () => {
-    setTabCycleRepeating(false);
+    setPreviewDemand(false);
     const { result } = renderHook(
       () => useChatSessionHandle("chat-strict", HOST_ID, true, "surface"),
       { wrapper: StrictWrapper },
@@ -419,7 +390,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     // `registry.acquire`'s scope-key dedup must hold ACROSS demand kinds, not
     // just between two "surface" mounts (already covered in
     // chat-session-registry.test.tsx).
-    setTabCycleRepeating(false);
+    setPreviewDemand(false);
     const chatWindows = getProcessMemoryRuntime().chatWindows;
     const sessionCountBefore = chatWindows.sessionCount();
     const startup = renderHook(
@@ -451,40 +422,21 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     expect(chatWindows.sessionCount() - sessionCountBefore).toBe(1);
   });
 
-  it("earns presented status after 150ms continuously visible with a loaded snapshot, with no manual markPresented", () => {
-    vi.useFakeTimers();
-    try {
-      setTabCycleRepeating(false);
-      const { result } = renderHook(
-        () =>
-          useChatSessionHandle(
-            "chat-earns-presented",
-            HOST_ID,
-            true,
-            "surface",
-          ),
-        { wrapper: QueryWrapper },
-      );
-      const handle = result.current;
-      if (handle === null) throw new Error("expected a handle");
-      const registry = __getChatSessionRegistryForTests();
-      expect(registry.isTransient(handle)).toBe(true);
+  it("marks a settled, loaded surface presented at once, with no timer", () => {
+    const { result } = renderHook(
+      () =>
+        useChatSessionHandle("chat-earns-presented", HOST_ID, true, "surface"),
+      { wrapper: QueryWrapper },
+    );
+    const handle = result.current;
+    if (handle === null) throw new Error("expected a handle");
+    const registry = __getChatSessionRegistryForTests();
+    expect(registry.isTransient(handle)).toBe(true);
 
-      act(() => {
-        handle.store.setState({ snapshotLoaded: true });
-      });
-      act(() => {
-        vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS - 1);
-      });
-      expect(registry.isTransient(handle)).toBe(true);
-
-      act(() => {
-        vi.advanceTimersByTime(1);
-      });
-      expect(registry.isTransient(handle)).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
+    act(() => {
+      handle.store.setState({ snapshotLoaded: true });
+    });
+    expect(registry.isTransient(handle)).toBe(false);
   });
 
   describe("retained-hidden prewarm queue (W4 R-A)", () => {
@@ -503,7 +455,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         expect(streamFactorySpy).not.toHaveBeenCalled();
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS - 1);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS - 1);
         });
         expect(streamFactorySpy).not.toHaveBeenCalled();
 
@@ -557,7 +509,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(2);
         expect(streamFactorySpy).toHaveBeenLastCalledWith(
@@ -570,10 +522,10 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
       }
     });
 
-    it("blocks hidden acquisition while tab-cycle repeats, cancels an in-flight timer the instant a repeat starts, and restarts the full settle window on keyup", () => {
+    it("blocks hidden acquisition while a preview is outstanding, cancels an in-flight timer the instant one starts, and restarts the full interval once settled", () => {
       vi.useFakeTimers();
       try {
-        setTabCycleRepeating(false);
+        setPreviewDemand(false);
         visibility.paneVisible = true;
         visibility.tabSelected = false;
         renderHook(
@@ -583,12 +535,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
           },
         );
 
-        // A repeat starting mid-settle cancels the pending timer synchronously.
+        // A preview starting mid-interval cancels the pending timer synchronously.
         act(() => {
           vi.advanceTimersByTime(80);
         });
         act(() => {
-          setTabCycleRepeating(true);
+          setPreviewDemand(true);
         });
         act(() => {
           vi.advanceTimersByTime(1_000);
@@ -610,10 +562,10 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         // Keyup restarts the settle window from a full 150ms, not from
         // wherever the cancelled timer left off.
         act(() => {
-          setTabCycleRepeating(false);
+          setPreviewDemand(false);
         });
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS - 1);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS - 1);
         });
         expect(streamFactorySpy).not.toHaveBeenCalled();
 
@@ -629,7 +581,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     it("paces multiple queued hidden acquisitions one per settle interval, same-pane siblings before hidden top-level pane bodies", () => {
       vi.useFakeTimers();
       try {
-        setTabCycleRepeating(false);
+        setPreviewDemand(false);
 
         // A hidden TOP-LEVEL pane body, queued first.
         visibility.paneVisible = false;
@@ -661,7 +613,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         expect(streamFactorySpy).not.toHaveBeenCalled();
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
         expect(streamFactorySpy).toHaveBeenNthCalledWith(
@@ -672,7 +624,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         );
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(2);
         expect(streamFactorySpy).toHaveBeenNthCalledWith(
@@ -683,7 +635,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         );
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(3);
         expect(streamFactorySpy).toHaveBeenNthCalledWith(
@@ -774,7 +726,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         );
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
         const prewarmedHandle = result.current;
@@ -787,14 +739,14 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         // already-mounted retained handle behind the hidden prewarm pacer.
         visibility.tabSelected = false;
         act(() => {
-          setTabCycleRepeating(true);
+          setPreviewDemand(true);
           rerender();
         });
         expect(result.current).toBe(prewarmedHandle);
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(result.current).toBe(prewarmedHandle);
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
@@ -829,7 +781,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         );
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
         const prewarmedHandle = result.current;
@@ -856,17 +808,17 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
 
         // A repeat-settle edge re-runs the effect and requeues it.
         act(() => {
-          setTabCycleRepeating(true);
+          setPreviewDemand(true);
           rerender();
         });
         act(() => {
-          setTabCycleRepeating(false);
+          setPreviewDemand(false);
           rerender();
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(streamFactorySpy).toHaveBeenCalledTimes(2);
         expect(streamFactorySpy).toHaveBeenLastCalledWith(
@@ -881,7 +833,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
     });
   });
 
-  describe("useChatPrewarmEligible (W4 R-A nearest-neighbour + repeat)", () => {
+  describe("useChatPrewarmEligible (W4 R-A nearest-neighbour + preview)", () => {
     const VIEW_TAB_ID = "view-tab-prewarm";
     const PANE_ID = "pane-prewarm";
     const ACTIVE_INSTANCE_ID = "inst-active-nonchat";
@@ -969,7 +921,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
       try {
         const nearHandle = makeHandle("chat-near");
         visibility.paneVisible = true;
-        setTabCycleRepeating(false);
+        setPreviewDemand(false);
 
         const { result } = renderHook(() =>
           useChatPrewarmEligible(
@@ -981,7 +933,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         expect(result.current).toBe(false);
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS - 1);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS - 1);
         });
         expect(result.current).toBe(false);
 
@@ -1000,7 +952,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         const nearHandle = makeHandle("chat-near");
         const farHandle = makeHandle("chat-far");
         visibility.paneVisible = true;
-        setTabCycleRepeating(false);
+        setPreviewDemand(false);
 
         const near = renderHook(() =>
           useChatPrewarmEligible(
@@ -1014,7 +966,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         );
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(near.result.current).toBe(true);
         expect(far.result.current).toBe(false);
@@ -1028,12 +980,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
       }
     });
 
-    it("cancels a not-yet-settled preparation the instant a repeat starts, then - once already prepared - pauses and instantly resumes across a later repeat, all on the same mounted hook", () => {
+    it("cancels a not-yet-settled preparation the instant a preview starts, then - once already prepared - pauses and instantly resumes across a later preview, all on the same mounted hook", () => {
       vi.useFakeTimers();
       try {
         const nearHandle = makeHandle("chat-near");
         visibility.paneVisible = true;
-        setTabCycleRepeating(false);
+        setPreviewDemand(false);
 
         const { result } = renderHook(() =>
           useChatPrewarmEligible(
@@ -1044,12 +996,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         );
         expect(result.current).toBe(false);
 
-        // A repeat starting mid-settle cancels the pending preparation.
+        // A preview starting mid-interval cancels the pending preparation.
         act(() => {
           vi.advanceTimersByTime(80);
         });
         act(() => {
-          setTabCycleRepeating(true);
+          setPreviewDemand(true);
         });
         expect(result.current).toBe(false);
         act(() => {
@@ -1059,11 +1011,11 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
 
         // Keyup: never having prepared, it needs a full fresh settle.
         act(() => {
-          setTabCycleRepeating(false);
+          setPreviewDemand(false);
         });
         expect(result.current).toBe(false);
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS - 1);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS - 1);
         });
         expect(result.current).toBe(false);
         act(() => {
@@ -1074,12 +1026,12 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         // Now genuinely prepared. A later repeat merely PAUSES it - no
         // pending timer to cancel, no re-settle needed on the way back.
         act(() => {
-          setTabCycleRepeating(true);
+          setPreviewDemand(true);
         });
         expect(result.current).toBe(false);
 
         act(() => {
-          setTabCycleRepeating(false);
+          setPreviewDemand(false);
         });
         expect(result.current).toBe(true);
       } finally {
@@ -1106,9 +1058,6 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         // a microtask.
         act(() => {
           warmHandle.store.setState({ snapshotLoaded: true });
-        });
-        act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
         });
         expect(__getChatSessionRegistryForTests().isTransient(warmHandle)).toBe(
           false,
@@ -1137,14 +1086,14 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
         });
         expect(hiddenMount.result.current).toBe(warmHandle);
         expect(streamFactorySpy).toHaveBeenCalledTimes(1);
 
         // The BODY still has to earn its own preparation - warmth on the
         // session plane buys it nothing on the row-rendering plane.
-        setTabCycleRepeating(false);
+        setPreviewDemand(false);
         const eligible = renderHook(() =>
           useChatPrewarmEligible(
             VIEW_TAB_ID,
@@ -1155,7 +1104,7 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
         expect(eligible.result.current).toBe(false);
 
         act(() => {
-          vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS - 1);
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS - 1);
         });
         expect(eligible.result.current).toBe(false);
 
