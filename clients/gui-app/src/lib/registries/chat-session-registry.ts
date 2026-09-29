@@ -6,6 +6,7 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
+import { isTabCycleRepeating } from "@/lib/keybindings/tab-cycle-activity";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
 import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
 import {
@@ -47,6 +48,11 @@ import {
   type ChatSessionStoreHandle,
   type ChatStreamClientFactory,
 } from "@/stores/chats/chat-session-store";
+import {
+  hydrateSkeletonForResume,
+  primeDurableSkeletonsForResume,
+  shouldLoadDurableSkeletonForResume,
+} from "@/stores/chats/skeleton-resume-cache";
 import {
   ChatSessionRegistry,
   DEFAULT_CHAT_IDLE_TTL_MS,
@@ -117,6 +123,20 @@ registry.subscribe(() => managedDataByteBudget.noteEligibilityChange());
 getOpenEpicRegistry().subscribe(() => {
   managedDataByteBudget.noteEligibilityChange();
   scheduleByteGraceWake();
+});
+
+// The app normally knows its account before a chat tab mounts. Load its tiny
+// set of hinted entries then, off the chat-open path. A slow/missing IndexedDB
+// answer can only lose the byte saving; it cannot delay the subscribe.
+const initialSkeletonCacheUserId = useAuthStore.getState().profile?.userId;
+if (initialSkeletonCacheUserId !== undefined) {
+  primeDurableSkeletonsForResume(initialSkeletonCacheUserId);
+}
+useAuthStore.subscribe((state, previous) => {
+  const userId = state.profile?.userId;
+  if (userId !== undefined && userId !== previous.profile?.userId) {
+    primeDurableSkeletonsForResume(userId);
+  }
 });
 
 /**
@@ -483,6 +503,16 @@ export function useChatSessionHandle(
     const speculative = !visible;
     const acquire = (): (() => void) | void => {
       if (!visible && isEpicParked(epicId)) return;
+      const cacheKey = { userId, hostId, epicId, chatId };
+      // Preview admission must not start IndexedDB work during a held cycle.
+      if (
+        visible &&
+        !isTabCycleRepeating() &&
+        registry.get(epicId, chatId, hostId, scopeKey) === null &&
+        shouldLoadDurableSkeletonForResume(cacheKey)
+      ) {
+        void hydrateSkeletonForResume(cacheKey).catch(() => undefined);
+      }
       const next = registry.acquire(
         { epicId, chatId, hostId, scopeKey },
         (factoryEpicId, factoryChatId) => {

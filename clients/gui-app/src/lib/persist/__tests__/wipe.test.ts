@@ -50,7 +50,7 @@ import {
   cancelDeferredJsonWrites,
   flushDeferredJsonWrite,
 } from "@/lib/persist/deferred-json-storage";
-import { composerDraftRowPrefix } from "@/lib/persist/keys";
+import { composerDraftRowPrefix, persistKey } from "@/lib/persist/keys";
 import {
   EMPTY_COMPOSER_DRAFT,
   readComposerDraftSnapshot,
@@ -60,6 +60,11 @@ import {
   ANON_NAME,
   textDoc,
 } from "@/stores/composer/__tests__/composer-draft-rows";
+import { SKELETON_RESUME_DB_NAME } from "@/stores/chats/skeleton-resume-durable-cache";
+
+const SKELETON_RESUME_PRESENT_KEY = persistKey(
+  "chat-skeleton-resume-present-v1",
+);
 
 function createMockStorage(seed: Record<string, string>): Storage {
   const map = new Map<string, string>(Object.entries(seed));
@@ -102,6 +107,7 @@ const LOCAL_SEED: Record<string, string> = {
   "traycer-gui-app:composer-run-settings:anon": "{}",
   "traycer-gui-app:open-epic:u1:e1": "{}",
   "traycer-gui-app:reading-position:u1:epic-1:view:native:tile-1": "{}",
+  [SKELETON_RESUME_PRESENT_KEY]: '["account-scoped-chat-key"]',
   "traycer.token": "secret-auth-token",
   "some-unrelated-key": "keep-me",
   "traycer-gui-appX:foo": "must-not-be-swept",
@@ -182,6 +188,7 @@ describe("clearAllPersistedStores — blanket-prefix sweep", () => {
     expect(snapshotKeys(localStorageMock)).toEqual(
       ["traycer.token", "some-unrelated-key", "traycer-gui-appX:foo"].sort(),
     );
+    expect(localStorageMock.getItem(SKELETON_RESUME_PRESENT_KEY)).toBeNull();
     expect(snapshotKeys(sessionStorageMock)).toEqual(
       [
         "traycer.session",
@@ -246,10 +253,11 @@ describe("clearAllPersistedStores — blanket-prefix sweep", () => {
     expect(order[order.length - 1]).toBe("reload");
     // hostClear precedes every sweep removal.
     expect(order[0]).toBe("hostClear");
-    // 4 local + 2 session persisted keys are swept (the seeds above), plus the
-    // composer draft clear's own `removeItem` of its namespace's legacy blob
-    // key, which is issued (and a no-op here) even when nothing is stored.
-    expect(order.filter((e) => e.includes("removeItem")).length).toBe(7);
+    // Seven seeded prefix keys are swept (5 local incl. the resume presence
+    // hint + 2 session); the resume clear removes its presence hint again
+    // after the sweep, and the composer draft clear issues its own (no-op)
+    // `removeItem` of its legacy blob key.
+    expect(order.filter((e) => e.includes("removeItem")).length).toBe(9);
   });
 
   it("awaits `hostClear` BEFORE sweeping (a rejecting clear aborts the sweep + reload)", async () => {
@@ -364,15 +372,15 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
     return { deleted };
   }
 
-  it("deletes only known renderer dbs (landing-image, file-edit-recovery, transcript-images, legacy stash, tab-recovery); same-prefix + unrelated dbs survive", async () => {
+  it("deletes known renderer dbs (including skeleton resume); same-prefix + unrelated dbs survive", async () => {
     const { deleted } = installIndexedDB({
       databases: () => Promise.resolve(DB_NAMES.map((name) => ({ name }))),
     });
 
     await clearAllPersistedStores({ hostClear: null });
 
-    // Landing partitions come from enumeration; the legacy stash db and the
-    // fixed appearance db are always deleted by exact name even when
+    // Renderer partitions come from enumeration; the legacy stash, fixed
+    // appearance, and skeleton resume db are deleted by exact name even when
     // enumeration never lists them.
     expect(deleted.sort()).toEqual(
       [
@@ -386,6 +394,7 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
         "traycer-gui-app:user-1:transcript-images",
         "traycer-gui-app:anon:transcript-image-meta",
         "traycer-gui-app:user-1:transcript-image-meta",
+        SKELETON_RESUME_DB_NAME,
         "traycer-gui-app:tab-recovery",
       ].sort(),
     );
@@ -408,6 +417,17 @@ describe("clearAllPersistedStores — renderer IndexedDB drop", () => {
     await clearAllPersistedStores({ hostClear: null });
 
     expect(deleted).toContain(APPEARANCE_DB_NAME);
+  });
+
+  it("deletes the skeleton resume presence hint and fixed database", async () => {
+    const { deleted } = installIndexedDB({
+      databases: () => Promise.resolve([]),
+    });
+
+    await clearAllPersistedStores({ hostClear: null });
+
+    expect(localStorageMock.getItem(SKELETON_RESUME_PRESENT_KEY)).toBeNull();
+    expect(deleted).toContain(SKELETON_RESUME_DB_NAME);
   });
 
   it("still reloads when clearAppearanceCache rejects (best-effort, does not abort the wipe)", async () => {

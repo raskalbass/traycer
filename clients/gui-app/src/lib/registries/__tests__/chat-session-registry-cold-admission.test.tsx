@@ -18,6 +18,7 @@ import {
   type ChatSessionStoreHandle,
   type ChatStreamClientFactory,
 } from "@/stores/chats/chat-session-store";
+import type { SkeletonResumeCacheKey } from "@/stores/chats/skeleton-resume-cache";
 import { CHAT_STORE_TEST_ENVIRONMENT } from "@/stores/chats/test-support/chat-store-test-environment";
 import { IMMEDIATE_STREAM_FLUSH_COORDINATOR } from "@/stores/chats/stream-flush-coordinator";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
@@ -96,6 +97,30 @@ vi.mock("@/lib/host/use-durable-stream-transport", () => ({
   useDurableStreamTransportFactory: () => throwIfTransportOpened,
 }));
 
+// Observes per-session durable skeleton hydration; the real cache otherwise.
+const skeletonHydration = vi.hoisted(() => ({
+  enabled: false,
+  starts: 0,
+}));
+vi.mock("@/stores/chats/skeleton-resume-cache", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/stores/chats/skeleton-resume-cache")
+    >();
+  return {
+    ...actual,
+    shouldLoadDurableSkeletonForResume: (key: SkeletonResumeCacheKey) =>
+      skeletonHydration.enabled ||
+      actual.shouldLoadDurableSkeletonForResume(key),
+    hydrateSkeletonForResume: (key: SkeletonResumeCacheKey) => {
+      if (!skeletonHydration.enabled)
+        return actual.hydrateSkeletonForResume(key);
+      skeletonHydration.starts += 1;
+      return new Promise<void>(() => {});
+    },
+  };
+});
+
 import { useChatSessionHandle } from "@/lib/registries/chat-session-registry";
 import {
   __getChatSessionRegistryForTests,
@@ -158,9 +183,48 @@ describe("useChatSessionHandle cold-open admission (W3-A)", () => {
   afterEach(() => {
     cleanup();
     setTabCycleRepeating(false);
+    skeletonHydration.enabled = false;
+    skeletonHydration.starts = 0;
     __setChatStreamClientFactoryForTests(null);
     disposeAllChatSessions();
     useAuthStore.setState({ profile: null, status: "signed-out" });
+  });
+
+  it("hydrates settled cold opens without hydrating held previews", () => {
+    vi.useFakeTimers();
+    try {
+      skeletonHydration.enabled = true;
+      setTabCycleRepeating(true);
+      const held = renderHook(
+        () => useChatSessionHandle("chat-held", HOST_ID, true, "surface"),
+        { wrapper: QueryWrapper },
+      );
+      act(() => {
+        vi.advanceTimersByTime(COLD_ADMISSION_SETTLE_MS * 2);
+      });
+      // Delayed admission still opens the stream, but never hydrates.
+      expect(streamFactorySpy).toHaveBeenCalledTimes(1);
+      expect(skeletonHydration.starts).toBe(0);
+
+      held.unmount();
+      act(() => {
+        setTabCycleRepeating(false);
+      });
+      renderHook(
+        () => useChatSessionHandle("chat-settled", HOST_ID, true, "surface"),
+        { wrapper: QueryWrapper },
+      );
+
+      expect(skeletonHydration.starts).toBe(1);
+      expect(streamFactorySpy).toHaveBeenCalledTimes(2);
+      expect(streamFactorySpy).toHaveBeenLastCalledWith(
+        EPIC_ID,
+        "chat-settled",
+        expect.anything(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("admits nothing while cycling through many cold chats, then admits exactly the final one once settled", () => {
