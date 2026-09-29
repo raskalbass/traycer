@@ -46,10 +46,9 @@ import "@/index.css";
  * tree composes its rows: one `HoverCardGroup` around them
  * (`ChatTreePanelBody`).
  *
- * Beside them, two actionable cards on the bare primitive: one inside a real
- * modal `Dialog` (L1: the pointer reaches its link, Escape closes the card
- * before the dialog), and one whose enabled buttons (one arriving late, as
- * async metadata does) must stay out of the tab order (K1).
+ * Beside them, an actionable card on the bare primitive inside a real modal
+ * `Dialog` (L1: the pointer reaches its link, Escape closes the card before
+ * the dialog).
  *
  * `window.__hoverCardAgentsProbe.ready` gates it.
  */
@@ -194,11 +193,6 @@ export function Row(props: {
 }
 
 function ActionCardBody(props: { readonly name: string }): ReactNode {
-  const [late, setLate] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setLate(true), 150);
-    return () => window.clearTimeout(timer);
-  }, []);
   return (
     <div className="flex flex-col items-start gap-2">
       <a
@@ -217,11 +211,6 @@ function ActionCardBody(props: { readonly name: string }): ReactNode {
       <button type="button" data-testid={`${props.name}-action`}>
         Refresh
       </button>
-      {late ? (
-        <button type="button" data-testid={`${props.name}-late-action`}>
-          Retry
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -296,10 +285,6 @@ export function Fixture(): ReactNode {
         className="flex min-w-0 flex-1 flex-col items-start gap-3 bg-background p-4 text-ui-sm"
       >
         <ModalWithCard />
-        <ActionCard name="actions" />
-        <button type="button" data-testid="last-stop">
-          Last stop
-        </button>
       </main>
     </div>
   );

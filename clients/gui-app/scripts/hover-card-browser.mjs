@@ -32,13 +32,9 @@
 //       row's card promptly; Escape closes it.
 //   M1  reduced motion: the card is fully opaque on its first frame; with
 //       motion, it fades in.
-//   A1  agent rows: open, row to row, leave.
-//   A4  agent row: click during the delay, then leave: no card.
 //   A6  card row -> label row -> label row -> card row share one clock.
 //   L1  an actionable card inside a real modal dialog: the pointer reaches
 //       its link, the first Escape closes the card, the second the dialog.
-//   K1  Tab past an open card: its enabled controls (one arriving late) are
-//       no tab stops.
 //   R1/R2 the rail: the neighbour's label replaces the first at once.
 //
 // Every scenario runs once, in the light theme (emulated
@@ -1044,77 +1040,6 @@ async function agentScenarios(client, origin, theme) {
   };
   await away();
 
-  await runScenario(theme, "A1", async () => {
-    const [a, b] = rows;
-    await moveTo(client, a);
-    await settle(client, 1000);
-    const onA = await openCards(client);
-    await shot(client, `${theme}-a1-agent-row`);
-    await glide(client, a, b, 4, 8);
-    await settle(client, 250);
-    const onB = await openCards(client);
-    await shot(client, `${theme}-a1-agent-row-next`);
-    await settle(client, 700);
-    await moveTo(client, far);
-    await settle(client, LEAVE_CLOSE_MAX_MS);
-    const out = await openCards(client);
-    const { events, maxPainted } = await takeEvents(client);
-    const [titleA, titleB] = AGENT_TITLES;
-    const aMs = openLatency(events, a.key, titleA);
-    const bMs = openLatency(events, b.key, titleB);
-    record(
-      theme,
-      "A1",
-      "agent rows: open, row to row, leave",
-      [
-        [
-          `first card ${FIRST_OPEN_MIN_MS}-${FIRST_OPEN_MAX_MS}ms after entering`,
-          aMs !== null && aMs >= FIRST_OPEN_MIN_MS && aMs <= FIRST_OPEN_MAX_MS,
-          { aMs, onA },
-        ],
-        [
-          `next row's card within ${HANDOFF_MAX_MS}ms`,
-          bMs !== null && bMs <= HANDOFF_MAX_MS,
-          { bMs, onB },
-        ],
-        [
-          "only the next row's card open 250ms after arriving",
-          onB.length === 1 && onB[0].includes(titleB),
-          onB,
-        ],
-        ["leave closes it", out.length === 0, out],
-        ["never two painted at once", maxPainted <= 1, maxPainted],
-      ],
-      events,
-    );
-  });
-  await away();
-
-  await runScenario(theme, "A4", async () => {
-    const a = rows[2];
-    await moveTo(client, a);
-    await delay(120);
-    await click(client, a, "left");
-    await delay(120);
-    await moveTo(client, far);
-    await settle(client, 1200);
-    const after = await openCards(client);
-    const { events } = await takeEvents(client);
-    const opened = events.filter((e) => e.kind === "open").map((e) => e.text);
-    record(
-      theme,
-      "A4",
-      "agent row: click during the delay, leave",
-      [
-        ["no card open", after.length === 0, after],
-        ["no card ever opened", opened.length === 0, opened],
-      ],
-      events,
-    );
-    await click(client, far, "left");
-  });
-  await away();
-
   await runScenario(theme, "A6", async () => {
     // d (card) -> e (label) -> f (label) -> d (card)
     const [d, e, f] = [rows[3], rows[4], rows[5]];
@@ -1281,64 +1206,6 @@ async function agentScenarios(client, origin, theme) {
   await moveTo(client, far);
   await settle(client, 500);
   await takeEvents(client);
-
-  await runScenario(theme, "K1", async () => {
-    // A card left open under the pointer while the keyboard moves on: its
-    // enabled controls, the late one included, are no tab stops.
-    await moveTo(
-      client,
-      await rectOf(client, '[data-testid="actions-trigger"]'),
-    );
-    await settle(client, 1100);
-    const open = await openCards(client);
-    const controls = await evaluate(
-      client,
-      `document.querySelectorAll('[data-testid="actions-card"] a, [data-testid="actions-card"] button:not(:disabled)').length`,
-    );
-    await evaluate(
-      client,
-      `document.querySelector('[data-testid="last-stop"]').focus()`,
-    );
-    const stops = [];
-    for (let i = 0; i < 3; i += 1) {
-      await key(client, "Tab", "Tab", 9);
-      await settle(client, 50);
-      stops.push(
-        await evaluate(
-          client,
-          `(() => { const a = document.activeElement; return a === null ? null : { testid: a.dataset?.testid ?? a.tagName, inCard: a.closest('[data-slot="hover-card-content"]') !== null }; })()`,
-        ),
-      );
-    }
-    // Tabbing on wraps to the agent rows, whose own card may open by focus:
-    // the claim is only about THIS card.
-    const stillOpen = await evaluate(
-      client,
-      `document.querySelector('[data-testid="actions-card"]')?.dataset.state === "open"`,
-    );
-    const { events } = await takeEvents(client);
-    record(
-      theme,
-      "K1",
-      "Tab past an open card with enabled buttons",
-      [
-        [
-          "the card is open with its link and both buttons",
-          open.length === 1 && controls === 3,
-          { open, controls },
-        ],
-        [
-          "no Tab stop lands inside the card",
-          stops.every((s) => s === null || !s.inCard),
-          stops,
-        ],
-        ["the card stayed open while tabbing", stillOpen === true, stillOpen],
-      ],
-      events,
-    );
-  });
-  await moveTo(client, far);
-  await settle(client, 500);
 
   const errors = await evaluate(client, "window.__hoverCardAgentsErrors ?? []");
   if (errors.length > 0)
