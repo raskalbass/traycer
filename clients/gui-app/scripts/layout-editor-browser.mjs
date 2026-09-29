@@ -7200,15 +7200,24 @@ async function runParityPhase(client, pageUrl, pageLoads) {
  * a peer's save, which fails the phase at whatever step it was on with the
  * probe gone. HMR itself stays on: it is the channel the cold dependency
  * optimizer (`--force`) reloads the first boot through.
+ *
+ * Vite excludes `__tests__` from inferred optimizer entries. Name the fixture
+ * documents so their dependencies join the initial scan instead of being
+ * discovered during the first navigation.
  */
 async function spawnVite(port) {
   const configDir = await mkdtemp(path.join(tmpdir(), "layout-editor-vite-"));
   const configPath = path.join(configDir, "vite.no-watch.config.mjs");
+  const optimizeEntries = [
+    fixturePath,
+    canvasFixturePath,
+    sideStripFixturePath,
+  ].map((fixture) => `.${fixture}`);
   await writeFile(
     configPath,
     [
       `import base from ${JSON.stringify(path.join(projectRoot, "vitest.config.ts"))};`,
-      "export default { ...base, server: { ...base.server, watch: null } };",
+      `export default { ...base, optimizeDeps: { ...base.optimizeDeps, entries: ${JSON.stringify(optimizeEntries)} }, server: { ...base.server, watch: null } };`,
       "",
     ].join("\n"),
   );
