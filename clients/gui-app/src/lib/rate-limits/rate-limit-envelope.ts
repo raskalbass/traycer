@@ -7,6 +7,7 @@ import { isTransientRateLimitUnavailableReason } from "@traycer/protocol/host";
 import type { ResponseOfMethod } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { HostRpcRegistry } from "@/lib/host";
 
+import { hostQueryKeys } from "@/lib/query-keys/host-query-keys";
 import { invalidateProviderFamilyQueries } from "@/lib/query-keys/providers-query-keys";
 
 /** The `available: true` arm of `ProviderRateLimits` - the only shape worth retaining. */
@@ -140,7 +141,18 @@ function isManagedProfileCapableRateLimitsResponse(
   );
 }
 
-/** A gauge is host-local; refresh only that host's provider snapshot. */
+// Hosts owed a `providers.list` re-read once their rate-limit reads settle.
+const owedConvergence = new WeakMap<QueryClient, Set<string>>();
+
+/**
+ * A gauge is host-local; refresh only that host's provider snapshot. The
+ * re-read waits for the host's last in-flight rate-limit read to settle, so a
+ * burst of reads (every provider at reload) converges the list once, after the
+ * final capture, instead of once per response.
+ * ponytail: a slow straggler read holds its host's convergence until it
+ * settles; a host capture timestamp on `host.getRateLimitUsage` would let each
+ * response converge only when it is newer than the cached row.
+ */
 function invalidateProvidersListForConvergence(
   queryClient: QueryClient,
   queryKey: QueryKey,
@@ -149,12 +161,36 @@ function invalidateProvidersListForConvergence(
   if (!isManagedProfileCapableRateLimitsResponse(response)) return;
   const hostId = queryKey[1];
   if (typeof hostId !== "string") return;
-  invalidateProviderFamilyQueries(
-    queryClient,
-    hostId,
-    ["providers.list"],
-    "classic",
-  );
+  let owed = owedConvergence.get(queryClient);
+  if (owed === undefined) {
+    owed = new Set();
+    owedConvergence.set(queryClient, owed);
+    subscribeConvergenceOnSettle(queryClient, owed);
+  }
+  owed.add(hostId);
+}
+
+function subscribeConvergenceOnSettle(
+  queryClient: QueryClient,
+  owed: Set<string>,
+): void {
+  queryClient.getQueryCache().subscribe((event) => {
+    if (event.type !== "updated" && event.type !== "removed") return;
+    for (const hostId of owed) {
+      const rateLimitReads = hostQueryKeys.methodScope(
+        hostId,
+        "host.getRateLimitUsage",
+      );
+      if (queryClient.isFetching({ queryKey: rateLimitReads }) > 0) continue;
+      owed.delete(hostId);
+      invalidateProviderFamilyQueries(
+        queryClient,
+        hostId,
+        ["providers.list"],
+        "classic",
+      );
+    }
+  });
 }
 
 /**

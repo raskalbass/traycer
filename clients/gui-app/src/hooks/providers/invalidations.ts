@@ -40,5 +40,3 @@ export { PROVIDER_INVALIDATIONS } from "@/lib/query-keys/providers-query-keys";
 export const PROFILE_API_KEY_MUTATION_SCOPE = {
   id: "providers.profileApiKey",
 } as const;
-
-export { isMutableProviderQuery } from "@/lib/query-keys/providers-query-keys";

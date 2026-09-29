@@ -41,8 +41,6 @@ import {
   cloudBearerFenceRestrictions,
 } from "../../eslint/traycer-cloud-bearer-fence-rules.mjs";
 
-const reactRenderStateTemporaryExemptions = [];
-
 // ── IMPORT RESTRICTIONS ARE COMPOSED FROM DIMENSIONS. READ THIS BEFORE ADDING ONE. ──
 //
 // Flat config REPLACES a rule's options; it does not merge them. So the LAST
@@ -3209,15 +3207,6 @@ export default tseslint.config(
       ],
     },
   },
-
-  // Ticket 01 row-store migration: remove entries as snapshots land.
-  ...reactRenderStateTemporaryExemptions.map((file) => ({
-    files: [file],
-    rules: {
-      "react-render-state/no-render-cache-read": "off",
-      "react-render-state/no-unexplained-use-no-memo": "off",
-    },
-  })),
 
   // Oxlint runs first and owns every compatible rule represented in its
   // generated config, including the type-aware rules. Keep this last so ESLint

@@ -1,5 +1,6 @@
 import {
   hashKey,
+  type Query,
   type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
@@ -84,12 +85,42 @@ const providerInvalidations = new WeakMap<
   Map<string, ProviderInvalidation>
 >();
 
-/** A burst owns one refresh; a change during that refresh retains one successor. */
+function selectsProviderQuery(
+  query: Query,
+  providerIds:
+    | ReadonlyArray<string | null>
+    | "classic"
+    | { readonly receivedBy: number },
+  classicKey: string,
+): boolean {
+  if (providerIds === "classic") return query.queryHash === classicKey;
+  if ("receivedBy" in providerIds) {
+    const { state } = query;
+    const cutoff = providerIds.receivedBy;
+    return (
+      ((state.dataUpdatedAt !== 0 && state.dataUpdatedAt <= cutoff) ||
+        (state.status === "error" && state.errorUpdatedAt <= cutoff)) &&
+      isMutableProviderQuery(query.queryKey, null)
+    );
+  }
+  return providerIds.some((providerId) =>
+    isMutableProviderQuery(query.queryKey, providerId),
+  );
+}
+
+/**
+ * A burst owns one refresh; a change during that refresh retains one successor.
+ * `{ receivedBy }` selects every provider's queries answered (data or error)
+ * no later than that instant, leaving newer and still-unanswered reads alone.
+ */
 export function invalidateProviderFamilyQueries(
   queryClient: QueryClient,
   hostId: string,
   methods: ReadonlyArray<keyof HostRpcRegistry & string>,
-  providerIds: ReadonlyArray<string | null> | "classic",
+  providerIds:
+    | ReadonlyArray<string | null>
+    | "classic"
+    | { readonly receivedBy: number },
 ): void {
   let pending = providerInvalidations.get(queryClient);
   if (pending === undefined) {
@@ -101,11 +132,7 @@ export function invalidateProviderFamilyQueries(
     queryKey: hostQueryKeys.scope(hostId),
     predicate: (query) =>
       methods.some((method) => query.queryKey[2] === method) &&
-      (providerIds === "classic"
-        ? query.queryHash === classicKey
-        : providerIds.some((providerId) =>
-            isMutableProviderQuery(query.queryKey, providerId),
-          )),
+      selectsProviderQuery(query, providerIds, classicKey),
   })) {
     const existing = pending.get(query.queryHash);
     if (existing !== undefined) {

@@ -17,6 +17,9 @@ import {
   type ProviderRateLimitEnvelope,
   type RateLimitUsageResponse,
 } from "@/lib/rate-limits/rate-limit-envelope";
+import { DEFAULT_ACCOUNT_CONTEXT } from "@traycer/protocol/common/schemas";
+import type { HostRpcRegistry } from "@/lib/host";
+import { queryKeys } from "@/lib/query-keys";
 import { providersListQueryKey } from "@/lib/query-keys/providers-query-keys";
 
 const GOOD: ProviderRateLimits = {
@@ -601,14 +604,36 @@ describe("mapResponseToProviderRateLimitEnvelope providers.list convergence", ()
     for (let hop = 0; hop < 20; hop += 1) await Promise.resolve();
   }
 
-  function fetchResolved(
+  /**
+   * A `host.getRateLimitUsage` read on the serving host, folded through the
+   * mapper inside its queryFn the way `fetchProviderRateLimits` does. The
+   * convergence read is owed when the host's last such read settles, so it is
+   * driven by real fetches rather than a bare mapper call.
+   */
+  async function fetchResolved(
     queryClient: QueryClient,
     provider: ProviderRateLimits | null,
-  ): void {
-    mapResponseToProviderRateLimitEnvelope({
-      response: response(provider),
-      queryClient,
-      queryKey: RATE_LIMIT_KEY,
+  ): Promise<void> {
+    const queryKey = queryKeys.hostMethod<
+      HostRpcRegistry,
+      "host.getRateLimitUsage"
+    >("host-a", "host.getRateLimitUsage", {
+      accountContext: DEFAULT_ACCOUNT_CONTEXT,
+      providerId: "codex",
+      profileId: provider?.provider ?? "aperture-only",
+    });
+    await queryClient.fetchQuery({
+      queryKey,
+      queryFn: () =>
+        Promise.resolve(
+          mapResponseToProviderRateLimitEnvelope({
+            response: response(provider),
+            queryClient,
+            queryKey,
+          }),
+        ),
+      staleTime: 0,
+      retry: false,
     });
   }
 
@@ -639,7 +664,7 @@ describe("mapResponseToProviderRateLimitEnvelope providers.list convergence", ()
       const queryClient = new QueryClient();
       const classic = await watchSettled(queryClient, CLASSIC_KEY);
 
-      fetchResolved(queryClient, snapshot);
+      await fetchResolved(queryClient, snapshot);
       await flush();
 
       expect(classic).toHaveLength(converges ? 2 : 1);
@@ -673,7 +698,7 @@ describe("mapResponseToProviderRateLimitEnvelope providers.list convergence", ()
       untouched.map((key) => watchSettled(queryClient, key)),
     );
 
-    fetchResolved(queryClient, GOOD);
+    await fetchResolved(queryClient, GOOD);
     await flush();
 
     expect(classic).toHaveLength(2);
@@ -687,9 +712,11 @@ describe("mapResponseToProviderRateLimitEnvelope providers.list convergence", ()
     const queryClient = new QueryClient();
     const classic = await watchSettled(queryClient, CLASSIC_KEY);
 
-    fetchResolved(queryClient, GOOD);
-    fetchResolved(queryClient, CODEX_GOOD);
-    fetchResolved(queryClient, GROK_GOOD);
+    await Promise.all([
+      fetchResolved(queryClient, GOOD),
+      fetchResolved(queryClient, CODEX_GOOD),
+      fetchResolved(queryClient, GROK_GOOD),
+    ]);
     await flush();
 
     expect(classic).toHaveLength(2);
