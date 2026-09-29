@@ -117,8 +117,25 @@ async function evaluate(client, expression) {
   return r.result.value;
 }
 
-async function waitForSelector(client, selector) {
-  const deadline = Date.now() + 15000;
+/** A case's own waits, once the app has booted. */
+const CASE_TIMEOUT_MS = 15_000;
+
+/**
+ * The first load of a run compiles the whole app (the gate starts its own
+ * Vite), which on a fresh CI runner no longer fits a case's wait. Boot the
+ * fixture once, give it the long deadline, and let the dependency optimizer's
+ * reload settle before any case measures anything.
+ */
+async function warmUp(client, origin) {
+  await client.send("Page.navigate", {
+    url: new URL(FIXTURE_PATH, origin).href,
+  });
+  await waitForSelector(client, '[data-testid="user-menu-trigger"]', 90_000);
+  await delay(3_000);
+}
+
+async function waitForSelector(client, selector, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (
       await evaluate(
@@ -287,7 +304,7 @@ async function runCase(
     trigger === "avatar"
       ? '[data-testid="user-menu-trigger"]'
       : '[data-testid="notifications-bell"]';
-  await waitForSelector(client, triggerSelector);
+  await waitForSelector(client, triggerSelector, CASE_TIMEOUT_MS);
   await evaluate(client, "document.fonts.ready");
   await evaluate(
     client,
@@ -403,7 +420,7 @@ async function runNarrowToggleCase(client, origin, kind, gesture, exceptions) {
   const url = new URL(FIXTURE_PATH, origin);
   url.searchParams.set("fixture", kind);
   await client.send("Page.navigate", { url: url.href });
-  await waitForSelector(client, triggerSelector);
+  await waitForSelector(client, triggerSelector, CASE_TIMEOUT_MS);
   await evaluate(client, "document.fonts.ready");
   await evaluate(
     client,
@@ -412,7 +429,7 @@ async function runNarrowToggleCase(client, origin, kind, gesture, exceptions) {
 
   if (gesture === "click") await clickSelector(client, triggerSelector);
   else await focusAndPressKey(client, triggerSelector, "Enter");
-  await waitForSelector(client, popupSelector);
+  await waitForSelector(client, popupSelector, CASE_TIMEOUT_MS);
 
   const stayOpen = await sampleStayOpen(client, triggerSelector, popupSelector);
   const identity = () =>
@@ -560,6 +577,7 @@ async function main() {
       )
       .filter(({ kind, gesture }) => `${kind}/${gesture}`.includes(caseFilter));
     assert(cases.length > 0 || toggleCases.length > 0, "No matching cases");
+    await warmUp(client, started.origin);
     for (const testCase of cases) {
       try {
         await runCase(client, started.origin, testCase, exceptions);

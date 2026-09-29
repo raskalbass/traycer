@@ -1144,9 +1144,14 @@ describe("sidebar row first-use overlays", () => {
     renderArtifactTree();
     expectNoOverlayRoots();
     await user.click(screen.getByTestId(`epic-sidebar-more-${ART_A}`));
-    await waitFor(() => {
-      expect(screen.getByTestId(`epic-sidebar-rename-${ART_A}`)).toBeTruthy();
-    });
+    // The menu root mounts on this click, then opens: on a loaded CI shard
+    // that first mount has run past waitFor's default second.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId(`epic-sidebar-rename-${ART_A}`)).toBeTruthy();
+      },
+      { timeout: 5_000 },
+    );
     expect(screen.getByRole("menu")).toBeTruthy();
     expect(overlayMounted.dropdownMenu).toBe(1);
     expect(screen.queryByTestId(`epic-sidebar-rename-${ART_B}`)).toBeNull();

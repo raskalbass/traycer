@@ -542,6 +542,27 @@ try {
   ctx.drawImage(a,0,0);const x=ctx.getImageData(0,0,a.width,a.height);ctx.clearRect(0,0,a.width,a.height);ctx.drawImage(b,0,0);const y=ctx.getImageData(0,0,b.width,b.height);let pixels=0,maxDelta=0;
   for(let i=0;i<x.data.length;i+=4){let changed=false;for(let c=0;c<4;c++){const d=Math.abs(x.data[i+c]-y.data[i+c]);maxDelta=Math.max(maxDelta,d);changed ||= d!==0;}if(changed)pixels++;x.data.set(changed?[255,0,80,255]:[0,0,0,0],i);}ctx.putImageData(x,0,0);return {pixels,maxDelta,image:canvas.toDataURL()};})()`);
   }
+  /**
+   * On a cold runner Vite's optimizer can discover a family's dependencies
+   * only when that family first loads, and reload the page mid-case - a CDP
+   * evaluate then waits out its whole timeout. Load every family the lanes
+   * start from once, then let the optimizer settle, before any lane runs.
+   */
+  async function warmUpFamilies() {
+    for (const family of [
+      "dialog",
+      "popover",
+      "frame",
+      "drawer",
+      "dropdown-menu",
+      "context-menu",
+      "menubar",
+      "select",
+    ]) {
+      await load(family, "default", "toast", views[0], "light");
+    }
+    await delay(3_000);
+  }
   async function toastChecks() {
     // D16: DropdownMenu, ContextMenu, Menubar and Select all route their
     // outside-dismiss through isToastEvent same as Popover, so a toast stays
@@ -2604,14 +2625,14 @@ try {
     }
   }
   async function passivePreviewInMenuChecks() {
-    // D16: real DropdownMenu items serving as passive Tooltip/HoverCard
-    // triggers - each must present while the menu stays open, hovering
-    // away must not dismiss or steal ownership from the menu, and ordinary
-    // menu dismissal (Escape) must still close everything afterward.
-    for (const [item, popup] of [
-      ["tooltip-preview", "tooltip-in-menu"],
-      ["hover-preview", "preview-in-menu"],
-    ]) {
+    // D16: a real DropdownMenu item serving as a passive Tooltip trigger -
+    // it must present while the menu stays open, hovering away must not
+    // dismiss or steal ownership from the menu, and ordinary menu dismissal
+    // (Escape) must still close everything afterward. The HoverCard row this
+    // loop also ran is gone with main's hover card, which stays shut while
+    // any menu is open (`ui/hover-card.tsx`, its own suite's case (k)); no
+    // product surface puts a hover card inside a menu.
+    for (const [item, popup] of [["tooltip-preview", "tooltip-in-menu"]]) {
       await load(
         "dropdown-menu",
         "passive-previews",
@@ -3304,6 +3325,7 @@ try {
         ].includes(only),
       "Unknown behavior lane",
     );
+    await warmUpFamilies();
     if (!only || only === "toast") await toastChecks();
     if (!only || only === "conceal") await concealChecks();
     if (!only || only === "nested") await nestedChecks();
