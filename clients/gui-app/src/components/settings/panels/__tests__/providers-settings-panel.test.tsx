@@ -5311,7 +5311,7 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(providerMocks.awaitLoginMutate).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
-  it("cancels the known re-auth profile once its pending initial start answers with a login", async () => {
+  it("cancels the known re-auth profile while its initial start is pending", async () => {
     providerMocks.listResult.data = {
       providers: [
         {
@@ -5381,11 +5381,11 @@ describe("<ProvidersSettingsPanel />", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
 
-    // The panel closes on the press, but nothing has said yet whether this
-    // start holds a login: the answer might be that the pack is still
-    // preparing, and a cancel keyed by the profile would then end a login
-    // another surface started for it.
-    expect(providerMocks.cancelLoginMutate).not.toHaveBeenCalled();
+    expect(providerMocks.cancelLoginMutate).toHaveBeenCalledTimes(1);
+    expect(providerMocks.cancelLoginMutate).toHaveBeenCalledWith({
+      providerId: "codex",
+      profileId: "managed-1",
+    });
     expect(screen.queryByText("Switching account")).toBeNull();
 
     await act(() => {
@@ -5398,10 +5398,6 @@ describe("<ProvidersSettingsPanel />", () => {
     });
 
     expect(providerMocks.cancelLoginMutate).toHaveBeenCalledTimes(1);
-    expect(providerMocks.cancelLoginMutate).toHaveBeenCalledWith({
-      providerId: "codex",
-      profileId: "managed-1",
-    });
     expect(providerMocks.awaitLoginMutate).not.toHaveBeenCalled();
   });
 
@@ -5735,10 +5731,12 @@ describe("<ProvidersSettingsPanel />", () => {
       createProfile: null,
     });
 
-    // Nothing has said yet whether the restart holds a login, so its answer
-    // decides what the press releases.
     fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
-    expect(providerMocks.cancelLoginMutate).not.toHaveBeenCalled();
+    expect(providerMocks.cancelLoginMutate).toHaveBeenCalledTimes(1);
+    expect(providerMocks.cancelLoginMutate).toHaveBeenCalledWith({
+      providerId: "codex",
+      profileId: "managed-1",
+    });
 
     await act(() => {
       retryCall[1].onSuccess({
@@ -5749,10 +5747,6 @@ describe("<ProvidersSettingsPanel />", () => {
       return Promise.resolve();
     });
     expect(providerMocks.cancelLoginMutate).toHaveBeenCalledTimes(1);
-    expect(providerMocks.cancelLoginMutate).toHaveBeenCalledWith({
-      providerId: "codex",
-      profileId: "managed-1",
-    });
     expect(providerMocks.awaitLoginMutate).toHaveBeenCalledTimes(1);
   });
 
