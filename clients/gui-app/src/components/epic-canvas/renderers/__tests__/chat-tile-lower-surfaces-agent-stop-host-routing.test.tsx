@@ -21,10 +21,6 @@ import {
 import { stopAgentRequestSchema } from "@traycer/protocol/host/agent/shared";
 import type { BackgroundItem } from "@traycer/protocol/host/agent/gui/subscribe";
 
-// Typed as `unknown` so the asymmetric matcher's `any` never lands in an
-// object property (`no-unsafe-assignment`).
-const ANY_PREDICATE: unknown = expect.any(Function);
-
 /**
  * The composer's cascade-stop dialog must send "Stop all" to the tab's own
  * host, even when the app's selected host differs. Production routing
@@ -403,7 +399,17 @@ describe("composer cascade-stop dialog host routing", () => {
     const queryClient = new QueryClient({
       defaultOptions: { mutations: { retry: false } },
     });
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    // Each host's cached agent list: Stop all invalidates only the tab host's.
+    const tabHostListKey = [
+      ...hostQueryKeys.methodScope(TAB_HOST.hostId, "agent.list"),
+      {},
+    ];
+    const defaultHostListKey = [
+      ...hostQueryKeys.methodScope(DEFAULT_HOST.hostId, "agent.list"),
+      {},
+    ];
+    queryClient.setQueryData(tabHostListKey, { agents: [] });
+    queryClient.setQueryData(defaultHostListKey, { agents: [] });
     render(
       tile(
         surfacesProps(() => null),
@@ -434,11 +440,13 @@ describe("composer cascade-stop dialog host routing", () => {
       websocketUrl: TAB_HOST.websocketUrl,
     });
     await waitFor(() => {
-      expect(invalidateSpy).toHaveBeenCalledWith({
-        queryKey: hostQueryKeys.methodScope(TAB_HOST.hostId, "agent.list"),
-        predicate: ANY_PREDICATE,
-      });
+      expect(queryClient.getQueryState(tabHostListKey)?.isInvalidated).toBe(
+        true,
+      );
     });
+    expect(queryClient.getQueryState(defaultHostListKey)?.isInvalidated).toBe(
+      false,
+    );
   });
 
   it("stops only this agent's turn locally, with no agent.stop RPC at all", async () => {

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import {
   mockLocalHostEntry,
@@ -17,10 +17,6 @@ import { useHostNotificationsSetConfigForClient } from "@/hooks/host/use-host-no
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { hostRpcSchedulingPolicy } from "@/lib/host-rpc-policy/host-method-policy-table";
 import { hostQueryKeys } from "@/lib/query-keys";
-
-// Typed as `unknown` so the asymmetric matcher's `any` never lands in an
-// object property (`no-unsafe-assignment`).
-const ANY_PREDICATE: unknown = expect.any(Function);
 
 type NotificationConfig = ResponseOfMethod<
   HostRpcRegistry,
@@ -43,7 +39,18 @@ describe("useHostNotificationsSetConfigForClient", () => {
         mutations: { retry: false },
       },
     });
-    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+    // The config each host has cached: only the host that was captured when
+    // the mutation started may be invalidated by its success.
+    const capturedHostKey = [
+      ...hostQueryKeys.methodScope("host-a", "host.notifications.getConfig"),
+      {},
+    ];
+    const otherHostKey = [
+      ...hostQueryKeys.methodScope("host-b", "host.notifications.getConfig"),
+      {},
+    ];
+    queryClient.setQueryData(capturedHostKey, makeNotificationConfig());
+    queryClient.setQueryData(otherHostKey, makeNotificationConfig());
     const request = makeSetConfigRequest();
     const setRequests: SetConfigRequest[] = [];
     let resolveMutation: (value: NotificationConfig) => void = () => undefined;
@@ -111,14 +118,11 @@ describe("useHostNotificationsSetConfigForClient", () => {
     });
 
     await waitFor(() => {
-      expect(invalidateQueries).toHaveBeenCalledWith({
-        queryKey: hostQueryKeys.methodScope(
-          "host-a",
-          "host.notifications.getConfig",
-        ),
-        predicate: ANY_PREDICATE,
-      });
+      expect(queryClient.getQueryState(capturedHostKey)?.isInvalidated).toBe(
+        true,
+      );
     });
+    expect(queryClient.getQueryState(otherHostKey)?.isInvalidated).toBe(false);
   });
 });
 
