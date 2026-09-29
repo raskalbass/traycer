@@ -482,6 +482,18 @@ async function rightClickAt(
   });
 }
 
+/** False while a capture-phase listener above the body stops clicks. */
+function clickReachesBody(): boolean {
+  let reached = false;
+  const onClick = (): void => {
+    reached = true;
+  };
+  document.body.addEventListener("click", onClick, true);
+  document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  document.body.removeEventListener("click", onClick, true);
+  return reached;
+}
+
 /**
  * jsdom may construct pointer events without `pointerType`. The long-press
  * path keys off that field, so stamp it (and the press point) onto whatever
@@ -1130,6 +1142,13 @@ describe("sidebar row first-use overlays", () => {
     // gesture's own end - a later test's real keyboard activation of an
     // unrelated Radix menu item silently no-ops with those still attached.
     await user.pointer([{ keys: "[/MouseLeft]", target: row }]);
+    // The drag's end leaves dnd-kit's click suppressor (see afterEach) on the
+    // document until 50ms after its sensor detaches, and real timers flush
+    // nothing. Two tests on, the artifact more menu's first click landed
+    // inside that window on CI and was eaten, so the menu never opened.
+    await waitFor(() => {
+      expect(clickReachesBody()).toBe(true);
+    });
   });
 
   it("mounts no overlay roots on a never-touched artifact row", () => {
@@ -1144,14 +1163,9 @@ describe("sidebar row first-use overlays", () => {
     renderArtifactTree();
     expectNoOverlayRoots();
     await user.click(screen.getByTestId(`epic-sidebar-more-${ART_A}`));
-    // The menu root mounts on this click, then opens: on a loaded CI shard
-    // that first mount has run past waitFor's default second.
-    await waitFor(
-      () => {
-        expect(screen.getByTestId(`epic-sidebar-rename-${ART_A}`)).toBeTruthy();
-      },
-      { timeout: 5_000 },
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId(`epic-sidebar-rename-${ART_A}`)).toBeTruthy();
+    });
     expect(screen.getByRole("menu")).toBeTruthy();
     expect(overlayMounted.dropdownMenu).toBe(1);
     expect(screen.queryByTestId(`epic-sidebar-rename-${ART_B}`)).toBeNull();
