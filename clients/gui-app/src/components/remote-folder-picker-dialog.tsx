@@ -1,4 +1,6 @@
 import {
+  useCallback,
+  useSyncExternalStore,
   useMemo,
   useRef,
   useState,
@@ -9,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CornerLeftUp, Folder, Settings2 } from "lucide-react";
 import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
+import { subscribeAnyHostRowChanged } from "@traycer-clients/shared/host-client/host-connection-registry";
 import type { HostKind } from "@traycer-clients/shared/host-client/host-directory";
 import type {
   WorkspaceBrowseFolderEntryV11,
@@ -459,7 +462,6 @@ function useRemoteFolderPickerNative(args: {
   readonly canRefresh: boolean;
   readonly refetch: () => Promise<unknown>;
 }) {
-  "use no memo"; // Render reads the live host directory through a stable client.
   const requestId = useRemoteFolderPickerStore((state) => state.requestId);
   const settle = useRemoteFolderPickerStore((state) => state.settle);
   const client = useRemoteFolderPickerStore((state) => state.client);
@@ -467,10 +469,13 @@ function useRemoteFolderPickerNative(args: {
   const queryClient = useQueryClient();
   const [nativePickerPending, setNativePickerPending] = useState(false);
   const nativePickerPendingRef = useRef(false);
-  const activeHost = client?.getActiveHost() ?? null;
+  const hostKind = useSyncExternalStore(
+    subscribeAnyHostRowChanged,
+    useCallback(() => client?.getActiveHost()?.kind ?? null, [client]),
+  );
   const nativePickerDisabledReason = readNativePickerDisabledReason(
     nativePickerPending,
-    activeHost?.kind ?? null,
+    hostKind,
     runnerHost?.workspaceFolders.canPickNatively === true,
   );
 
@@ -485,33 +490,39 @@ function useRemoteFolderPickerNative(args: {
     nativePickerPendingRef.current = true;
     setNativePickerPending(true);
     const hostId = client?.getActiveHostId() ?? null;
-    try {
-      const paths = await runnerHost.workspaceFolders.pickFolders();
-      if (!isCurrentPickerRequest(requestId)) return;
-      if (paths.length === 0) {
-        if (args.canRefresh) void args.refetch();
-        return;
-      }
-      await queryClient.invalidateQueries({
-        queryKey: hostQueryKeys.methodScope(hostId, "workspace.browseFolders"),
-        refetchType: "none",
-      });
-      settle({ kind: "prepare", folderPaths: paths });
-    } catch {
-      if (isCurrentPickerRequest(requestId)) {
-        reportableErrorToast("Couldn't open the folder picker.", undefined, {
-          title: "Could not add workspace folders",
-          message: "The folder picker failed to open.",
-          code: null,
-          source: "Workspace folders",
+    await Promise.resolve()
+      .then(() => runnerHost.workspaceFolders.pickFolders())
+      .then(async (paths) => {
+        if (!isCurrentPickerRequest(requestId)) return;
+        if (paths.length === 0) {
+          if (args.canRefresh) void args.refetch();
+          return;
+        }
+        await queryClient.invalidateQueries({
+          queryKey: hostQueryKeys.methodScope(
+            hostId,
+            "workspace.browseFolders",
+          ),
+          refetchType: "none",
         });
-      }
-    } finally {
-      if (isCurrentPickerRequest(requestId)) {
-        nativePickerPendingRef.current = false;
-        setNativePickerPending(false);
-      }
-    }
+        settle({ kind: "prepare", folderPaths: paths });
+      })
+      .catch(() => {
+        if (isCurrentPickerRequest(requestId)) {
+          reportableErrorToast("Couldn't open the folder picker.", undefined, {
+            title: "Could not add workspace folders",
+            message: "The folder picker failed to open.",
+            code: null,
+            source: "Workspace folders",
+          });
+        }
+      })
+      .finally(() => {
+        if (isCurrentPickerRequest(requestId)) {
+          nativePickerPendingRef.current = false;
+          setNativePickerPending(false);
+        }
+      });
   };
 
   return { chooseNatively, nativePickerDisabledReason };
@@ -1098,7 +1109,10 @@ function useKeyboardDirectoryAim(args: {
   const [keyboardAim, setKeyboardAim] = useState<KeyboardDirectoryAim | null>(
     null,
   );
-  const hostId = args.client?.getActiveHostId() ?? null;
+  const hostId = useSyncExternalStore(
+    subscribeAnyHostRowChanged,
+    useCallback(() => args.client?.getActiveHostId() ?? null, [args.client]),
+  );
   const aimedAddTarget =
     keyboardAim !== null &&
     args.pathInput.source === "navigation" &&

@@ -5,6 +5,7 @@ import {
   commonIgnores,
   linterOptionsConfig,
 } from "../../eslint/flat-base.mjs";
+import reactRenderState from "../../eslint/react-render-state-plugin.mjs";
 import reactHooks from "eslint-plugin-react-hooks";
 import jsxA11y from "eslint-plugin-jsx-a11y";
 import react from "eslint-plugin-react";
@@ -39,6 +40,8 @@ import {
   cloudBearerFenceGuiAllowlist,
   cloudBearerFenceRestrictions,
 } from "../../eslint/traycer-cloud-bearer-fence-rules.mjs";
+
+const reactRenderStateTemporaryExemptions = [];
 
 // ── IMPORT RESTRICTIONS ARE COMPOSED FROM DIMENSIONS. READ THIS BEFORE ADDING ONE. ──
 //
@@ -2042,12 +2045,15 @@ export default tseslint.config(
       react: { version: "detect" },
     },
     plugins: {
+      "react-render-state": reactRenderState,
       "react-refresh": reactRefresh,
       "@tanstack/query": pluginQuery,
       "@tanstack/router": pluginRouter,
       react,
     },
     rules: {
+      "react-render-state/no-render-cache-read": "error",
+      "react-render-state/no-unexplained-use-no-memo": "error",
       // ── react-refresh ──────────────────────────────────────────────────────
       "react-refresh/only-export-components": [
         "warn",
@@ -3203,6 +3209,15 @@ export default tseslint.config(
       ],
     },
   },
+
+  // Ticket 01 row-store migration: remove entries as snapshots land.
+  ...reactRenderStateTemporaryExemptions.map((file) => ({
+    files: [file],
+    rules: {
+      "react-render-state/no-render-cache-read": "off",
+      "react-render-state/no-unexplained-use-no-memo": "off",
+    },
+  })),
 
   // Oxlint runs first and owns every compatible rule represented in its
   // generated config, including the type-aware rules. Keep this last so ESLint

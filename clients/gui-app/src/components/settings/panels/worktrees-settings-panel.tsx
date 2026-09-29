@@ -167,6 +167,7 @@ type WorktreeEnrichmentState = "ready" | "pending" | "unknown" | "unavailable";
 // a non-empty set shows only the selected tiers (union). Composes with search.
 type WorktreeTierFilterSet = ReadonlySet<WorktreeTier>;
 
+// render-cache: immutable base/enriched keys; merged entry is a pure function of both snapshots.
 const STALE_CLASSIFICATION_ENTRY_CACHE = new WeakMap<
   WorktreeHostEntryV14,
   WeakMap<WorktreeHostEntryV14, WorktreeHostEntryV14>
