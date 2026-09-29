@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { NarrowOnlyTooltip } from "@/components/home/toolbar/narrow-only-tooltip";
+import { useIsComposerNarrow } from "@/components/home/composer/composer-narrow-hooks";
 import { ToolbarPillButton } from "@/components/home/toolbar/toolbar-buttons";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { Badge } from "@/components/ui/badge";
@@ -154,15 +154,15 @@ export function PermissionsPicker(props: PermissionsPickerProps) {
   // shape a narrow composer already puts it in - icon alone, name on hover -
   // and no further.
   const compact = useRegionValue("access", "size") === "chip";
+  const narrow = useIsComposerNarrow();
   const tileId = useComposerTileId();
   const { ref: hotspotRef } = useLayoutRegion({
     regionId: "access",
     instanceId: tileId,
   });
 
-  // No tooltip of its own: the wrapper below already renders one (both branches
-  // ARE a `TooltipWrapper`), and the label is VISIBLE on this pill until the
-  // composer goes narrow - which is exactly when that wrapper takes over. A
+  // Keep one tooltip wrapper across compact and narrow layout changes so the
+  // menu trigger stays mounted. The visible label needs no tooltip. A
   // second wrapper here put two tooltips carrying the same text on one trigger,
   // and its guard span sat between `DropdownMenuTrigger` and the button, so
   // the menu's props - `aria-haspopup`, `aria-expanded`, `data-popup-open`,
@@ -185,18 +185,14 @@ export function PermissionsPicker(props: PermissionsPickerProps) {
 
   return (
     <DropdownMenu>
-      {compact ? (
-        <TooltipWrapper
-          label={accessibleLabel}
-          side="top"
-          sideOffset={undefined}
-          align={undefined}
-        >
-          {trigger}
-        </TooltipWrapper>
-      ) : (
-        <NarrowOnlyTooltip label={accessibleLabel}>{trigger}</NarrowOnlyTooltip>
-      )}
+      <TooltipWrapper
+        label={compact || narrow ? accessibleLabel : null}
+        side="top"
+        sideOffset={undefined}
+        align={undefined}
+      >
+        {trigger}
+      </TooltipWrapper>
       <DropdownMenuContent
         align="start"
         className="min-w-[min(90vw,20rem)]"

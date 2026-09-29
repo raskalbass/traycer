@@ -5,6 +5,12 @@
 //      ANCHOR_GATE_USER_MENU_SOURCE=<saved user-menu.tsx>
 //      ANCHOR_GATE_TOOLTIP_SOURCE=<saved tooltip-wrapper.tsx>
 //      ANCHOR_GATE_TOOLTIP_PRIMITIVE_SOURCE=<saved ui/tooltip.tsx>
+//      ANCHOR_GATE_WORKSPACE_SOURCE=<saved workspace-folder-summary-control.tsx>
+//        (fails only workspace-folder/add-recent/reanchor)
+//      ANCHOR_GATE_PERMISSIONS_SOURCE=<saved permissions-picker.tsx>
+//        (fails only permissions-picker/*/access-size-while-open)
+//      ANCHOR_GATE_RATE_LIMIT_SOURCE=<saved rate-limit-icon.tsx>
+//        (fails only rate-limit/*/form-while-open)
 //  - assertion sensitivity, fault injection in the driver:
 //      --fault close-after-placement   presses Escape once the popup is placed,
 //      so EVERY case's stay-open assertions must fail. It proves the
@@ -47,6 +53,9 @@ const controls = {
   tooltipPrimitiveSource:
     process.env.ANCHOR_GATE_TOOLTIP_PRIMITIVE_SOURCE ?? null,
   userMenuSource: process.env.ANCHOR_GATE_USER_MENU_SOURCE ?? null,
+  workspaceSource: process.env.ANCHOR_GATE_WORKSPACE_SOURCE ?? null,
+  permissionsSource: process.env.ANCHOR_GATE_PERMISSIONS_SOURCE ?? null,
+  rateLimitSource: process.env.ANCHOR_GATE_RATE_LIMIT_SOURCE ?? null,
 };
 
 // Real users hold a click ~100-200ms. Base opens on mousedown, so a handler
@@ -401,19 +410,54 @@ async function runCase(
 // the trigger or close the menu, either direction. One function per `kind`
 // (fixture query value + its trigger/popup selectors), not a duplicate per
 // component.
+const NARROW_TOGGLE = {
+  label: "toggle-while-open",
+  on: "window.anchorGate.setComposerNarrow(true)",
+  off: "window.anchorGate.setComposerNarrow(false)",
+};
 const NARROW_TOGGLE_KINDS = {
   "permissions-picker": {
     triggerSelector: 'button[aria-haspopup="menu"]',
     popupSelector: '[data-slot="dropdown-menu-positioner"]',
+    toggles: [
+      NARROW_TOGGLE,
+      // Layout > Composer's access size is read OUTSIDE the trigger, so it can
+      // swap the tooltip wrapper around the trigger - a remount if it differs.
+      {
+        label: "access-size-while-open",
+        on: 'window.anchorGate.setAccessSize("chip")',
+        off: 'window.anchorGate.setAccessSize("full")',
+      },
+    ],
   },
   "workspace-folder": {
     triggerSelector: '[data-testid="folder-add"]',
     popupSelector: '[data-slot="popover-positioner"]',
+    toggles: [NARROW_TOGGLE],
+  },
+  // The readings form drops the tooltip wrapper the icon forms have.
+  "rate-limit": {
+    triggerSelector: '[data-testid="rate-limit-header-button"]',
+    popupSelector: '[data-slot="popover-positioner"]',
+    toggles: [
+      {
+        label: "form-while-open",
+        on: 'window.anchorGate.setRateLimitForm("inline")',
+        off: 'window.anchorGate.setRateLimitForm("glyph")',
+      },
+    ],
   },
 };
 
-async function runNarrowToggleCase(client, origin, kind, gesture, exceptions) {
-  const name = `${kind}/${gesture}/toggle-while-open`;
+async function runNarrowToggleCase(
+  client,
+  origin,
+  kind,
+  gesture,
+  toggle,
+  exceptions,
+) {
+  const name = `${kind}/${gesture}/${toggle.label}`;
   console.log(`--- ${name} ---`);
   exceptions.length = 0;
   const { triggerSelector, popupSelector } = NARROW_TOGGLE_KINDS[kind];
@@ -438,10 +482,7 @@ async function runNarrowToggleCase(client, origin, kind, gesture, exceptions) {
       `({ same: window.anchorTrigger === document.querySelector(${JSON.stringify(triggerSelector)}), connected: window.anchorTrigger.isConnected, expanded: window.anchorTrigger.getAttribute("aria-expanded"), menuOpen: window.anchorGate.isPresented(${JSON.stringify(popupSelector)}) })`,
     );
 
-  await evaluate(
-    client,
-    "window.anchorGate.setComposerNarrow(true); undefined",
-  );
+  await evaluate(client, `${toggle.on}; undefined`);
   await awaitRafs(client, 2);
   const afterNarrow = await identity();
   // The narrow context can flip trigger labels while the popup is open, so the
@@ -451,10 +492,7 @@ async function runNarrowToggleCase(client, origin, kind, gesture, exceptions) {
     triggerSelector,
     popupSelector,
   );
-  await evaluate(
-    client,
-    "window.anchorGate.setComposerNarrow(false); undefined",
-  );
+  await evaluate(client, `${toggle.off}; undefined`);
   await awaitRafs(client, 2);
   const afterWide = await identity();
 
@@ -478,7 +516,7 @@ async function runNarrowToggleCase(client, origin, kind, gesture, exceptions) {
     `${name}: page threw: ${exceptions.join("\n")}`,
   );
   assertStaysOpen(name, stayOpen);
-  assertStaysOpen(`${name} (narrow)`, narrowStayOpen);
+  assertStaysOpen(`${name} (toggled)`, narrowStayOpen);
   for (const [phase, snap] of [
     ["narrow", afterNarrow],
     ["wide", afterWide],
@@ -488,6 +526,170 @@ async function runNarrowToggleCase(client, origin, kind, gesture, exceptions) {
       `${name} ${phase}: remounted the trigger or the menu is not presented: ${JSON.stringify(snap)}`,
     );
   }
+  console.log("  PASS");
+}
+
+const ADD_RECENT_CASE = "workspace-folder/add-recent/reanchor";
+const FOLDER_POPUP = '[data-slot="popover-positioner"]';
+// The trigger's identity changes with the item count: empty -> "folder-add",
+// populated -> the summary chip. The popup's own "Add folder" button shares the
+// first testid but comes later in the DOM (portalled), so document order picks
+// the trigger.
+const FOLDER_TRIGGER =
+  '[data-testid="workspace-summary-trigger"], [data-testid="folder-add"]';
+
+function sampleFolderAnchor(client) {
+  return evaluate(
+    client,
+    `(() => {
+      const trigger = document.querySelector(${JSON.stringify(FOLDER_TRIGGER)});
+      const popup = document.querySelector(${JSON.stringify(FOLDER_POPUP)});
+      const original = window.anchorTrigger;
+      return {
+        trigger: trigger?.getBoundingClientRect().toJSON() ?? null,
+        triggerTestId: trigger?.getAttribute("data-testid") ?? null,
+        expanded: trigger?.getAttribute("aria-expanded") ?? null,
+        connected: trigger?.isConnected ?? false,
+        popup: popup?.getBoundingClientRect().toJSON() ?? null,
+        presented: window.anchorGate.isPresented(${JSON.stringify(FOLDER_POPUP)}),
+        anchorX: popup === null ? null : getComputedStyle(popup).getPropertyValue("--anchor-x"),
+        anchorY: popup === null ? null : getComputedStyle(popup).getPropertyValue("--anchor-y"),
+        originalTrigger: { connected: original.isConnected, rect: original.getBoundingClientRect().toJSON() },
+      };
+    })()`,
+  );
+}
+
+// Empty -> populated -> empty while the popup stays open, against the CURRENT
+// trigger each time. A popup left on a detached trigger measures (0,0) and
+// jumps to the top-left, so its top/left leave the trigger entirely.
+async function runAddFolderReanchorCase(client, origin, exceptions) {
+  const name = ADD_RECENT_CASE;
+  console.log(`--- ${name} ---`);
+  exceptions.length = 0;
+  const url = new URL(FIXTURE_PATH, origin);
+  url.searchParams.set("fixture", "workspace-folder");
+  await client.send("Page.navigate", { url: url.href });
+  await waitForSelector(client, FOLDER_TRIGGER, CASE_TIMEOUT_MS);
+  await evaluate(client, "document.fonts.ready");
+  await evaluate(
+    client,
+    `window.anchorTrigger = document.querySelector(${JSON.stringify(FOLDER_TRIGGER)}); undefined`,
+  );
+
+  const settle = async () => {
+    await awaitRafs(client, 5);
+    await delay(SETTLE_MS);
+    return sampleFolderAnchor(client);
+  };
+  const phases = {};
+
+  await clickSelector(client, FOLDER_TRIGGER);
+  await waitForSelector(client, FOLDER_POPUP, CASE_TIMEOUT_MS);
+  phases.open = await settle();
+
+  await waitForSelector(client, '[data-testid="recent-add"]', CASE_TIMEOUT_MS);
+  await clickSelector(client, '[data-testid="recent-add"]');
+  await waitForSelector(
+    client,
+    '[data-testid="workspace-folder-grid"]',
+    CASE_TIMEOUT_MS,
+  );
+  phases.afterAdd = await settle();
+
+  await waitForSelector(
+    client,
+    '[data-testid="folder-remove"]',
+    CASE_TIMEOUT_MS,
+  );
+  await clickSelector(client, '[data-testid="folder-remove"]');
+  await waitForSelector(client, '[data-testid="recent-add"]', CASE_TIMEOUT_MS);
+  await waitForSelector(client, FOLDER_POPUP, CASE_TIMEOUT_MS);
+  phases.afterRemove = await settle();
+
+  // A pending add swaps the trigger for a disabled one while the popup is open.
+  await evaluate(
+    client,
+    "window.anchorGate.setAddFolderPending(true); undefined",
+  );
+  phases.pending = await settle();
+  await evaluate(
+    client,
+    "window.anchorGate.setAddFolderPending(false); undefined",
+  );
+  phases.afterPending = await settle();
+
+  // Escape must hand focus back to the CURRENT trigger, not the detached one.
+  await pressEscape(client);
+  await awaitRafs(client, 5);
+  await delay(SETTLE_MS);
+  const escape = await evaluate(
+    client,
+    `({ closed: document.querySelector(${JSON.stringify(FOLDER_POPUP)}) === null, focusOnTrigger: document.activeElement === document.querySelector(${JSON.stringify(FOLDER_TRIGGER)}), active: document.activeElement?.outerHTML.slice(0, 200) })`,
+  );
+
+  const record = {
+    name,
+    controls,
+    phases,
+    escape,
+    exceptions: [...exceptions],
+  };
+  if (outDir !== null) {
+    await writeFile(
+      resolve(outDir, `${name.replaceAll("/", "-")}.json`),
+      JSON.stringify(record, null, 2),
+    );
+    await screenshot(
+      client,
+      resolve(outDir, `${name.replaceAll("/", "-")}.png`),
+    );
+  }
+  assert(
+    exceptions.length === 0,
+    `${name}: page threw: ${exceptions.join("\n")}`,
+  );
+
+  // Calibrate the vertical gap on the first, known-good open.
+  const gap = phases.open.popup.top - phases.open.trigger.bottom;
+  assert(
+    Math.abs(gap - 4) <= 2,
+    `${name} open: popup gap below the trigger is ${gap}, expected ~4`,
+  );
+  const expectedTestId = {
+    open: "folder-add",
+    afterAdd: "workspace-summary-trigger",
+    afterRemove: "folder-add",
+    pending: "folder-add",
+    afterPending: "folder-add",
+  };
+  for (const [phase, snap] of Object.entries(phases)) {
+    console.log(`  ${phase}=${JSON.stringify(snap)}`);
+    assert(
+      snap.presented && snap.expanded === "true" && snap.connected,
+      `${name} ${phase}: popup closed, or the current trigger is detached or not expanded: ${JSON.stringify(snap)}`,
+    );
+    assert(
+      snap.triggerTestId === expectedTestId[phase],
+      `${name} ${phase}: current trigger is ${snap.triggerTestId}, expected ${expectedTestId[phase]}`,
+    );
+    assert(
+      Math.abs(snap.popup.top - (snap.trigger.bottom + gap)) <= 2,
+      `${name} ${phase}: popup top=${snap.popup.top}, current trigger bottom=${snap.trigger.bottom} (original trigger connected=${snap.originalTrigger.connected}, rect=${JSON.stringify(snap.originalTrigger.rect)})`,
+    );
+    // The popup is wider than the trigger and collision-shifted at the right
+    // edge, so only require that it still spans the trigger horizontally.
+    assert(
+      snap.popup.left <= snap.trigger.right + 2 &&
+        snap.popup.right >= snap.trigger.left - 2,
+      `${name} ${phase}: popup x=[${snap.popup.left}, ${snap.popup.right}] does not span current trigger x=[${snap.trigger.left}, ${snap.trigger.right}]`,
+    );
+  }
+  console.log(`  escape=${JSON.stringify(escape)}`);
+  assert(
+    escape.closed && escape.focusOnTrigger,
+    `${name} escape: popup did not close or focus is not on the current trigger: ${JSON.stringify(escape)}`,
+  );
   console.log("  PASS");
 }
 
@@ -571,12 +773,23 @@ async function main() {
         gesture: "keyboard-arrowdown",
       },
     ].filter((c) => c.name.includes(caseFilter));
-    const toggleCases = Object.keys(NARROW_TOGGLE_KINDS)
-      .flatMap((kind) =>
-        ["click", "keyboard"].map((gesture) => ({ kind, gesture })),
+    const toggleCases = Object.entries(NARROW_TOGGLE_KINDS)
+      .flatMap(([kind, { toggles }]) =>
+        toggles.flatMap((toggle) =>
+          ["click", "keyboard"].map((gesture) => ({
+            kind,
+            gesture,
+            toggle,
+            name: `${kind}/${gesture}/${toggle.label}`,
+          })),
+        ),
       )
-      .filter(({ kind, gesture }) => `${kind}/${gesture}`.includes(caseFilter));
-    assert(cases.length > 0 || toggleCases.length > 0, "No matching cases");
+      .filter(({ name }) => name.includes(caseFilter));
+    const addRecentCases = ADD_RECENT_CASE.includes(caseFilter);
+    assert(
+      cases.length > 0 || toggleCases.length > 0 || addRecentCases,
+      "No matching cases",
+    );
     await warmUp(client, started.origin);
     for (const testCase of cases) {
       try {
@@ -592,14 +805,14 @@ async function main() {
         });
       }
     }
-    for (const { kind, gesture } of toggleCases) {
-      const name = `${kind}/${gesture}/toggle-while-open`;
+    for (const { kind, gesture, toggle, name } of toggleCases) {
       try {
         await runNarrowToggleCase(
           client,
           started.origin,
           kind,
           gesture,
+          toggle,
           exceptions,
         );
         results.push({ name, pass: true });
@@ -607,6 +820,20 @@ async function main() {
         console.error(error);
         results.push({
           name,
+          pass: false,
+          error: String(error),
+          exceptions: [...exceptions],
+        });
+      }
+    }
+    if (addRecentCases) {
+      try {
+        await runAddFolderReanchorCase(client, started.origin, exceptions);
+        results.push({ name: ADD_RECENT_CASE, pass: true });
+      } catch (error) {
+        console.error(error);
+        results.push({
+          name: ADD_RECENT_CASE,
           pass: false,
           error: String(error),
           exceptions: [...exceptions],

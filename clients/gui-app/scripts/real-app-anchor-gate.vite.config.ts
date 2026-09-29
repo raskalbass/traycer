@@ -20,6 +20,30 @@ const sourceOverrides: ReadonlyArray<{ env: string; file: string }> = [
     env: "ANCHOR_GATE_USER_MENU_SOURCE",
     file: path.resolve(__dirname, "..", "src/components/auth/user-menu.tsx"),
   },
+  {
+    env: "ANCHOR_GATE_PERMISSIONS_SOURCE",
+    file: path.resolve(
+      __dirname,
+      "..",
+      "src/components/home/pickers/permissions-picker.tsx",
+    ),
+  },
+  {
+    env: "ANCHOR_GATE_RATE_LIMIT_SOURCE",
+    file: path.resolve(
+      __dirname,
+      "..",
+      "src/components/layout/header/rate-limit-icon.tsx",
+    ),
+  },
+  {
+    env: "ANCHOR_GATE_WORKSPACE_SOURCE",
+    file: path.resolve(
+      __dirname,
+      "..",
+      "src/components/home/host-workspace-selector/workspace-folder-summary-control.tsx",
+    ),
+  },
 ];
 
 // Run a saved pre-fix control without changing the production source file.

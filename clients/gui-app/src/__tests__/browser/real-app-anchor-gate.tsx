@@ -12,8 +12,12 @@ import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import type { IHostMessenger } from "@traycer-clients/shared/host-transport/host-messenger";
 import { AppHeader } from "@/components/layout/header/app-header";
+import { RateLimitIconButton } from "@/components/layout/header/rate-limit-icon";
+import type { BarReadingForm } from "@/components/layout/tabs/side-strip/side-strip-tokens";
+import { useLayoutStore } from "@/stores/layout/layout-store";
 import { PermissionsPicker } from "@/components/home/pickers/permissions-picker";
 import { WorkspaceFolderSummaryControl } from "@/components/home/host-workspace-selector/workspace-folder-summary-control";
+import type { WorkspaceRunItem } from "@/components/home/host-workspace-selector/workspace-run-item";
 import { ComposerNarrowContext } from "@/components/home/composer/composer-narrow-context-internal";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -71,6 +75,13 @@ declare global {
       // Set only in "permissions-picker" fixture mode - flips
       // `ComposerNarrowContext`'s value without remounting anything else.
       setComposerNarrow?: (narrow: boolean) => void;
+      // Set only in "permissions-picker" fixture mode - Layout > Composer's
+      // access-picker size, the store `PermissionsPicker` reads.
+      setAccessSize?: (size: "full" | "chip") => void;
+      // Set only in "rate-limit" fixture mode.
+      setRateLimitForm?: (form: BarReadingForm) => void;
+      // Set only in "workspace-folder" fixture mode.
+      setAddFolderPending?: (pending: boolean) => void;
     };
   }
 }
@@ -311,6 +322,13 @@ function NarrowContextFixture(props: { children: ReactNode }) {
 }
 
 function PermissionsPickerFixture() {
+  useEffect(() => {
+    window.anchorGate.setAccessSize = (size) =>
+      useLayoutStore.getState().setRegionValues("access", { size });
+    return () => {
+      window.anchorGate.setAccessSize = undefined;
+    };
+  }, []);
   return (
     <NarrowContextFixture>
       <PermissionsPicker
@@ -331,18 +349,83 @@ function PermissionsPickerFixture() {
   );
 }
 
+// The real `RateLimitIconButton`; `setRateLimitForm` flips readings <-> glyph
+// while its popover is open.
+function RateLimitFixture() {
+  const [form, setForm] = useState<BarReadingForm>("glyph");
+  useEffect(() => {
+    window.anchorGate.setRateLimitForm = setForm;
+    return () => {
+      window.anchorGate.setRateLimitForm = undefined;
+    };
+  }, []);
+  return (
+    <NarrowContextFixture>
+      <RateLimitIconButton form={form} />
+    </NarrowContextFixture>
+  );
+}
+
+const NOOP = (): void => undefined;
+
+// A real `WorkspaceRunItem` - `WorkspaceFolderRows` renders it as a genuine
+// folder row, so the popup's height and content change as they do in the app.
+function recentFolderItem(onRemove: () => void): WorkspaceRunItem {
+  return {
+    key: "/repo",
+    displayName: "repo",
+    displayPath: "/repo",
+    unresolved: false,
+    metadataPending: false,
+    missing: false,
+    isGitRepo: false,
+    mode: "local",
+    branchLabel: "development",
+    summary: null,
+    currentIntent: null,
+    defaultNewBranchName: "traycer/swift-otter",
+    branchPrefixWarning: null,
+    repoIdentifier: { owner: "acme", repo: "app" },
+    isPrimary: true,
+    canChangePrimary: true,
+    makePrimaryDisabled: false,
+    makePrimaryDisabledReason: null,
+    hostClient: null,
+    modeDisabled: false,
+    modeDisabledReason: null,
+    removeDisabled: false,
+    removeDisabledReason: null,
+    removePending: false,
+    onSelectMode: NOOP,
+    onEmit: NOOP,
+    onLocate: null,
+    onMakePrimary: NOOP,
+    onRemove,
+  };
+}
+
 // Reaches `EmptyRecentFolderTrigger` (private, no production export) through
 // its real parent: `items=[]` + `bindingResolved` gives an empty-recent
 // trigger, `recentWorkspaceCount=1` skips the plain `AddFolderButton` early
-// return so it renders the Popover-wrapped trigger instead.
+// return so it renders the Popover-wrapped trigger instead. The recent "Add"
+// button flips `items` to a populated list (and the row's remove flips it
+// back) while the popup stays open, which swaps the trigger's identity.
 function WorkspaceFolderSummaryControlFixture() {
+  const [items, setItems] = useState<ReadonlyArray<WorkspaceRunItem>>([]);
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    window.anchorGate.setAddFolderPending = setPending;
+    return () => {
+      window.anchorGate.setAddFolderPending = undefined;
+    };
+  }, []);
   return (
     <NarrowContextFixture>
       <WorkspaceFolderSummaryControl
-        items={[]}
+        items={items}
         readOnly={false}
         bindingResolved
-        addFolderPending={false}
+        addFolderPending={pending}
         addFolderDisabled={false}
         addFolderDisabledReason={null}
         onAddFolder={() => Promise.resolve(false)}
@@ -355,7 +438,15 @@ function WorkspaceFolderSummaryControlFixture() {
         refresh={null}
         popoverTestId="folder-popup"
         popoverSide="bottom"
-        recentWorkspaces={<span>Recent folder</span>}
+        recentWorkspaces={
+          <button
+            type="button"
+            data-testid="recent-add"
+            onClick={() => setItems([recentFolderItem(() => setItems([]))])}
+          >
+            Add
+          </button>
+        }
         recentWorkspaceCount={1}
         moveToRecent={false}
       />
@@ -369,6 +460,7 @@ export function FixtureBody() {
   let control = <AppHeader variant="app" />;
   if (fixtureMode === "permissions-picker")
     control = <PermissionsPickerFixture />;
+  else if (fixtureMode === "rate-limit") control = <RateLimitFixture />;
   else if (fixtureMode === "workspace-folder")
     control = <WorkspaceFolderSummaryControlFixture />;
   return (

@@ -371,7 +371,11 @@ export function HoverCard(props: HoverCardProps): ReactNode {
     [context],
   );
   useEscapeAsTopLayer(open, closeOnEscape);
-  const role = useRole(context, { role: props.semantics.role });
+  // A suppressed preview must not overwrite a click-open popup's ARIA.
+  const role = useRole(context, {
+    role: props.semantics.role,
+    enabled: !suppressed,
+  });
   const { getReferenceProps, getFloatingProps } = useInteractions([
     hover,
     focus,

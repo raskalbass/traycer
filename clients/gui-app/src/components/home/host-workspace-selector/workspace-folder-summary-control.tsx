@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type ReactNode,
@@ -174,6 +175,9 @@ export function WorkspaceFolderSummaryControl(props: {
   // the context reads wide, so the word stays.
   const iconOnly = useIsComposerNarrow();
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // Both faces own the same Base trigger, including while an add is pending.
+  // A replacement with this id takes over anchoring, ARIA and focus return.
+  const triggerId = useId();
   const preview = useWorkspaceFolderPreviewReveal();
   const refreshUi = useWorkspaceRefreshUi(props.refresh);
   const triggerRefresh = refreshUi.triggerRefresh;
@@ -306,6 +310,7 @@ export function WorkspaceFolderSummaryControl(props: {
   // Shut while the picker is open: the preview repeats what the picker shows.
   const popoverTrigger = emptyRecentTrigger ? (
     <EmptyRecentFolderTrigger
+      triggerId={triggerId}
       trigger={trigger}
       disabled={emptyRecentDisabled}
       disabledReason={
@@ -318,7 +323,7 @@ export function WorkspaceFolderSummaryControl(props: {
       trigger={
         // Innermost, so the press guard runs BEFORE the popover's own open
         // handler and can cancel it (`preventBaseUIHandler`).
-        <PopoverTrigger render={previewTrigger} />
+        <PopoverTrigger id={triggerId} render={previewTrigger} />
       }
       content={<WorkspaceFolderHoverList items={props.items} />}
       appearance="preview"
@@ -482,11 +487,19 @@ function EmptyRecentAddFolderContent(props: {
 }
 
 function EmptyRecentFolderTrigger(props: {
+  readonly triggerId: string;
   readonly trigger: ReactElement;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   readonly iconOnly: boolean;
 }): ReactNode {
+  const trigger = (
+    <PopoverTrigger
+      id={props.triggerId}
+      disabled={props.disabled}
+      render={props.trigger}
+    />
+  );
   if (!props.disabled) {
     // An icon-only trigger names itself on hover; `null` renders no tooltip.
     return (
@@ -496,11 +509,11 @@ function EmptyRecentFolderTrigger(props: {
         sideOffset={undefined}
         align={undefined}
       >
-        <PopoverTrigger render={props.trigger} />
+        {trigger}
       </TooltipWrapper>
     );
   }
-  if (props.disabledReason === null) return props.trigger;
+  if (props.disabledReason === null) return trigger;
   return (
     <TooltipWrapper
       label={props.disabledReason}
@@ -512,7 +525,7 @@ function EmptyRecentFolderTrigger(props: {
         className="inline-flex w-fit"
         data-testid="folder-add-disabled-reason"
       >
-        {props.trigger}
+        {trigger}
       </span>
     </TooltipWrapper>
   );

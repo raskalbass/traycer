@@ -285,8 +285,14 @@ export function useOverlayFocus(
       queueMicrotask(() => {
         if (!presentation.finalAllowed()) return;
         const resolved = resolve(finalFocus, interaction);
+        // Base allows a same-ID trigger to replace the opening node while open.
+        // Resolve that replacement at close, after the presentation guard.
+        let opener = returnTo.current;
+        if (opener !== null && !opener.isConnected) {
+          opener = opener.ownerDocument.getElementById(opener.id);
+        }
         const target =
-          resolved === true || resolved === null ? returnTo.current : resolved;
+          resolved === true || resolved === null ? opener : resolved;
         if (
           target instanceof HTMLElement &&
           target.isConnected &&

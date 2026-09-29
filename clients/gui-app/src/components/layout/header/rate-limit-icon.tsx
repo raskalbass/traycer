@@ -197,21 +197,15 @@ function ScopedRateLimitIconButton({
 
   return (
     <RateLimitPopoverRoot open={open} onOpenChange={setOpen}>
-      {readings ? (
-        trigger
-      ) : (
-        <TooltipWrapper
-          // The host belongs in the label only when it is NOT the obvious one.
-          // Naming the active host on every hover would train people to ignore
-          // the one case the words exist for.
-          label={tooltip}
-          side={placement?.side ?? "top"}
-          sideOffset={6}
-          align={placement?.align}
-        >
-          {trigger}
-        </TooltipWrapper>
-      )}
+      <TooltipWrapper
+        // Keep the trigger mounted when the layout changes its reading form.
+        label={readings ? null : tooltip}
+        side={placement?.side ?? "top"}
+        sideOffset={6}
+        align={placement?.align}
+      >
+        {trigger}
+      </TooltipWrapper>
       <RateLimitPopover
         side="bottom"
         align="end"
