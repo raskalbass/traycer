@@ -7,6 +7,8 @@ import {
   organizationRefreshUpgradeV10ToV11,
   organizationCommandV10,
   organizationHistoryV10,
+  organizationHistoryV11,
+  organizationHistoryUpgradeV10ToV11,
   organizationSubscribeV10,
   organizationSubscribeV11,
 } from "./organization/contracts";
@@ -293,6 +295,7 @@ import {
   chatSubscribeV117,
   chatSubscribeV118,
   chatSubscribeV119,
+  chatSubscribeV120,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -550,9 +553,11 @@ import {
   epicGetTaskContextsV11,
   epicGetTaskContextsV12,
   epicGetTaskContextsV13,
+  epicGetTaskContextsV14,
   epicGetTaskContextsUpgradeV10ToV11,
   epicGetTaskContextsUpgradeV11ToV12,
   epicGetTaskContextsUpgradeV12ToV13,
+  epicGetTaskContextsUpgradeV13ToV14,
   epicGrantAccessV10,
   epicChatBackupStatusV10,
   epicChatReplicaReadV10,
@@ -591,12 +596,14 @@ import {
   epicListTasksV14,
   epicListTasksV15,
   epicListTasksV16,
+  epicListTasksV17,
   epicListTasksUpgradeV10ToV11,
   epicListTasksUpgradeV11ToV12,
   epicListTasksUpgradeV12ToV13,
   epicListTasksUpgradeV13ToV14,
   epicListTasksUpgradeV14ToV15,
   epicListTasksUpgradeV15ToV16,
+  epicListTasksUpgradeV16ToV17,
   epicMentionEpicsV10,
   epicMentionReviewsV10,
   epicMentionSpecsV10,
@@ -5036,11 +5043,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     cancelAfterDispatch: true,
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: organizationHistoryV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: organizationHistoryV11,
+          upgradeFromPreviousVersion: organizationHistoryUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -7235,7 +7246,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "epic.listTasks": {
     cancelAfterDispatch: true,
     1: {
-      latestMinor: 6,
+      latestMinor: 7,
       versions: {
         0: {
           contract: epicListTasksV10,
@@ -7268,6 +7279,10 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
           // `localFirstPhase: "initial"`; lower-minor contracts strip that
           // directive and therefore retain their released response values.
           responseGrowthProjectionGated: true,
+        },
+        7: {
+          contract: epicListTasksV17,
+          upgradeFromPreviousVersion: epicListTasksUpgradeV16ToV17,
         },
       },
       downgradePathsFromLatest: {},
@@ -7318,9 +7333,9 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
     1: {
       // @1.1's new row-union values are projection-gated in host dispatch:
       // a v1.0 caller receives its released nullable rows, never a union arm.
-      // @1.3's `localHomedTaskIds` sibling needs no gate of its own - an
-      // older peer's frozen schema strips the optional key at parse time.
-      latestMinor: 3,
+      // @1.3's local-home list and @1.4's activity map are siblings; older
+      // peers' frozen response schemas strip these optional keys.
+      latestMinor: 4,
       versions: {
         0: {
           contract: epicGetTaskContextsV10,
@@ -7338,6 +7353,10 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
         3: {
           contract: epicGetTaskContextsV13,
           upgradeFromPreviousVersion: epicGetTaskContextsUpgradeV12ToV13,
+        },
+        4: {
+          contract: epicGetTaskContextsV14,
+          upgradeFromPreviousVersion: epicGetTaskContextsUpgradeV13ToV14,
         },
       },
       downgradePathsFromLatest: {},
@@ -12673,7 +12692,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 19,
+      latestMinor: 20,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -12759,7 +12778,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         },
         // @1.16 adds `tier` on the approval card's judge reason. A defaulted
         // key in a non-strict object: a @1.15 peer drops it on parse, so the
-        // host withholds nothing.
+        // host withholds nothing. Frozen since @1.17 opened above it.
         16: {
           contract: chatSubscribeV116,
         },
@@ -12767,20 +12786,36 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         // queued prompt item: the machine the message was sent from, which
         // places a routed browser realm born on that turn. A defaulted key in
         // a non-strict object at every minor, so the host withholds nothing.
+        // Frozen at the pre-`pausedReason` queue and the pre-receipt bodies
+        // since @1.18 opened above it, and at the pre-parity cards and events
+        // since @1.20 did.
         17: {
           contract: chatSubscribeV117,
         },
         // @1.18 adds `receipt` on a provider notice's metadata (the settled
         // fallback card) and `pausedReason` on the queue. Optional keys in
         // non-strict objects at every minor, so the host withholds nothing: a
-        // @1.17 peer drops both on parse.
+        // @1.17 peer drops both on parse. Frozen at the pre-resume skeleton
+        // chunk since @1.19 opened above it, and at the pre-parity cards and
+        // events since @1.20 did.
         18: {
           contract: chatSubscribeV118,
         },
         // @1.19 adds a nullable skeleton claim on open and `retainedRows` on
         // the first resumed chunk. Older lines keep their complete streams.
+        // Frozen at the pre-parity cards and events since @1.20 opened above
+        // it; @1.20 keeps the claim and the chunk.
         19: {
           contract: chatSubscribeV119,
+        },
+        // @1.20 is the Claude-parity line: the suggested prompt, the
+        // thinking-token estimate and its light frame, the `cron` background
+        // kind, and the approval card's display facts / `cautious` /
+        // `ruleForced`. All live-only; the host PROJECTS every one of them
+        // away below this minor (keys deleted, the frame dropped, the item
+        // omitted) rather than refusing the subscribe.
+        20: {
+          contract: chatSubscribeV120,
         },
       },
     },

@@ -138,6 +138,7 @@ const WINDOWED_FRAME_ROUTES: WindowedFrameRoutes = {
   managedCommandsChanged: (cb, frame) => cb.onManagedCommandsChanged(frame),
   portForwardsChanged: (cb, frame) => cb.onPortForwardsChanged(frame),
   heldUpdatesChanged: (cb, frame) => cb.onHeldUpdatesChanged(frame),
+  thinkingTokens: (cb, frame) => cb.onThinkingTokens(frame),
   pong: () => undefined,
 };
 

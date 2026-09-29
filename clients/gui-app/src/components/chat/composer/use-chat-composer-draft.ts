@@ -23,6 +23,7 @@ import {
 } from "@/lib/composer/tiptap-json-content";
 
 import type { ComposerPromptEditorHandle } from "./composer-prompt-editor";
+import { isSuggestionPlaceholderDocument } from "./prompt-suggestion";
 
 function memoizeContentPredicate(predicate: (content: JsonContent) => boolean) {
   let previousContent: JsonContent | null = null;
@@ -108,6 +109,13 @@ export function useChatComposerDraft(args: UseChatComposerDraftArgs) {
   const draftHasText = useComposerDraftStore((state) =>
     hasText(state.drafts[args.chatId]?.content ?? initialContent),
   );
+  const isPlaceholder = useMemo(
+    () => memoizeContentPredicate(isSuggestionPlaceholderDocument),
+    [],
+  );
+  const draftIsSuggestionPlaceholder = useComposerDraftStore((state) =>
+    isPlaceholder(state.drafts[args.chatId]?.content ?? initialContent),
+  );
   const draftHasImages = useComposerDraftStore(
     (state) =>
       (state.drafts[args.chatId]?.browserAnnotations.length ?? 0) > 0 ||
@@ -189,6 +197,7 @@ export function useChatComposerDraft(args: UseChatComposerDraftArgs) {
     initialSelection,
     draftHasText,
     draftHasImages,
+    draftIsSuggestionPlaceholder,
     handleDocumentChange,
     handleSelectionChange,
   };

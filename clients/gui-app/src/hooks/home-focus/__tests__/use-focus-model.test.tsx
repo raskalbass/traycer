@@ -65,6 +65,8 @@ vi.mock("@/hooks/epic/use-epic-get-task-contexts-query", () => ({
     tasksById: taskContextsMock.tasksById,
     isFetching: false,
     error: null,
+    refetch: () => Promise.resolve(),
+    refetchBatches: [],
   }),
 }));
 

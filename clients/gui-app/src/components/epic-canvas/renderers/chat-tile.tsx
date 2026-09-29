@@ -64,6 +64,10 @@ import {
   WorkingVerbContext,
   pickWorkingVerb,
 } from "@/components/chat/working-verb";
+import {
+  ThinkingTokensSourceContext,
+  type ThinkingTokensSource,
+} from "@/components/chat/thinking-tokens-source";
 import { ContextUsageChip } from "@/components/chat/context-usage-chip";
 import { ChatRestoreProvider } from "@/components/chat/chat-restore-context";
 import { RevertOnEditDialog } from "@/components/chat/segments/revert-on-edit-dialog";
@@ -99,6 +103,7 @@ import type {
   ChatComposerSideChatInput,
   ChatComposerSubmitInput,
 } from "@/components/chat/composer/chat-composer";
+import { suggestionOfferableWhilePending } from "@/components/chat/composer/prompt-suggestion";
 import {
   sideChatPlacementForTile,
   startSideChat,
@@ -1513,6 +1518,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
                 <ChatPrewarmContext.Provider value={prewarmEligible}>
                   <ChatSessionMessagesSurface
                     snapshotLoaded={view.snapshotLoaded}
+                    thinkingTokensSource={view.handle.store}
                     connectionStatus={view.connectionStatus}
                     fatalClose={view.fatalClose}
                     preSnapshotRetries={view.preSnapshotRetries}
@@ -1866,6 +1872,9 @@ function useChatTileSessionViewModel(
       // ride this slice rather than earning a second subscription path.
       pendingFallback: s.pendingFallback,
       pendingReturn: s.pendingReturn,
+      // Changes a handful of times per turn at most (set after a turn, cleared
+      // on the next send), so it rides this slice too.
+      suggestedPrompt: s.suggestedPrompt,
       pendingBackgroundStops: s.pendingBackgroundStops,
       pendingBackgroundStopAll: s.pendingBackgroundStopAll,
       pendingBackgroundSessionStop: s.pendingBackgroundSessionStop,
@@ -3379,6 +3388,10 @@ function useChatTileSessionViewModel(
       onSettingsChange: handleComposerSettingsChange,
       workspaceControls,
       workspaceAvailability,
+      suggestedPrompt: suggestionOfferableWhilePending(
+        state.suggestedPrompt,
+        state.pendingActions,
+      ),
     }),
     [
       state.currentComposerSettings,
@@ -3394,6 +3407,8 @@ function useChatTileSessionViewModel(
       handleComposerSettingsChange,
       workspaceControls,
       workspaceAvailability,
+      state.suggestedPrompt,
+      state.pendingActions,
     ],
   );
 
@@ -3580,6 +3595,12 @@ function useChatTileSessionViewModel(
 
 interface ChatSessionMessagesSurfaceProps {
   readonly snapshotLoaded: boolean;
+  /**
+   * The chat session store, handed to the streaming "Thinking" label so it can
+   * subscribe to the thinking-token estimate on its own - see
+   * `ThinkingTokensSourceContext` for why a source and not the number.
+   */
+  readonly thinkingTokensSource: ThinkingTokensSource;
   readonly connectionStatus: StreamConnectionStatus;
   readonly fatalClose: FatalErrorDetails | null;
   /** Failed pre-snapshot attempts; see `ChatTilePreContent`. */
@@ -3608,15 +3629,10 @@ interface ChatSessionMessagesSurfaceProps {
    * below for why it is the turn and not a count over `messages`.
    */
   readonly activeTurnId: string | null;
-  /** The transcript index on the windowed line; `null` on the legacy line.
-   *  See `ChatMessagesProps.transcriptWindow`. */
   /** Viewport-driven hydration report; see `ChatMessagesProps`. */
   readonly onVisibleOrdinalRangeChange: (range: OrdinalRange | null) => void;
   /** Chat find's index-read hydration; see `ChatMessagesProps`. */
   readonly onFindReadOrdinalChange: (ordinal: number | null) => void;
-  /** Which connection's snapshot established `messages`; see `ChatMessages`. */
-  /** Whether a range seated these rows; see `ChatMessages`. */
-  /** Rows rewritten while cold; see `ChatMessages`. */
   readonly backgroundItems: ReadonlyArray<BackgroundItem> | undefined;
   readonly scrollRequest: ChatMessageScrollRequest | null;
   readonly onScrollRequestSettled: (requestId: number) => void;
@@ -3740,38 +3756,42 @@ function ChatSessionMessagesSurface(
         <ChatRestoreProvider value={props.restoreContext}>
           <ChatPlanActionsContext.Provider value={props.planActions}>
             <WorkingVerbContext.Provider value={workingVerb}>
-              <ChatMarkdownLinkProvider
-                tabId={props.viewTabId}
-                workspaceRoots={props.workspaceRoots}
+              <ThinkingTokensSourceContext.Provider
+                value={props.thinkingTokensSource}
               >
-                <ChatMessages
-                  taskTitle={props.taskTitle}
-                  taskId={props.node.id}
-                  epicId={props.epicId}
-                  hostId={props.tabHostId}
-                  messages={messages}
-                  projectedRows={
-                    messages === rows ? rowSnapshot.rows : undefined
-                  }
-                  transcriptWindow={transcript.window}
-                  onVisibleOrdinalRangeChange={
-                    props.onVisibleOrdinalRangeChange
-                  }
-                  onFindReadOrdinalChange={props.onFindReadOrdinalChange}
-                  baselineEpoch={transcript.baselineEpoch}
-                  hydrationSequence={transcript.hydrationSequence}
-                  coldRewrittenMessageIds={transcript.coldRewrittenMessageIds}
-                  backgroundItems={props.backgroundItems}
-                  scrollRequest={props.scrollRequest}
-                  onScrollRequestSettled={props.onScrollRequestSettled}
-                  getMessageActions={props.getMessageActions}
-                  nextStepActions={props.nextStepActions}
-                  instanceId={props.node.instanceId}
-                  visible={props.surfaceVisible}
-                  systemOverlayActive={props.systemOverlayActive}
-                  composerOverlayHeight={props.composerOverlayHeight}
-                />
-              </ChatMarkdownLinkProvider>
+                <ChatMarkdownLinkProvider
+                  tabId={props.viewTabId}
+                  workspaceRoots={props.workspaceRoots}
+                >
+                  <ChatMessages
+                    taskTitle={props.taskTitle}
+                    taskId={props.node.id}
+                    epicId={props.epicId}
+                    hostId={props.tabHostId}
+                    messages={messages}
+                    projectedRows={
+                      messages === rows ? rowSnapshot.rows : undefined
+                    }
+                    transcriptWindow={transcript.window}
+                    onVisibleOrdinalRangeChange={
+                      props.onVisibleOrdinalRangeChange
+                    }
+                    onFindReadOrdinalChange={props.onFindReadOrdinalChange}
+                    baselineEpoch={transcript.baselineEpoch}
+                    hydrationSequence={transcript.hydrationSequence}
+                    coldRewrittenMessageIds={transcript.coldRewrittenMessageIds}
+                    backgroundItems={props.backgroundItems}
+                    scrollRequest={props.scrollRequest}
+                    onScrollRequestSettled={props.onScrollRequestSettled}
+                    getMessageActions={props.getMessageActions}
+                    nextStepActions={props.nextStepActions}
+                    instanceId={props.node.instanceId}
+                    visible={props.surfaceVisible}
+                    systemOverlayActive={props.systemOverlayActive}
+                    composerOverlayHeight={props.composerOverlayHeight}
+                  />
+                </ChatMarkdownLinkProvider>
+              </ThinkingTokensSourceContext.Provider>
             </WorkingVerbContext.Provider>
           </ChatPlanActionsContext.Provider>
         </ChatRestoreProvider>
