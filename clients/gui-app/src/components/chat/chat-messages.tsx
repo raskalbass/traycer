@@ -1,3 +1,4 @@
+import { observedBorderBox } from "@/lib/resize-observer-box";
 import { QuoteSelectionPopover } from "@/components/chat/quote/quote-selection-popover";
 import { useQuoteSelection } from "@/components/chat/quote/use-quote-selection";
 import { useChatFindController } from "@/components/chat/use-chat-find-controller";
@@ -2115,7 +2116,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
       const entry = entries.find((candidate) => candidate.target === container);
       if (entry === undefined) return;
       rowHeightMemory.observeLayoutBasis({
-        width: entry.borderBoxSize[0]?.inlineSize ?? entry.contentRect.width,
+        width: observedBorderBox(entry).inlineSize,
         fontSizePx: uiFontSize,
       });
     });

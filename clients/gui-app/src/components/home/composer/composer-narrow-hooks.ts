@@ -1,3 +1,4 @@
+import { observedBorderBox } from "@/lib/resize-observer-box";
 import {
   use,
   useCallback,
@@ -37,7 +38,9 @@ export function useComposerNarrowObserver(): {
         return () => {};
       }
       const observer = new ResizeObserver((entries) => {
-        const width = entries.at(-1)?.borderBoxSize[0]?.inlineSize ?? 0;
+        const entry = entries.at(-1);
+        const width =
+          entry === undefined ? 0 : observedBorderBox(entry).inlineSize;
         if (width <= 0) return;
         narrow.current = width < NARROW_BREAKPOINT_PX;
         onStoreChange();

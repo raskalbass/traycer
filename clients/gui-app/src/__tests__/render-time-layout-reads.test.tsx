@@ -63,6 +63,24 @@ describe("useComposerNarrowObserver", () => {
     }
   });
 
+  it("reads contentRect when the entry has no borderBoxSize, without reading layout", () => {
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    const mounted = mountObserved();
+    try {
+      act(() =>
+        mounted.observer.emitWithoutBorderBox({ inline: 300, block: 40 }),
+      );
+      expect(mounted.isNarrow()).toBe("true");
+      act(() =>
+        mounted.observer.emitWithoutBorderBox({ inline: 700, block: 40 }),
+      );
+      expect(mounted.isNarrow()).toBe("false");
+      expect(rect).not.toHaveBeenCalled();
+    } finally {
+      mounted.restore();
+    }
+  });
+
   it("never reads layout while the consumer re-renders", () => {
     const rect = vi
       .spyOn(Element.prototype, "getBoundingClientRect")

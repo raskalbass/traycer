@@ -25,6 +25,26 @@ export class FakeResizeObserver implements ResizeObserver {
   }
 
   emit(size: { readonly inline: number; readonly block: number }): void {
+    this.callback([this.entry(size)], this);
+  }
+
+  /**
+   * What an engine without `borderBoxSize` delivers (Safari before 15.4, and
+   * other test stubs): only `contentRect` carries the size.
+   */
+  emitWithoutBorderBox(size: {
+    readonly inline: number;
+    readonly block: number;
+  }): void {
+    const entry = this.entry(size);
+    Reflect.deleteProperty(entry, "borderBoxSize");
+    this.callback([entry], this);
+  }
+
+  private entry(size: {
+    readonly inline: number;
+    readonly block: number;
+  }): ResizeObserverEntry {
     const target = this.target;
     if (target === null) throw new Error("observer has no target");
     const box = { inlineSize: size.inline, blockSize: size.block };
@@ -45,7 +65,7 @@ export class FakeResizeObserver implements ResizeObserver {
         toJSON: () => ({}),
       },
     };
-    this.callback([entry], this);
+    return entry;
   }
 }
 

@@ -1,3 +1,4 @@
+import { observedBorderBox } from "@/lib/resize-observer-box";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 
@@ -43,7 +44,7 @@ export function useMeasuredElementHeight(
       if (!entry) return;
       // Observer-delivered border-box sizes include padding without forcing
       // layout in the commit that shows or hides a retained surface.
-      const nextHeight = Math.ceil(entry.borderBoxSize[0]?.blockSize ?? 0);
+      const nextHeight = Math.ceil(observedBorderBox(entry).blockSize);
       if (nextHeight <= 0) return;
       setHeight((current) => (current === nextHeight ? current : nextHeight));
     });

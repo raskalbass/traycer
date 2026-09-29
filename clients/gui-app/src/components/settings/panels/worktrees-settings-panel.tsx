@@ -1,3 +1,4 @@
+import { observedBorderBox } from "@/lib/resize-observer-box";
 import {
   memo,
   useCallback,
@@ -219,8 +220,9 @@ function useObservedHeight(): {
       observedHeight.current = 0;
       if (element === null) return () => {};
       const observer = new ResizeObserver((entries) => {
+        const entry = entries.at(-1);
         observedHeight.current =
-          entries.at(-1)?.borderBoxSize[0]?.blockSize ?? 0;
+          entry === undefined ? 0 : observedBorderBox(entry).blockSize;
         onStoreChange();
       });
       observer.observe(element, { box: "border-box" });
