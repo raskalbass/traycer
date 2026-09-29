@@ -7,6 +7,7 @@ import {
   composerDraftStorageKey,
 } from "@/lib/persist/keys";
 import {
+  clearComposerDraftPersistence,
   EMPTY_COMPOSER_DRAFT,
   useComposerDraftStore,
   type DraftState,
@@ -127,16 +128,18 @@ export function seedLegacyBlob(state: PersistedState, name: string): void {
 }
 
 /**
- * Put the store and its adapter on a clean anonymous namespace: drop every
- * queued write and stored row, then rehydrate so the adapter's baseline (the
- * revisions it last observed) matches the now-empty disk. Without the
- * rehydrate the baseline keeps the previous test's revisions and the next flush
- * reports a conflict against rows that no longer exist.
+ * Put the store and its adapter on a clean, empty namespace - the ACTIVE one:
+ * an account-scoped store stays on its account. The production clear resets the
+ * adapter's baseline (the revisions it last observed) and empties every live
+ * draft; the rest of localStorage is then cleared and the store rehydrated, so
+ * the test's map matches the now-empty disk. Without the baseline reset a
+ * later custody write on a chat whose row this clear removed reports a
+ * conflict against a row that no longer exists.
  */
 export async function resetComposerDraftPersistence(): Promise<void> {
   cancelDeferredJsonWrites();
+  clearComposerDraftPersistence();
   window.localStorage.clear();
-  useComposerDraftStore.persist.setOptions({ name: ANON_NAME });
   await useComposerDraftStore.persist.rehydrate();
   cancelDeferredJsonWrites();
 }

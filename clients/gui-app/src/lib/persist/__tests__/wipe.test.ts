@@ -45,7 +45,21 @@ vi.mock("@/lib/appearance/appearance-cache", () => ({
 import { clearAllPersistedStores } from "@/lib/persist/wipe";
 import { STASH_DB_NAME } from "@/lib/drafts/stash-migration";
 import { fileEditRuntimeRegistry } from "@/lib/workspace/file-edit-runtime-registry";
-import { deferJsonWrite } from "@/lib/persist/deferred-json-storage";
+import {
+  deferJsonWrite,
+  cancelDeferredJsonWrites,
+  flushDeferredJsonWrite,
+} from "@/lib/persist/deferred-json-storage";
+import { composerDraftRowPrefix } from "@/lib/persist/keys";
+import {
+  EMPTY_COMPOSER_DRAFT,
+  readComposerDraftSnapshot,
+  useComposerDraftStore,
+} from "@/stores/composer/composer-draft-store";
+import {
+  ANON_NAME,
+  textDoc,
+} from "@/stores/composer/__tests__/composer-draft-rows";
 
 function createMockStorage(seed: Record<string, string>): Storage {
   const map = new Map<string, string>(Object.entries(seed));
@@ -232,8 +246,10 @@ describe("clearAllPersistedStores — blanket-prefix sweep", () => {
     expect(order[order.length - 1]).toBe("reload");
     // hostClear precedes every sweep removal.
     expect(order[0]).toBe("hostClear");
-    // 4 local + 2 session persisted keys are swept (the seeds above).
-    expect(order.filter((e) => e.includes("removeItem")).length).toBe(6);
+    // 4 local + 2 session persisted keys are swept (the seeds above), plus the
+    // composer draft clear's own `removeItem` of its namespace's legacy blob
+    // key, which is issued (and a no-op here) even when nothing is stored.
+    expect(order.filter((e) => e.includes("removeItem")).length).toBe(7);
   });
 
   it("awaits `hostClear` BEFORE sweeping (a rejecting clear aborts the sweep + reload)", async () => {
@@ -648,5 +664,74 @@ describe("clearAllPersistedStores - queued debounced writes", () => {
     window.dispatchEvent(new Event("pagehide"));
 
     expect(localStorageMock.getItem(key)).toBeNull();
+  });
+});
+
+describe("clearAllPersistedStores - composer drafts", () => {
+  it("empties the live drafts and the storage baseline at the sweep, so old text is gone while the reload is pending and the next custody write lands", async () => {
+    Object.defineProperty(globalThis, "indexedDB", {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+    const composerRows = (): string[] =>
+      snapshotKeys(localStorageMock).filter((key) =>
+        key.startsWith(composerDraftRowPrefix(ANON_NAME)),
+      );
+    const allStoredText = (): string =>
+      snapshotKeys(localStorageMock)
+        .map((key) => localStorageMock.getItem(key) ?? "")
+        .join("\n");
+
+    // A persisted row (the adapter has now seen its revision), unsaved text on
+    // top of it, and a pending submitted-draft receipt.
+    const store = useComposerDraftStore.getState();
+    store.setSnapshot("chat-wipe", textDoc("OLD persisted"), null);
+    flushDeferredJsonWrite(ANON_NAME);
+    expect(composerRows()).toHaveLength(1);
+    store.setSnapshot("chat-wipe", textDoc("OLD unsaved"), null);
+    store.recordPendingSubmittedDraftRetract("draft-old", "host-a");
+    const epochBefore = readComposerDraftSnapshot("chat-wipe").resetEpoch;
+
+    // Hold the wipe after the storage sweep, before the reload: the renderer
+    // stays live in that window.
+    let releaseCleanup: () => void = () => undefined;
+    clearAppearanceCache.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        releaseCleanup = resolve;
+      }),
+    );
+    const wiping = clearAllPersistedStores({ hostClear: null });
+    await vi.waitFor(() => {
+      expect(clearAppearanceCache).toHaveBeenCalled();
+    });
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    // Nothing of the old drafts is left on disk or in the editor's source.
+    expect(composerRows()).toEqual([]);
+    const afterWipe = readComposerDraftSnapshot("chat-wipe");
+    expect(afterWipe.content).toEqual(EMPTY_COMPOSER_DRAFT.content);
+    expect(afterWipe.resetEpoch).toBeGreaterThan(epochBefore);
+    expect(
+      useComposerDraftStore.getState().pendingSubmittedDraftDeletes,
+    ).toEqual({});
+    window.dispatchEvent(new Event("pagehide"));
+    expect(allStoredText()).not.toContain("OLD");
+
+    // A custody write in that window is not blocked by the wiped row's old
+    // revision, and it is durable.
+    expect(() =>
+      useComposerDraftStore
+        .getState()
+        .replaceDraft("chat-wipe", textDoc("NEW restored"), null),
+    ).not.toThrow();
+    expect(composerRows()).toHaveLength(1);
+    expect(allStoredText()).toContain("NEW restored");
+    expect(allStoredText()).not.toContain("OLD");
+
+    releaseCleanup();
+    await wiping;
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    cancelDeferredJsonWrites();
   });
 });

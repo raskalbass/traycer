@@ -760,6 +760,16 @@ function applyExternalComposerDraft(
     notifyDraftLocalEdit(draft.draftId);
 }
 
+export function clearComposerDraftPersistence(): void {
+  useComposerDraftStore.persist.clearStorage();
+  composerDraftStorage.withoutPersistence(() => {
+    for (const chatId of Object.keys(useComposerDraftStore.getState().drafts)) {
+      applyExternalComposerDraft(chatId, undefined, null);
+    }
+    useComposerDraftStore.setState({ pendingSubmittedDraftDeletes: {} });
+  });
+}
+
 // Retarget synchronously with identity, before another account can edit a row.
 // Interactive auth attempts keep the old identity, like the lifecycle bridges.
 let draftAccountId: string | null = null;

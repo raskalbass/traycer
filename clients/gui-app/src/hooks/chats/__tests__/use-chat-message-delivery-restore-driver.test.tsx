@@ -21,6 +21,7 @@ import {
   readComposerDraftSnapshot,
   useComposerDraftStore,
 } from "@/stores/composer/composer-draft-store";
+import { resetComposerDraftPersistence } from "@/stores/composer/__tests__/composer-draft-rows";
 import { appendBlocks } from "@/components/chat/quote/append-quote-to-draft";
 
 /**
@@ -235,24 +236,19 @@ function firstSentFrame(
 
 let handles: ChatSessionStoreHandle[] = [];
 
-beforeEach(() => {
-  useComposerDraftStore.setState({
-    drafts: {},
-    pendingSubmittedDraftDeletes: {},
-  });
-  window.localStorage.clear();
+beforeEach(async () => {
+  // Empties the drafts AND the storage adapter's revision baseline, so a row
+  // an earlier test flushed cannot make this test's first custody write
+  // conflict with a row `localStorage` no longer holds.
+  await resetComposerDraftPersistence();
   handles = [];
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   for (const handle of handles) handle.dispose();
   handles = [];
-  useComposerDraftStore.setState({
-    drafts: {},
-    pendingSubmittedDraftDeletes: {},
-  });
-  window.localStorage.clear();
+  await resetComposerDraftPersistence();
 });
 
 describe("useChatMessageDeliveryRestoreDriver: merges with the composer draft", () => {

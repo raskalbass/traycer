@@ -41,6 +41,7 @@ import {
   transcriptImageMetaDbName,
 } from "@/lib/attachments/transcript-image-bytes-store";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { clearComposerDraftPersistence } from "@/stores/composer/composer-draft-store";
 
 // The `:` boundary is load-bearing: a bare `startsWith(PERSIST_PREFIX)` would
 // also sweep a hypothetical `traycer-gui-appX:foo` key. Anchoring on the colon
@@ -230,6 +231,7 @@ export async function clearAllPersistedStores(args: {
 
   // 2. Cancel pending local writes before the sweep so unload cannot restore them.
   cancelDeferredJsonWrites();
+  clearComposerDraftPersistence();
   // Blanket-prefix sweep across BOTH storages.
   const localStorageCount = sweepStorage(window.localStorage);
   const sessionStorageCount = sweepStorage(window.sessionStorage);

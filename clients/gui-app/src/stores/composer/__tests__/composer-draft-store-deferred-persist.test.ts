@@ -296,11 +296,15 @@ describe("composer draft store: deferred, coalesced localStorage persistence", (
     useComposerDraftStore.persist.setOptions({
       name: composerDraftStorageKey("other-account"),
     });
+    try {
+      vi.advanceTimersByTime(DEBOUNCE_MS * 2);
 
-    vi.advanceTimersByTime(DEBOUNCE_MS * 2);
-
-    expect(rowKeys(ANON_NAME)).toEqual([]);
-    expect(rowKeys(composerDraftStorageKey("other-account"))).toEqual([]);
+      expect(rowKeys(ANON_NAME)).toEqual([]);
+      expect(rowKeys(composerDraftStorageKey("other-account"))).toEqual([]);
+    } finally {
+      // The reset between tests keeps the ACTIVE namespace; put it back.
+      useComposerDraftStore.persist.setOptions({ name: ANON_NAME });
+    }
   });
 
   it("clearStorage cancels a pending write and removes every stored row through the same removeItem path", () => {
