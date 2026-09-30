@@ -1550,6 +1550,28 @@ describe("groupSessionImportFailures", () => {
       "source_empty",
     ]);
   });
+
+  it("places task_storage_unreadable after source_unreadable, with its label and cause", () => {
+    const outcomes: ReadonlyArray<SessionImportOutcomeEntry> = [
+      failureEntry("s1", "internal_error", "boom"),
+      failureEntry(
+        "s2",
+        "task_storage_unreadable",
+        'Could not check "Alpha" for an earlier import of this session.',
+      ),
+      failureEntry("s3", "source_unreadable", "disk error"),
+    ];
+    const groups = groupSessionImportFailures(outcomes, new Map());
+    expect(groups.map((entry) => entry.reason)).toEqual([
+      "source_unreadable",
+      "task_storage_unreadable",
+      "internal_error",
+    ]);
+    expect(groups[1]?.label).toBe("A task could not be read");
+    expect(sessionImportNotImportedLine(groups.slice(1, 2))).toBe(
+      "Not imported: 1 session held back by a task that could not be read",
+    );
+  });
 });
 
 function failureEntry(
@@ -1603,9 +1625,20 @@ describe("sessionImportFailureDetailVaries", () => {
   it("keeps the per-session detail only where it carries more than the heading", () => {
     expect(sessionImportFailureDetailVaries("source_unreadable")).toBe(true);
     expect(sessionImportFailureDetailVaries("internal_error")).toBe(true);
+    expect(sessionImportFailureDetailVaries("task_storage_unreadable")).toBe(
+      true,
+    );
     expect(sessionImportFailureDetailVaries("source_empty")).toBe(false);
     expect(sessionImportFailureDetailVaries("workspace_bind_failed")).toBe(
       false,
+    );
+  });
+});
+
+describe("sessionImportFailureLabel", () => {
+  it("labels a task that could not be read", () => {
+    expect(sessionImportFailureLabel("task_storage_unreadable")).toBe(
+      "A task could not be read",
     );
   });
 });
