@@ -1033,6 +1033,7 @@ import {
   providersAwaitMcpAuthRequestSchema,
   providersAwaitMcpAuthResponseSchema,
   providersCancelLoginRequestSchemaV11,
+  providersCancelLoginRequestSchemaV12,
   providersCancelLoginResponseSchema,
   providersCancelMcpAuthRequestSchema,
   providersCancelMcpAuthResponseSchema,
@@ -1055,6 +1056,7 @@ import {
   providersDetectVersionResponseSchema,
   providersStartLoginRequestSchemaV10,
   providersStartLoginRequestSchemaV11,
+  providersStartLoginRequestSchemaV14,
   providersStartLoginResponseSchemaV10,
   providersStartLoginResponseSchemaV11,
   providersStartLoginResponseSchemaV12,
@@ -3690,6 +3692,25 @@ export const providersStartLoginUpgradeV12ToV13 = defineUpgradePath<
   }),
 });
 
+// Ownership is negotiated on both start@1.4 and cancel@1.2. Older callers
+// acquire an anonymous claim, preserving their scope-keyed cancellation.
+export const providersStartLoginV14 = defineRpcContract({
+  method: "providers.startLogin",
+  schemaVersion: { major: 1, minor: 4 } as const,
+  requestSchema: providersStartLoginRequestSchemaV14,
+  responseSchema: providersStartLoginResponseSchemaV13,
+});
+
+export const providersStartLoginUpgradeV13ToV14 = defineUpgradePath<
+  typeof providersStartLoginV13,
+  typeof providersStartLoginV14
+>({
+  from: { major: 1, minor: 3 },
+  to: { major: 1, minor: 4 },
+  upgradeRequest: (request) => ({ ...request, holderId: null }),
+  upgradeResponse: (response) => response,
+});
+
 export const providersAwaitLoginV10 = defineRpcContract({
   method: "providers.awaitLogin",
   schemaVersion: { major: 1, minor: 0 } as const,
@@ -3877,6 +3898,23 @@ export const providersCancelLoginUpgradeV10ToV11 = defineUpgradePath<
   upgradeResponse: (response) => ({
     ...response,
   }),
+});
+
+export const providersCancelLoginV12 = defineRpcContract({
+  method: "providers.cancelLogin",
+  schemaVersion: { major: 1, minor: 2 } as const,
+  requestSchema: providersCancelLoginRequestSchemaV12,
+  responseSchema: providersCancelLoginResponseSchema,
+});
+
+export const providersCancelLoginUpgradeV11ToV12 = defineUpgradePath<
+  typeof providersCancelLoginV11,
+  typeof providersCancelLoginV12
+>({
+  from: { major: 1, minor: 1 },
+  to: { major: 1, minor: 2 },
+  upgradeRequest: (request) => ({ ...request, holderId: null }),
+  upgradeResponse: (response) => response,
 });
 
 /**
@@ -10558,7 +10596,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   },
   "providers.startLogin": {
     1: {
-      latestMinor: 3,
+      latestMinor: 4,
       versions: {
         0: {
           contract: providersStartLoginV10,
@@ -10575,6 +10613,10 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
         3: {
           contract: providersStartLoginV13,
           upgradeFromPreviousVersion: providersStartLoginUpgradeV12ToV13,
+        },
+        4: {
+          contract: providersStartLoginV14,
+          upgradeFromPreviousVersion: providersStartLoginUpgradeV13ToV14,
         },
       },
       downgradePathsFromLatest: {},
@@ -10614,7 +10656,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   },
   "providers.cancelLogin": {
     1: {
-      latestMinor: 1,
+      latestMinor: 2,
       versions: {
         0: {
           contract: providersCancelLoginV10,
@@ -10623,6 +10665,10 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
         1: {
           contract: providersCancelLoginV11,
           upgradeFromPreviousVersion: providersCancelLoginUpgradeV10ToV11,
+        },
+        2: {
+          contract: providersCancelLoginV12,
+          upgradeFromPreviousVersion: providersCancelLoginUpgradeV11ToV12,
         },
       },
       downgradePathsFromLatest: {},
