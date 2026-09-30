@@ -58,6 +58,7 @@ import {
 } from "@traycer/protocol/persistence/epic/foundation";
 import {
   sessionImportFailureReasonSchema,
+  sessionImportFailureReasonSchemaPreTaskStorage,
   sessionImportSelectionSchema,
 } from "@traycer/protocol/host/session-import/candidate";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
@@ -66,7 +67,9 @@ import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 // `unreadable` state and a run's `failed` outcome name the same causes.
 export {
   sessionImportFailureReasonSchema,
+  sessionImportFailureReasonSchemaPreTaskStorage,
   type SessionImportFailureReason,
+  type SessionImportFailureReasonPreTaskStorage,
 } from "@traycer/protocol/host/session-import/candidate";
 
 export const sessionImportRunOpenRequestSchema = lazySchema(() =>
@@ -109,18 +112,26 @@ export const sessionImportRunOpenRequestSchemaPreAuto = lazySchema(() =>
   }),
 );
 
+const sessionImportImportedOutcomeSchema = lazySchema(() =>
+  z.object({
+    kind: z.literal("imported"),
+    epicId: z.string().min(1),
+    chatId: z.string().min(1),
+  }),
+);
+
+const sessionImportSkippedOutcomeSchema = lazySchema(() =>
+  z.object({
+    kind: z.literal("skipped_already_imported"),
+    epicId: z.string().min(1),
+    chatId: z.string().min(1),
+  }),
+);
+
 export const sessionImportOutcomeSchema = lazySchema(() =>
   z.discriminatedUnion("kind", [
-    z.object({
-      kind: z.literal("imported"),
-      epicId: z.string().min(1),
-      chatId: z.string().min(1),
-    }),
-    z.object({
-      kind: z.literal("skipped_already_imported"),
-      epicId: z.string().min(1),
-      chatId: z.string().min(1),
-    }),
+    sessionImportImportedOutcomeSchema,
+    sessionImportSkippedOutcomeSchema,
     z.object({
       kind: z.literal("failed"),
       reason: sessionImportFailureReasonSchema,
@@ -129,6 +140,27 @@ export const sessionImportOutcomeSchema = lazySchema(() =>
   ]),
 );
 export type SessionImportOutcome = z.infer<typeof sessionImportOutcomeSchema>;
+
+/**
+ * The outcome as `1.0`-`1.2` shipped it: a `failed` arm whose reason is the
+ * five-member enum those peers strict-decode
+ * ({@link sessionImportFailureReasonSchemaPreTaskStorage}). A host sends such a
+ * peer `task_storage_unreadable` as `internal_error`, with the same detail.
+ */
+export const sessionImportOutcomeSchemaPreTaskStorage = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    sessionImportImportedOutcomeSchema,
+    sessionImportSkippedOutcomeSchema,
+    z.object({
+      kind: z.literal("failed"),
+      reason: sessionImportFailureReasonSchemaPreTaskStorage,
+      detail: z.string(),
+    }),
+  ]),
+);
+export type SessionImportOutcomePreTaskStorage = z.infer<
+  typeof sessionImportOutcomeSchemaPreTaskStorage
+>;
 
 export const sessionImportRunCountsSchema = lazySchema(() =>
   z.object({
@@ -142,9 +174,8 @@ export type SessionImportRunCounts = z.infer<
 >;
 
 // The three arms that carry no harness id, shared verbatim by the live union
-// and the frozen @1.0 copy below - only the `progress` arm's enum differs
-// between them, so naming these keeps the two unions from drifting in any
-// other respect.
+// and the frozen copies below - only the `progress` arm differs between them,
+// so naming these keeps the unions from drifting in any other respect.
 const sessionImportRunStartedFrameSchema = lazySchema(() =>
   z.object({
     kind: z.literal("started"),
@@ -202,16 +233,34 @@ export type SessionImportRunServerFrame = z.infer<
 >;
 
 /**
+ * Frozen server-frame shape as @1.1 and @1.2 shipped it: the live union except
+ * the `progress` arm's outcome, pinned to the five failure reasons those peers
+ * strict-decode ({@link sessionImportOutcomeSchemaPreTaskStorage}).
+ */
+export const sessionImportRunServerFrameSchemaPreTaskStorage = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    sessionImportRunStartedFrameSchema,
+    sessionImportRunProgressFrameSchema.extend({
+      outcome: sessionImportOutcomeSchemaPreTaskStorage,
+    }),
+    sessionImportRunCompleteFrameSchema,
+    sessionImportRunPongFrameSchema,
+  ]),
+);
+
+/**
  * Frozen server-frame shape as `cli-v1.3.0` / `host-v1.3.0` shipped @1.0: the
  * `progress` arm's harness is pinned to the twenty ids those peers strict-
- * decode. Streams carry no downgrade bridge, so a host must GATE EMISSION on
- * the negotiated minor rather than expecting a projection to save it.
+ * decode, and its outcome to the five failure reasons they know. Streams carry
+ * no downgrade bridge, so a host must GATE EMISSION on the negotiated minor
+ * rather than expecting a projection to save it.
  */
 export const sessionImportRunServerFrameSchemaPreAntigravity = lazySchema(() =>
   z.discriminatedUnion("kind", [
     sessionImportRunStartedFrameSchema,
     sessionImportRunProgressFrameSchema.extend({
       harness: guiHarnessIdSchemaPreAntigravity,
+      outcome: sessionImportOutcomeSchemaPreTaskStorage,
     }),
     sessionImportRunCompleteFrameSchema,
     sessionImportRunPongFrameSchema,
@@ -250,7 +299,7 @@ export const sessionImportRunV11 = defineStreamRpcContract({
   method: "sessionImport.run",
   schemaVersion: { major: 1, minor: 1 } as const,
   openRequestSchema: sessionImportRunOpenRequestSchemaPreAuto,
-  serverFrameSchema: sessionImportRunServerFrameSchema,
+  serverFrameSchema: sessionImportRunServerFrameSchemaPreTaskStorage,
   clientFrameSchema: sessionImportRunClientFrameSchema,
 });
 
@@ -280,6 +329,25 @@ export const sessionImportRunV11 = defineStreamRpcContract({
 export const sessionImportRunV12 = defineStreamRpcContract({
   method: "sessionImport.run",
   schemaVersion: { major: 1, minor: 2 } as const,
+  openRequestSchema: sessionImportRunOpenRequestSchema,
+  serverFrameSchema: sessionImportRunServerFrameSchemaPreTaskStorage,
+  clientFrameSchema: sessionImportRunClientFrameSchema,
+});
+
+/**
+ * `sessionImport.run@1.3` - the `task_storage_unreadable` failure reason, and
+ * nothing else: every shape is `1.2`'s except the `progress` arm's outcome,
+ * which is the live one.
+ *
+ * The reason says the session may already be in a task whose chat storage
+ * this host cannot read, and names that task in `detail`. `1.0`-`1.2` decode a
+ * closed five-member enum, so the minor is the negotiable fact that the client
+ * can render it; a host sends a lower-minor subscriber `internal_error` with
+ * the same detail instead.
+ */
+export const sessionImportRunV13 = defineStreamRpcContract({
+  method: "sessionImport.run",
+  schemaVersion: { major: 1, minor: 3 } as const,
   openRequestSchema: sessionImportRunOpenRequestSchema,
   serverFrameSchema: sessionImportRunServerFrameSchema,
   clientFrameSchema: sessionImportRunClientFrameSchema,

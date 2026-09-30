@@ -711,6 +711,7 @@ export function folderDisplayName(path: string): string {
 /** The order failure groups render in: what the user can act on first. */
 const FAILURE_REASON_ORDER: ReadonlyArray<SessionImportFailureReason> = [
   "source_unreadable",
+  "task_storage_unreadable",
   "workspace_bind_failed",
   "creation_failed",
   "internal_error",
@@ -735,6 +736,8 @@ export function sessionImportFailureLabel(
       return "Task could not be created";
     case "internal_error":
       return "Unexpected error";
+    case "task_storage_unreadable":
+      return "A task could not be read";
   }
 }
 
@@ -751,6 +754,8 @@ export function sessionImportFailureDetailVaries(
     case "source_unreadable":
     case "creation_failed":
     case "internal_error":
+    // Names the task to repair or delete: the one thing the user can act on.
+    case "task_storage_unreadable":
       return true;
     case "source_empty":
     case "workspace_bind_failed":
@@ -789,6 +794,8 @@ function failureCause(reason: SessionImportFailureReason): string {
       return "that could not be created";
     case "internal_error":
       return "that hit an unexpected error";
+    case "task_storage_unreadable":
+      return "held back by a task that could not be read";
   }
 }
 

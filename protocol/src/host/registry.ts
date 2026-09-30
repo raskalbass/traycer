@@ -875,6 +875,7 @@ import {
   sessionImportRunV10,
   sessionImportRunV11,
   sessionImportRunV12,
+  sessionImportRunV13,
 } from "@traycer/protocol/host/session-import/run";
 import { sessionImportStatusV10 } from "@traycer/protocol/host/session-import/contracts";
 import {
@@ -12300,8 +12301,9 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
       // 1.1 is mainline's (Antigravity). 1.2 carries no shape delta over it -
       // it is the negotiable fact that the host understands `auto` in the open
       // request's `permissionMode`. See the contract's own note for why a
-      // shape cannot say that.
-      latestMinor: 2,
+      // shape cannot say that. 1.3 adds the `task_storage_unreadable` failure
+      // reason; 1.0-1.2 stay on the five reasons they shipped.
+      latestMinor: 3,
       versions: {
         0: {
           contract: sessionImportRunV10,
@@ -12311,6 +12313,9 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
         },
         2: {
           contract: sessionImportRunV12,
+        },
+        3: {
+          contract: sessionImportRunV13,
         },
       },
     },

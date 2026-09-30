@@ -44,10 +44,18 @@ export type SessionImportSelection = z.infer<
  *                             workspace (and folderless import also failed).
  * - `creation_failed`       - epic or chat creation / seeding failed.
  * - `internal_error`        - anything else; `detail` carries the message.
+ * - `task_storage_unreadable` - the session may already be in a task whose
+ *                             chat storage cannot be read on this host, or
+ *                             such a task kept the host from checking whether
+ *                             it is. `detail` names the task. Importing again
+ *                             succeeds once that task is repaired or deleted,
+ *                             or, when the read failed only for the moment,
+ *                             on a retry. Run `1.3` and later only.
  *
- * A discovered session can only ever carry the first, the second, or the last:
- * the other two name work only a run does. That half is not left to this
- * comment - {@link sessionImportUnreadableReasonSchema} enforces it.
+ * A discovered session can only ever carry the first, the second, or
+ * `internal_error`: the others name work only a run does. That half is not
+ * left to this comment - {@link sessionImportUnreadableReasonSchema} enforces
+ * it.
  */
 export const sessionImportFailureReasonSchema = lazySchema(() =>
   z.enum([
@@ -56,10 +64,36 @@ export const sessionImportFailureReasonSchema = lazySchema(() =>
     "workspace_bind_failed",
     "creation_failed",
     "internal_error",
+    "task_storage_unreadable",
   ]),
 );
 export type SessionImportFailureReason = z.infer<
   typeof sessionImportFailureReasonSchema
+>;
+
+/**
+ * {@link sessionImportFailureReasonSchema} as every released line shipped it:
+ * `sessionImport.run` `1.0`-`1.2` and every `sessionImport.scan` line.
+ *
+ * Hand-frozen, not `.exclude()`-ed off the live enum, on the rule the frozen
+ * harness and permission-mode schemas follow: a released client strict-decodes
+ * a closed `z.enum`, so a member it does not know rejects the whole frame. A
+ * host must therefore GATE EMISSION on the negotiated minor - it sends
+ * `task_storage_unreadable` to a `run` subscriber below `1.3` as
+ * `internal_error`, with the same `detail` - and these schemas are what make
+ * that gate checkable rather than a convention.
+ */
+export const sessionImportFailureReasonSchemaPreTaskStorage = lazySchema(() =>
+  z.enum([
+    "source_unreadable",
+    "source_empty",
+    "workspace_bind_failed",
+    "creation_failed",
+    "internal_error",
+  ]),
+);
+export type SessionImportFailureReasonPreTaskStorage = z.infer<
+  typeof sessionImportFailureReasonSchemaPreTaskStorage
 >;
 
 /**
@@ -75,7 +109,8 @@ export type SessionImportFailureReason = z.infer<
  *
  * Deliberately NOT reused by the scan's `providerFailed` frame: that frame
  * reports a whole provider giving up rather than one session being unreadable,
- * and it classifies its reason from a thrown error, so it keeps the full enum.
+ * and it classifies its reason from a thrown error, so it keeps the enum every
+ * scan line shipped ({@link sessionImportFailureReasonSchemaPreTaskStorage}).
  */
 export const sessionImportUnreadableReasonSchema = lazySchema(() =>
   z.enum(["source_unreadable", "source_empty", "internal_error"]),

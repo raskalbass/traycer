@@ -40,7 +40,7 @@ import {
 } from "@traycer/protocol/persistence/epic/foundation";
 import {
   sessionImportCandidateSchema,
-  sessionImportFailureReasonSchema,
+  sessionImportFailureReasonSchemaPreTaskStorage,
   sessionImportGroupSchema,
 } from "@traycer/protocol/host/session-import/candidate";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
@@ -95,7 +95,9 @@ export const sessionImportScanServerFrameSchema = lazySchema(() =>
     z.object({
       kind: z.literal("providerFailed"),
       harness: guiHarnessIdSchema,
-      reason: sessionImportFailureReasonSchema,
+      // Every scan line is frozen at the five reasons it shipped with: the
+      // run's `task_storage_unreadable` names work only a run does.
+      reason: sessionImportFailureReasonSchemaPreTaskStorage,
       detail: z.string(),
       hasBinaryPayload: z.literal(false),
     }),
@@ -169,7 +171,9 @@ export const sessionImportScanServerFrameSchemaPreAntigravity = lazySchema(() =>
     z.object({
       kind: z.literal("providerFailed"),
       harness: guiHarnessIdSchemaPreAntigravity,
-      reason: sessionImportFailureReasonSchema,
+      // Every scan line is frozen at the five reasons it shipped with: the
+      // run's `task_storage_unreadable` names work only a run does.
+      reason: sessionImportFailureReasonSchemaPreTaskStorage,
       detail: z.string(),
       hasBinaryPayload: z.literal(false),
     }),
