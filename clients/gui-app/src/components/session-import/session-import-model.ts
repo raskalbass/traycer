@@ -745,7 +745,9 @@ export function sessionImportFailureLabel(
  * Whether the host's per-session detail says more than the reason does. For
  * an unreadable file it is the actual error, worth a glance; for an empty
  * session it restates the heading, and a list that repeats one sentence per
- * row is what buried the summary under a wall of text.
+ * row is what buried the summary under a wall of text. A task that could not
+ * be read is named in the detail: the task to repair or delete, the one thing
+ * the user can act on.
  */
 export function sessionImportFailureDetailVaries(
   reason: SessionImportFailureReason,
@@ -754,7 +756,6 @@ export function sessionImportFailureDetailVaries(
     case "source_unreadable":
     case "creation_failed":
     case "internal_error":
-    // Names the task to repair or delete: the one thing the user can act on.
     case "task_storage_unreadable":
       return true;
     case "source_empty":
