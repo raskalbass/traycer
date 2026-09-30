@@ -12,9 +12,13 @@ import {
   sessionImportRunV10,
   sessionImportRunV11,
   sessionImportRunV12,
+  sessionImportRunV13,
 } from "@traycer/protocol/host/session-import/run";
 import { sessionImportStatusV10 } from "@traycer/protocol/host/session-import/contracts";
-import { sessionImportFailureReasonSchema } from "@traycer/protocol/host/session-import/candidate";
+import {
+  sessionImportFailureReasonSchema,
+  sessionImportFailureReasonSchemaPreTaskStorage,
+} from "@traycer/protocol/host/session-import/candidate";
 import {
   hostRpcRegistry,
   hostStreamRpcRegistry,
@@ -618,7 +622,7 @@ describe("sessionImport.status@1.0", () => {
  * feature the wire cannot carry, and nothing else in the suite would notice.
  */
 describe("sessionImport.* registry membership", () => {
-  it("registers scan at minors 0-2 and run at 0-2, retaining the older contracts for older hosts", () => {
+  it("registers scan at minors 0-2 and run at 0-3, retaining the older contracts for older hosts", () => {
     const scan = hostStreamRpcRegistry["sessionImport.scan"];
     expect(scan).toBeDefined();
     expect(scan[1].latestMinor).toBe(2);
@@ -633,11 +637,12 @@ describe("sessionImport.* registry membership", () => {
     // name the id. `run@1.2` is the one with no shape delta over its
     // predecessor - it exists so a client can detect a host that understands
     // the `auto` permission mode in the open request, which no shape can
-    // express. Every minor stays reachable, so this asserts the whole line
+    // express. `run@1.3` is `task_storage_unreadable` on a failed progress
+    // outcome. Every minor stays reachable, so this asserts the whole line
     // rather than just the head.
     const run = hostStreamRpcRegistry["sessionImport.run"];
     expect(run).toBeDefined();
-    expect(run[1].latestMinor).toBe(2);
+    expect(run[1].latestMinor).toBe(3);
     expect(run[1].versions[0].contract).toBe(sessionImportRunV10);
     expect(run[1].versions[1].contract).toBe(sessionImportRunV11);
     expect(sessionImportRunV10.schemaVersion).toEqual({ major: 1, minor: 0 });
@@ -646,6 +651,97 @@ describe("sessionImport.* registry membership", () => {
     // the host understands `auto` in the open request's `permissionMode`.
     expect(run[1].versions[2].contract).toBe(sessionImportRunV12);
     expect(sessionImportRunV12.schemaVersion).toEqual({ major: 1, minor: 2 });
+    expect(run[1].versions[3].contract).toBe(sessionImportRunV13);
+    expect(sessionImportRunV13.schemaVersion).toEqual({ major: 1, minor: 3 });
+  });
+
+  it("scan never carries task_storage_unreadable on providerFailed or an unreadable candidate", () => {
+    const providerFailed = {
+      kind: "providerFailed" as const,
+      harness: "claude" as const,
+      reason: "task_storage_unreadable" as const,
+      detail: "Could not check a task on this host.",
+      hasBinaryPayload: false as const,
+    };
+    expect(
+      sessionImportScanV10.serverFrameSchema.safeParse(providerFailed).success,
+    ).toBe(false);
+    expect(
+      sessionImportScanV11.serverFrameSchema.safeParse(providerFailed).success,
+    ).toBe(false);
+    expect(
+      sessionImportScanV12.serverFrameSchema.safeParse(providerFailed).success,
+    ).toBe(false);
+
+    const unreadableGroup = {
+      kind: "group" as const,
+      group: {
+        gitBacked: false,
+        location: { kind: "folder" as const, path: "/repo", workspaceId: null },
+        sessions: [
+          {
+            ...importableCandidate,
+            state: {
+              kind: "unreadable" as const,
+              reason: "task_storage_unreadable" as const,
+              detail: "Could not check a task on this host.",
+            },
+          },
+        ],
+      },
+      hasBinaryPayload: false as const,
+    };
+    expect(
+      sessionImportScanV10.serverFrameSchema.safeParse(unreadableGroup).success,
+    ).toBe(false);
+    expect(
+      sessionImportScanV11.serverFrameSchema.safeParse(unreadableGroup).success,
+    ).toBe(false);
+    expect(
+      sessionImportScanV12.serverFrameSchema.safeParse(unreadableGroup).success,
+    ).toBe(false);
+  });
+
+  it("run@1.0-1.2 reject a task_storage_unreadable progress frame; run@1.3 accepts it", () => {
+    const failedProgress = {
+      kind: "progress" as const,
+      runId: "run-1",
+      index: 0,
+      total: 1,
+      harness: "claude" as const,
+      nativeSessionId: "s-1",
+      outcome: {
+        kind: "failed" as const,
+        reason: "task_storage_unreadable" as const,
+        detail:
+          'Could not check "Alpha" for an earlier import of this session: its chat storage cannot be read on this host. Repair or delete that task to import this session.',
+      },
+      hasBinaryPayload: false as const,
+    };
+    expect(
+      sessionImportRunV10.serverFrameSchema.safeParse(failedProgress).success,
+    ).toBe(false);
+    expect(
+      sessionImportRunV11.serverFrameSchema.safeParse(failedProgress).success,
+    ).toBe(false);
+    expect(
+      sessionImportRunV12.serverFrameSchema.safeParse(failedProgress).success,
+    ).toBe(false);
+    expect(
+      sessionImportRunV13.serverFrameSchema.safeParse(failedProgress).success,
+    ).toBe(true);
+  });
+
+  it("the frozen pre-task-storage failure reason enum has exactly the five released members", () => {
+    expect([...sessionImportFailureReasonSchemaPreTaskStorage.options]).toEqual(
+      [
+        "source_unreadable",
+        "source_empty",
+        "workspace_bind_failed",
+        "creation_failed",
+        "internal_error",
+      ],
+    );
   });
 
   // `@1.0`/`@1.1` are frozen at the twenty harness ids `cli-v1.3.0` shipped;
