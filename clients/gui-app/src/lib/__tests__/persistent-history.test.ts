@@ -688,6 +688,7 @@ describe("PersistentHistoryController", () => {
   it("does not persist /when-you-quit, mirroring the bare-`/` rule", () => {
     const history = seedStack("window-a", ["/settings/general"]);
 
+    flushHistory("window-a");
     expect(readPersisted("window-a")).toEqual({
       entries: ["/settings/general"],
       index: 0,
@@ -695,6 +696,7 @@ describe("PersistentHistoryController", () => {
 
     history.push("/when-you-quit");
 
+    flushHistory("window-a");
     expect(readPersisted("window-a")).toEqual({
       entries: ["/settings/general"],
       index: 0,
@@ -706,6 +708,7 @@ describe("PersistentHistoryController", () => {
 
     history.push("/settings/host");
 
+    flushHistory("window-a");
     expect(readPersisted("window-a")).toEqual({
       entries: ["/settings/general", "/settings/host"],
       index: 1,

@@ -49,6 +49,15 @@ const joinAwait = defineRpcContract({
   responseSchema: z.object({ value: z.string() }),
 });
 
+// A `join` method that is NOT cancelAfterDispatch, as `providers.awaitLogin`
+// is: its last waiter leaving does not abort the job.
+const joinAwaitLogin = defineRpcContract({
+  method: "join.awaitLogin",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: z.object({ session: z.string() }),
+  responseSchema: z.object({ value: z.string() }),
+});
+
 const rawRead = defineRpcContract({
   method: "raw.read",
   schemaVersion: { major: 1, minor: 0 } as const,
@@ -86,6 +95,16 @@ const registry = defineVersionedRpcRegistry({
       downgradePathsFromLatest: {},
     },
   },
+  "join.awaitLogin": {
+    cancelAfterDispatch: false,
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: joinAwaitLogin, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
   "raw.read": {
     1: {
       latestMinor: 0,
@@ -98,7 +117,7 @@ const registry = defineVersionedRpcRegistry({
 const schedulingPolicy: RpcSchedulingPolicy<typeof registry> = {
   modeFor: (method) => {
     if (method === "fifo.command") return "fifo";
-    if (method === "join.await") return "join";
+    if (method === "join.await" || method === "join.awaitLogin") return "join";
     return "latest";
   },
   joinResponseTimeoutMs: (method) => (method === "join.await" ? 1_000 : null),
@@ -992,6 +1011,59 @@ describe("a join request after the active job was aborted", () => {
     );
     // Queued behind the aborted call, not dispatched beside it: one raw call
     // per key at a time still holds.
+    await flush();
+    expect(started).toHaveLength(1);
+    executions[0].resolve({ value: "old" });
+    await flush();
+
+    expect(started).toHaveLength(2);
+    executions[1].resolve({ value: "new" });
+    await expect(second).resolves.toEqual({ value: "new" });
+  });
+
+  it("gets a job of its own when the abandoned job's method is not cancelAfterDispatch", async () => {
+    // `providers.awaitLogin`: nothing aborts its job when the cancelled
+    // attempt's waiter leaves, so the job's own signal cannot be what keeps a
+    // reopened attempt from taking the cancelled attempt's answer.
+    const coordinator = makeCoordinator();
+    const executions = [
+      deferred<{ value: string }>(),
+      deferred<{ value: string }>(),
+    ];
+    const started: HostRequestAuthority[] = [];
+    const execute = (
+      capturedAuthority: HostRequestAuthority,
+    ): Promise<{ value: string }> => {
+      started.push(capturedAuthority);
+      return executions[started.length - 1].promise;
+    };
+    const requestAuthority = authority("host-a", "user-a");
+    const requestDomain = domain("join");
+    const controller = new AbortController();
+
+    const first = coordinator.request({
+      hostId: requestAuthority.endpoint.hostId,
+      userId: requestAuthority.bearer.identity.userId,
+      method: "join.awaitLogin",
+      params: { session: "login" },
+      authority: requestAuthority,
+      authorityDomain: requestDomain,
+      signal: controller.signal,
+      execute,
+    });
+    controller.abort();
+
+    await expect(first).rejects.toMatchObject({ reason: "waiter-cancelled" });
+    expect(started[0].abortSignal.aborted).toBe(false);
+
+    const second = submit(
+      coordinator,
+      "join.awaitLogin",
+      { session: "login" },
+      requestAuthority,
+      requestDomain,
+      execute,
+    );
     await flush();
     expect(started).toHaveLength(1);
     executions[0].resolve({ value: "old" });
