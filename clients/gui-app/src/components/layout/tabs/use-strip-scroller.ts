@@ -6,7 +6,11 @@ import {
   useRef,
 } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { type StripAxis } from "@/components/epic-canvas/dnd/strip-axis";
+import { useEpicDndStore } from "@/components/epic-canvas/dnd/dnd-store";
+import {
+  revealMemberAlongAxis,
+  type StripAxis,
+} from "@/components/epic-canvas/dnd/strip-axis";
 import { registerTabStripGeometry } from "@/components/epic-canvas/surface-host/tile-surface-geometry-coordinator";
 import { runHeaderStripCommitHandoff } from "./header-strip-commit-handoff";
 import {
@@ -69,4 +73,43 @@ export function useStripScroller(input: {
     },
     [trailingSlotRef, extraRef],
   );
+}
+
+/**
+ * The strip member that holds the selection as the strip PAINTED it - no
+ * second reading of `activeItemId` that could disagree with the tab that drew
+ * itself active. Exactly one node inside the scroller carries it: a split
+ * group's halves are selected only while the group itself holds the
+ * selection, and Home is drawn outside the scroller. `null` mid-drag: the
+ * strip's geometry then belongs to dnd-kit, whose members carry displacement
+ * transforms and whose drag model reads the scroll offset as its content
+ * origin, so a drag is not a moment to reveal anything.
+ */
+export function selectedStripMember(scroller: HTMLElement): HTMLElement | null {
+  if (useEpicDndStore.getState().activeHeaderTab !== null) return null;
+  const selected = scroller.querySelector<HTMLElement>(
+    '[aria-selected="true"]',
+  );
+  // The strip MEMBER, not the selected node: inside a split group the
+  // selected node is one half of the member. Walking to the scroller's own
+  // child is what gets the element whose box is the whole item.
+  let member: HTMLElement | null = selected;
+  while (member !== null && member.parentElement !== scroller) {
+    member = member.parentElement;
+  }
+  return member;
+}
+
+/**
+ * Scroll the strip the least amount that brings the selected member into view.
+ * Exported for the strip's slot animations, which move the selection after
+ * the activation reveal has already run: a slot opening beside it, or the
+ * selected slot itself growing from nothing.
+ */
+export function revealSelectedMember(
+  scroller: HTMLElement,
+  axis: StripAxis,
+): void {
+  const member = selectedStripMember(scroller);
+  if (member !== null) revealMemberAlongAxis(scroller, member, axis);
 }

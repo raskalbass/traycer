@@ -1,8 +1,5 @@
 import { useSurfaceDemandStore } from "@/stores/tabs/surface-demand";
-import {
-  pruneRecoveryTiles,
-  withoutTabRecovery,
-} from "@/lib/tab-recovery/history";
+import { pruneRecoveryTiles } from "@/lib/tab-recovery/history";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useNavigate,
@@ -605,9 +602,7 @@ export function useEpicRouteSynchronization(
         ) {
           continue;
         }
-        withoutTabRecovery(() =>
-          closeCanvasTab(tabId, pane.id, tab.instanceId),
-        );
+        closeCanvasTab(tabId, pane.id, tab.instanceId);
       }
     }
   }, [

@@ -79,6 +79,7 @@ function createOwnedHandle(
     rows: 24,
     reattachMode: "fresh",
     kind,
+    viewer: "presentation",
     streamClientFactory: () => ({
       sendAction: () => undefined,
       close: () => {
@@ -139,7 +140,7 @@ describe("xterm host fleet identity", () => {
   it("does not let host B adopt, rekey, or release host A's warm engine or stream", () => {
     const registry = __getTerminalSessionRegistryForTests();
     const ownedA = createOwnedHandle(SHARED_ID, "terminal");
-    registry.acquire("inst-a", () => ownedA.handle, HOST_A);
+    registry.acquire("inst-a", () => ownedA.handle, HOST_A, "presentation");
     const engineA = acquireXtermHost("inst-a", () =>
       makeEntry(SHARED_ID, HOST_A),
     );
@@ -163,7 +164,7 @@ describe("xterm host fleet identity", () => {
   it("keeps host A's retained stream and engine after host B opens the same id", () => {
     const registry = __getTerminalSessionRegistryForTests();
     const ownedA = createOwnedHandle(SHARED_ID, "terminal");
-    registry.acquire("inst-a", () => ownedA.handle, HOST_A);
+    registry.acquire("inst-a", () => ownedA.handle, HOST_A, "presentation");
     const engineA = acquireXtermHost("inst-a", () =>
       makeEntry(SHARED_ID, HOST_A),
     );
@@ -171,7 +172,7 @@ describe("xterm host fleet identity", () => {
     registry.release("inst-a", ownedA.handle, true);
 
     const ownedB = createOwnedHandle(SHARED_ID, "terminal");
-    registry.acquire("inst-b", () => ownedB.handle, HOST_B);
+    registry.acquire("inst-b", () => ownedB.handle, HOST_B, "presentation");
     const engineB = acquireXtermHost("inst-b", () =>
       makeEntry(SHARED_ID, HOST_B),
     );
@@ -234,7 +235,7 @@ describe("xterm host fleet identity", () => {
     vi.useFakeTimers();
     const registry = __getTerminalSessionRegistryForTests();
     const ownedA = createOwnedHandle(SHARED_ID, "terminal");
-    registry.acquire("inst-a", () => ownedA.handle, HOST_A);
+    registry.acquire("inst-a", () => ownedA.handle, HOST_A, "presentation");
     const engineA = acquireXtermHost("inst-a", () =>
       makeEntry(SHARED_ID, HOST_A),
     );
@@ -257,6 +258,7 @@ describe("xterm host fleet identity", () => {
         throw new Error("must reuse the adopted same-host handle");
       },
       HOST_A,
+      "presentation",
     );
     expect(revived).toBe(ownedA.handle);
     registry.release("inst-reopen", ownedA.handle, true);
@@ -269,7 +271,12 @@ describe("xterm host disposal follows the shared terminal registry", () => {
   it("disposes a released terminal-agent's engine once the shared cap evicts it, not only on exit", () => {
     const registry = __getTerminalSessionRegistryForTests();
     const owned = createOwnedHandle("agent-session", "terminal-agent");
-    registry.acquire("agent-inst", () => owned.handle, "host-1");
+    registry.acquire(
+      "agent-inst",
+      () => owned.handle,
+      "host-1",
+      "presentation",
+    );
     const engine = acquireXtermHost("agent-inst", () =>
       makeEntry("agent-session", "host-1"),
     );
@@ -285,7 +292,12 @@ describe("xterm host disposal follows the shared terminal registry", () => {
       (_unused, index) => createOwnedHandle(`filler-${index}`, "terminal"),
     );
     fillers.forEach((filler, index) => {
-      registry.acquire(`filler-inst-${index}`, () => filler.handle, "host-1");
+      registry.acquire(
+        `filler-inst-${index}`,
+        () => filler.handle,
+        "host-1",
+        "presentation",
+      );
       registry.release(`filler-inst-${index}`, filler.handle, true);
     });
 
@@ -298,7 +310,12 @@ describe("xterm host disposal follows the shared terminal registry", () => {
     vi.useFakeTimers();
     const registry = __getTerminalSessionRegistryForTests();
     const owned = createOwnedHandle("agent-ttl-session", "terminal-agent");
-    registry.acquire("agent-ttl-inst", () => owned.handle, "host-1");
+    registry.acquire(
+      "agent-ttl-inst",
+      () => owned.handle,
+      "host-1",
+      "presentation",
+    );
     const engine = acquireXtermHost("agent-ttl-inst", () =>
       makeEntry("agent-ttl-session", "host-1"),
     );

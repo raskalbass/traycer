@@ -311,6 +311,7 @@ import {
 import { toast } from "sonner";
 import type { ChatSurfaceNode } from "./chat-tile-types";
 import { ChatTilePreContent } from "./chat-tile-runtime-gate";
+import { MobileDrawerVisibleTilePaintReporter } from "@/components/layout/shell/mobile-drawer-history-gate";
 import type { ChatLoadWait, ChatTilePreContentFrame } from "./chat-pre-content";
 import { SurfaceActivityProvider } from "@/components/home/composer/surface-activity-context";
 import { chatTileCatalogActivity } from "./chat-tile-surface-activity";
@@ -3754,6 +3755,7 @@ function ChatSessionMessagesSurface(
     <ChatRowStoreContext value={props.handle.rows}>
       <ChatRowPresentationContext value={props.rowPresentation}>
         <ChatRestoreProvider value={props.restoreContext}>
+          <MobileDrawerVisibleTilePaintReporter ready />
           <ChatPlanActionsContext.Provider value={props.planActions}>
             <WorkingVerbContext.Provider value={workingVerb}>
               <ThinkingTokensSourceContext.Provider

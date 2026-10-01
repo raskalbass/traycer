@@ -638,7 +638,7 @@ type ToolbarTestProps = {
   // The automatic-cleanup chip's slot. `null` here: the chip mounts a host
   // read of its own, and these tests are about the list, not the policy
   // (`worktree-auto-cleanup-chip.test.tsx` owns that).
-  cleanup: ReactNode;
+  policies: ReactNode;
   onRefresh: () => Promise<unknown>;
   refreshing: boolean;
   canRefresh: boolean;
@@ -647,7 +647,7 @@ type ToolbarTestProps = {
 
 function testToolbarProps(): ToolbarTestProps {
   return {
-    cleanup: null,
+    policies: null,
     onRefresh: vi.fn(),
     refreshing: false,
     canRefresh: true,
