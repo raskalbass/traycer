@@ -862,6 +862,72 @@ describe("acquireCloudDraftIngest - a cancelled read on another serving host", (
 });
 
 describe("acquireCloudDraftIngest - demand that outlives what it applied", () => {
+  it.each([
+    { relisted: true, outcome: "installs the newer head without another read" },
+    { relisted: false, outcome: "leaves the chat absent" },
+  ])(
+    "when a settled sweep drops the older head's row while a newer head is parked on its images and the chat is relisted=$relisted, the newer apply $outcome",
+    async ({ relisted }) => {
+      mountSession(OWNER_HOST_ID);
+      const { client, reads } = requester();
+      const older = acquire(client, { chats: [summary(DIGEST_ONE, null)] });
+      reads[0].resolve({ text: "alpha" });
+      await vi.waitFor(() => {
+        expect(rowText()).toContain("alpha");
+      });
+      older();
+      await flush();
+
+      let openImages: () => void = () => undefined;
+      blobGate.hold = new Promise<void>((resolve) => {
+        openImages = resolve;
+      });
+      const newer = acquire(client, { chats: [summary(DIGEST_TWO, null)] });
+      reads[1].resolve({
+        digest: DIGEST_TWO,
+        revision: 2,
+        text: "bravo",
+        hashes: [IMAGE_HASH],
+      });
+      await vi.waitFor(() => {
+        expect(blobGate.reads).toBe(1);
+      });
+      expect(rowText()).toContain("alpha");
+
+      // A directory that no longer lists the chat drops the OLDER head's row
+      // while the newer apply is still reading its images.
+      const sweep = acquire(client, {
+        chats: [],
+        settled: true,
+        fenceSeq: cloudDraftIngestSeq(),
+      });
+      expect(draftIds()).toEqual([]);
+      sweep();
+      // Only a live acquisition after the removal asks for the head again; the
+      // lease the newer apply already held is not such a request.
+      const again = relisted
+        ? acquire(client, { chats: [summary(DIGEST_TWO, null)] })
+        : null;
+      await flush();
+      expect(draftIds()).toEqual([]);
+
+      openImages();
+      if (relisted) {
+        await vi.waitFor(() => {
+          expect(rowText()).toContain("bravo");
+        });
+      } else {
+        await flush();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await flush();
+        expect(draftIds()).toEqual([]);
+      }
+      expect(reads).toHaveLength(2);
+      newer();
+      again?.();
+    },
+  );
+
   it("resolves a head again when the same digest is listed after a read that found nothing published", async () => {
     const { client, reads } = requester();
     const first = acquire(client, {});
