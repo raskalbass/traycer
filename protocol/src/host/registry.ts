@@ -10966,7 +10966,10 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
     },
   },
   "providers.awaitLogin": {
-    cancelAfterDispatch: false,
+    // A wait, not the login: the host resolver only consumes the attempt's
+    // completion and ignores the abort. A cancelled attempt's wait must be
+    // abandoned, or a reopened attempt joins it and takes its answer.
+    cancelAfterDispatch: true,
     1: {
       latestMinor: 0,
       versions: {

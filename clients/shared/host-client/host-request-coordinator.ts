@@ -326,14 +326,10 @@ export class HostRequestCoordinator<Registry extends VersionedRpcRegistry> {
     // answer to a request its caller never made: for `providers.awaitLogin`,
     // the end of the sign-in attempt the caller had just cancelled. It goes
     // behind that job instead: onto the queued tail when there is one, else
-    // as a job of its own. A started job every waiter has left is abandoned
-    // in the same sense even when nothing aborted it: a method that is not
-    // `cancelAfterDispatch` (`providers.awaitLogin` among them) keeps running
-    // with no one to answer.
+    // as a job of its own.
     if (
       queue.active !== null &&
       !queue.active.controller.signal.aborted &&
-      !(queue.active.started && queue.active.waiters.size === 0) &&
       sameAuthorityDomain(queue.active.authorityDomain, domain)
     ) {
       return queue.active;

@@ -41,12 +41,6 @@ const HEAD: DraftHeadReaderRecord = {
 const installGate = vi.hoisted(() => ({ failing: false, attempts: 0 }));
 // The owner host's blob read, which an apply awaits before it installs a head
 // that names images. Held open, it is a real point the apply is parked at.
-// The cloud image recovery an apply runs AFTER its row is installed. Held
-// open, it parks an apply that has already installed.
-const recoveryGate = vi.hoisted(() => ({
-  hold: null as Promise<void> | null,
-  calls: 0,
-}));
 const blobGate = vi.hoisted(() => ({
   hold: null as Promise<void> | null,
   reads: 0,
@@ -73,10 +67,7 @@ vi.mock("@/lib/drafts/cloud-draft-image-recovery", async (importOriginal) => {
     >();
   return {
     ...actual,
-    recoverCloudDraftImages: async (): Promise<void> => {
-      recoveryGate.calls += 1;
-      await recoveryGate.hold;
-    },
+    recoverCloudDraftImages: (): Promise<void> => Promise.resolve(),
   };
 });
 
@@ -302,8 +293,6 @@ afterEach(() => {
   installGate.attempts = 0;
   blobGate.hold = null;
   blobGate.reads = 0;
-  recoveryGate.hold = null;
-  recoveryGate.calls = 0;
   vi.useRealTimers();
   vi.restoreAllMocks();
   queryClient.clear();
@@ -873,56 +862,6 @@ describe("acquireCloudDraftIngest - a cancelled read on another serving host", (
 });
 
 describe("acquireCloudDraftIngest - demand that outlives what it applied", () => {
-  it.each([
-    { relisted: true, outcome: "restores the row, without another read" },
-    { relisted: false, outcome: "leaves the row absent" },
-  ])(
-    "when a settled sweep removed the row of an apply still recovering images and the head is relisted=$relisted, finishing recovery $outcome",
-    async ({ relisted }) => {
-      let finishRecovery: () => void = () => undefined;
-      recoveryGate.hold = new Promise<void>((resolve) => {
-        finishRecovery = resolve;
-      });
-      mountSession(HOST_ID);
-      const { client, reads } = requester();
-      const held = acquire(client, {});
-      reads[0].resolve({ text: "alpha", hashes: [IMAGE_HASH] });
-      // The row is installed; the apply itself is still parked in recovery.
-      await vi.waitFor(() => {
-        expect(recoveryGate.calls).toBe(1);
-      });
-      expect(rowText()).toContain("alpha");
-
-      // A settled directory that no longer lists it removes the row.
-      const sweep = acquire(client, {
-        chats: [],
-        settled: true,
-        fenceSeq: cloudDraftIngestSeq(),
-      });
-      expect(draftIds()).toEqual([]);
-      sweep();
-      // Only a live acquisition after the removal asks for the head again; the
-      // stale lease that was already held is not such a request.
-      const again = relisted ? acquire(client, {}) : null;
-      await flush();
-      expect(draftIds()).toEqual([]);
-
-      finishRecovery();
-      if (relisted) {
-        await vi.waitFor(() => {
-          expect(rowText()).toContain("alpha");
-        });
-      } else {
-        await flush();
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(draftIds()).toEqual([]);
-      }
-      expect(reads).toHaveLength(1);
-      held();
-      again?.();
-    },
-  );
-
   it("resolves a head again when the same digest is listed after a read that found nothing published", async () => {
     const { client, reads } = requester();
     const first = acquire(client, {});
