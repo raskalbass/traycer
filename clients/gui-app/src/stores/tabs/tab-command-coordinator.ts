@@ -52,6 +52,7 @@ import {
   focusLayoutRef,
   focusSplitSide,
   pairLayoutRefs,
+  moveStripItem,
   reorderStripItem,
   removeLayoutRef,
   repairLayout,
@@ -64,7 +65,7 @@ import {
   type PersistedTabStripLayout,
   type CreateEmptySplitArgs,
   type PairLayoutArgs,
-  type ReorderItemArgs,
+  type MoveItemArgs,
   type ResizeSplitArgs,
   type SplitSide,
   type SplitSideName,
@@ -719,7 +720,8 @@ export class TabCommandCoordinator {
     return true;
   }
 
-  reorderStripItem(command: ReorderItemArgs): boolean {
+  /** A strip drop: the item moves, and takes the group the drop landed in. */
+  moveStripItem(command: MoveItemArgs): boolean {
     const layout = currentLayout();
     const item = layout.items.find(
       (candidate) => candidate.id === command.itemId,
@@ -732,7 +734,7 @@ export class TabCommandCoordinator {
     ) {
       return false;
     }
-    const next = reorderStripItem(layout, command);
+    const next = moveStripItem(layout, command);
     if (next === layout) return false;
     this.execute({
       layout: next,

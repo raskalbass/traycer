@@ -130,7 +130,7 @@ export function armHeaderStripCommitHandoff(axis: StripAxis): void {
   // here so intervening resizes need no bookkeeping on ordinary commits.
   for (const entry of entries.values()) {
     entry.lastBaseline =
-      entry.node === null ? null : axis.layoutOffset(entry.node);
+      entry.node === null ? null : layoutBaselineOf(entry.node, axis);
   }
   armed = true;
 }
@@ -141,6 +141,38 @@ export function isHeaderStripCommitHandoffArmed(): boolean {
 
 export function disarmHeaderStripCommitHandoff(): void {
   armed = false;
+  seededStarts.clear();
+}
+
+/**
+ * Where a commit's NEW item starts, by its id: a split pair a drop forms takes
+ * the place its target row was drawn at, and moves from there to its own slot
+ * as the rows around it do, rather than appearing at its slot while they are
+ * still moving.
+ */
+const seededStarts = new Map<string, number>();
+
+/**
+ * Before a commit that replaces `fromItemId` with a new `itemId`, record where
+ * `fromItemId` is drawn along `axis` (its slot plus the displacement it shows),
+ * so the new item starts there. Nothing is recorded for an item not drawn.
+ */
+export function seedHeaderStripItemFrom(
+  itemId: string,
+  fromItemId: string,
+  axis: StripAxis,
+): void {
+  const node = [
+    ...document.querySelectorAll<HTMLElement>(
+      `[data-testid="${HEADER_STRIP_SCROLL_TEST_ID}"] [data-strip-item-id]`,
+    ),
+  ].find((candidate) => candidate.dataset.stripItemId === fromItemId);
+  if (node === undefined) return;
+  const entry = [...entries.values()].find((e) => e.node === node);
+  seededStarts.set(
+    itemId,
+    layoutBaselineOf(node, axis) + (entry?.value.get() ?? 0),
+  );
 }
 
 /**
@@ -173,6 +205,49 @@ export interface HeaderStripHandoffReport {
   readonly rebased: readonly string[];
   readonly moved: readonly string[];
   readonly uncorrected: readonly string[];
+}
+
+/**
+ * An item's slot along `axis`, measured from the same origin for every item:
+ * its own layout offset plus those of the positioned ancestors it is measured
+ * against in turn. A tab in a group's block is offset within the block, which
+ * is itself offset in the strip, and a commit that moves the block moves the
+ * tab though its own offset does not change.
+ */
+function layoutBaselineOf(node: HTMLElement, axis: StripAxis): number {
+  let baseline = axis.layoutOffset(node);
+  let parent = node.offsetParent;
+  while (parent instanceof HTMLElement) {
+    baseline += axis.layoutOffset(parent);
+    parent = parent.offsetParent;
+  }
+  return baseline;
+}
+
+/**
+ * An item's first layout pass, with no snapshot to preserve a position
+ * against. A new item a commit put in another's place (`seededStarts`) starts
+ * where that one was and settles into its slot. Otherwise it is harmless on a
+ * first pass; at a commit it means an item joined late, which is reported -
+ * but not when it carries no displacement: a tab dropped into or out of a
+ * group, or the tabs of a group block it re-keyed, mount anew, and a frame
+ * that was never drawn at an old position and has no transform to unwind is
+ * already at its place.
+ */
+function firstLayoutOf(
+  entry: HeaderStripItemEntry,
+  id: string,
+  nextBaseline: number,
+): "rebased" | "uncorrected" | "placed" {
+  const seeded = armed ? seededStarts.get(id) : undefined;
+  if (seeded !== undefined) {
+    entry.value.jump(seeded - nextBaseline);
+    animate(entry.value, entry.target, entry.transition);
+    return "rebased";
+  }
+  return armed && (entry.value.get() !== 0 || entry.target !== 0)
+    ? "uncorrected"
+    : "placed";
 }
 
 /**
@@ -213,14 +288,20 @@ export function runHeaderStripCommitHandoff(
       uncorrected.push(id);
       continue;
     }
-    measurements.push({ id, entry, nextBaseline: axis.layoutOffset(node) });
+    measurements.push({
+      id,
+      entry,
+      nextBaseline: layoutBaselineOf(node, axis),
+    });
   }
   for (const { id, entry, nextBaseline } of measurements) {
     const previousBaseline = entry.lastBaseline;
     entry.lastBaseline = nextBaseline;
     if (previousBaseline === null) {
-      // No pre-commit snapshot: an item joined after arming and is reported.
-      uncorrected.push(id);
+      // No pre-commit snapshot: an item joined after arming.
+      const first = firstLayoutOf(entry, id, nextBaseline);
+      if (first === "rebased") rebased.push(id);
+      if (first === "uncorrected") uncorrected.push(id);
       continue;
     }
     if (previousBaseline === nextBaseline) continue;
