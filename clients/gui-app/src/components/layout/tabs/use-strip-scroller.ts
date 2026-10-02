@@ -44,10 +44,13 @@ export function useStripScroller(input: {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const element = scrollerRef.current;
-    // Horizontal headers also publish the edge-menu snapshot through extraRef.
-    if (element === null || extraRef !== null) return;
+    // The horizontal header registers through `useHiddenHeaderTabs`, which
+    // also publishes its edge-menu snapshot. Keyed on the axis, not on
+    // `extraRef`: the side strip takes an `extraRef` of its own (its section
+    // scroll) and still needs its reveal from here.
+    if (element === null || axis.id === "x") return;
     return registerTabStripGeometry(element, axis, () => {});
-  }, [axis, extraRef]);
+  }, [axis]);
   // Trailing slot: the strip's empty space after the last item accepts drops
   // at index `itemCount` (both reorder and tear-off).
   const trailingSlotData = useMemo<HeaderTabSlotDropData>(

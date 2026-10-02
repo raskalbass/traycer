@@ -892,6 +892,43 @@ describe("<SideTabStrip />", () => {
     }
   });
 
+  it("keeps a row it reveals clear of the scroller's scroll-padding", async () => {
+    // The sectioned list pads its scroller for the sticky section header and
+    // the bottom fade; the coordinator's reveal must land past that padding,
+    // as `revealMemberAlongAxis` does, not flush with the edge beneath it.
+    const refs = openEpicTabs(["Alpha", "Beta"]);
+    const geometry = installRevealGeometry({
+      "tab-epic-e-alpha": { top: 0, bottom: 32 },
+      "tab-epic-e-beta": { top: 368, bottom: 400 },
+    });
+    const padding = document.createElement("style");
+    padding.textContent =
+      '[data-testid="header-tab-strip-scroll"] { scroll-padding-bottom: 20px; }';
+    document.head.append(padding);
+    try {
+      resetTileSurfaceGeometryCoordinatorForTesting();
+      await renderStrip("/elsewhere", LEFT_STRIP);
+      await screen.findByTestId("tab-epic-e-beta");
+      await waitFor(() => {
+        expect(geometry.scrollerReads()).toBeGreaterThan(0);
+      });
+
+      const beta = refs.at(1);
+      if (beta === undefined) throw new Error("expected two tabs");
+      act(() => {
+        useTabsStore.setState({ activeItemId: tabItemId(beta) });
+      });
+
+      await waitFor(() => {
+        expect(geometry.scrolled()).toBe(120);
+      });
+    } finally {
+      padding.remove();
+      resetTileSurfaceGeometryCoordinatorForTesting();
+      geometry.restore();
+    }
+  });
+
   it("renames a row from its context menu", async () => {
     openEpicTabs(["Alpha"]);
     await renderStrip("/elsewhere", LEFT_STRIP);

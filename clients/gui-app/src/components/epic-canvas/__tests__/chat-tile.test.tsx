@@ -2567,7 +2567,9 @@ describe("<ChatTile />", () => {
           {chatTileTestTree(queryClient, true, CHAT_ARTIFACT)}
         </PaneVisibilityContext.Provider>
       );
-      const { rerender } = render(tree(false));
+      // Shown first, so its chat session opens (a tile that was never shown
+      // opens none), then sent behind another task.
+      const { rerender } = render(tree(true));
       await waitForChatTileLoaded();
       act(() => {
         emitChatSnapshotWithMessages({
@@ -2580,6 +2582,7 @@ describe("<ChatTile />", () => {
           pendingInterviews: [{ blockId: "question-1", requestedAt: 3 }],
         });
       });
+      rerender(tree(false));
       const highlighted = (): string | null =>
         screen
           .getByTestId("interview-card")

@@ -230,6 +230,10 @@ interface StripRegistration {
   reveal: boolean;
   offset: number;
   extent: number;
+  /** The scroller's `scroll-padding` along the axis: room a reveal keeps
+   * clear (the sectioned side strip's sticky header and bottom fade). */
+  padStart: number;
+  padEnd: number;
   overflow: boolean;
   selected: HTMLElement | null;
   selectedVisible: boolean;
@@ -256,6 +260,9 @@ function refreshStripBounds(strip: StripRegistration): void {
   const viewport = element.getBoundingClientRect();
   strip.offset = axis.scrollOffset(element);
   strip.extent = axis.mainExtent(viewport);
+  const padding = axis.scrollPadding(getComputedStyle(element));
+  strip.padStart = padding.start;
+  strip.padEnd = padding.end;
   let availableExtent =
     axis.id === "x" ? element.clientWidth : element.clientHeight;
   for (const control of element.parentElement?.querySelectorAll<HTMLElement>(
@@ -311,7 +318,8 @@ function selectedStripBounds(
   // selected half visible instead of scrolling that half behind the start edge.
   if (
     memberBounds !== undefined &&
-    memberBounds.end - memberBounds.start <= strip.extent
+    memberBounds.end - memberBounds.start <=
+      strip.extent - strip.padStart - strip.padEnd
   ) {
     return memberBounds;
   }
@@ -337,8 +345,8 @@ function readStripMeasurement(strip: StripRegistration): () => void {
       : strip.offset;
   strip.selectedVisible =
     selectedBounds !== undefined &&
-    selectedBounds.start >= nextOffset - 1 &&
-    selectedBounds.end <= nextOffset + strip.extent + 1;
+    selectedBounds.start >= nextOffset + strip.padStart - 1 &&
+    selectedBounds.end <= nextOffset + strip.extent - strip.padEnd + 1;
   const left: string[] = [];
   const right: string[] = [];
   if (strip.overflow) {
@@ -364,9 +372,12 @@ function revealedOffset(
   bounds: StripBounds | undefined,
 ): number {
   if (bounds === undefined || strip.extent <= 0) return strip.offset;
-  if (bounds.end > strip.offset + strip.extent + 1)
-    return Math.max(0, bounds.end - strip.extent);
-  if (bounds.start < strip.offset - 1) return Math.max(0, bounds.start);
+  // Kept clear of the scroll-padding, as `revealMemberAlongAxis` is.
+  const start = bounds.start - strip.padStart;
+  const end = bounds.end + strip.padEnd;
+  if (end > strip.offset + strip.extent + 1)
+    return Math.max(0, end - strip.extent);
+  if (start < strip.offset - 1) return Math.max(0, start);
   return strip.offset;
 }
 
@@ -448,6 +459,8 @@ export function registerTabStripGeometry(
     reveal: true,
     offset: 0,
     extent: 0,
+    padStart: 0,
+    padEnd: 0,
     overflow: false,
     selected: null,
     selectedVisible: false,
