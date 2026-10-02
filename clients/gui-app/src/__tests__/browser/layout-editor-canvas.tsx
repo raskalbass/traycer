@@ -27,6 +27,7 @@ import {
   PanelTaskHeader,
   SidebarWidthResizeHandle,
 } from "@/components/epic-canvas/sidebar/epic-sidebar-column";
+import { EpicShell } from "@/components/epic-canvas/epic-shell";
 import { EpicLeftPanelRail } from "@/components/epic-canvas/sidebar/epic-sidebar-rail";
 import { StableTileSurfaceHost } from "@/components/epic-canvas/surface-host/stable-tile-surface-host";
 import { TileSurfaceSlot } from "@/components/epic-canvas/surface-host/tile-surface-slot";
@@ -294,6 +295,13 @@ interface CanvasVariant {
    * card names them as it does for any epic this window holds live (G5).
    */
   readonly warm: boolean;
+  /**
+   * The content sheet holds the REAL `EpicShell` (its session-less arm, which
+   * paints the same root and status row as the live one) instead of the
+   * mirrored canvas frame, so the surface the joined tab meets is the
+   * product's own paint.
+   */
+  readonly shell: boolean;
   /** Which readings the header (the strip foot, beside a side strip) holds (F6). */
   readonly readings: "none" | "usage" | "resource" | "both";
   /**
@@ -509,6 +517,7 @@ function readVariant(): CanvasVariant {
     hosts: params.get("hosts") === "1",
     solo: params.get("solo") === "1",
     warm: params.get("warm") === "1",
+    shell: params.get("shell") === "1",
     readings: readReadings(params.get("readings")),
     header: params.get("header") === "app" ? "app" : "specimen",
     settings: params.get("settings") === "1",
@@ -1490,24 +1499,34 @@ function EpicSurfaceStandIn(): ReactNode {
             )
           }
         >
-          <div
-            data-epic-canvas-frame
-            className={cn(
-              "min-h-0 flex-1 border border-canvas-border/70 max-md:border-0",
-              canvasSeam === "left" && "md:border-s-0",
-              canvasSeam === "right" && "md:border-e-0",
-              statusBarShown && "md:border-b-0",
-            )}
-          >
-            <TileSurfaceSlot
-              node={EPIC_SURFACE_CHAT}
-              epicId={EPIC_SURFACE_ID}
-              paneId="fixture-epsilon-pane"
-              viewTabId={EPIC_SURFACE_ID}
-              tabSelected
-              canvasPaneActive
-            />
-          </div>
+          {VARIANT.shell ? (
+            <EpicSessionContext value={null}>
+              <EpicShell
+                epicId={EPIC_SURFACE_ID}
+                tabId={EPIC_SURFACE_ID}
+                active
+              />
+            </EpicSessionContext>
+          ) : (
+            <div
+              data-epic-canvas-frame
+              className={cn(
+                "min-h-0 flex-1 border border-canvas-border/70 max-md:border-0",
+                canvasSeam === "left" && "md:border-s-0",
+                canvasSeam === "right" && "md:border-e-0",
+                statusBarShown && "md:border-b-0",
+              )}
+            >
+              <TileSurfaceSlot
+                node={EPIC_SURFACE_CHAT}
+                epicId={EPIC_SURFACE_ID}
+                paneId="fixture-epsilon-pane"
+                viewTabId={EPIC_SURFACE_ID}
+                tabSelected
+                canvasPaneActive
+              />
+            </div>
+          )}
         </EpicSurfaceSheets>
       </EpicSessionContext>
       <StableTileSurfaceHost renderRecordBody={renderFixtureHostedBody} />

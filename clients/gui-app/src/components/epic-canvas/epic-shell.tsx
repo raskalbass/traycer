@@ -58,8 +58,12 @@ export function EpicShell(props: EpicShellProps) {
   const failure = presentation?.kind === "failed" ? presentation : null;
 
   return (
+    // No fill of its own from md: the content sheet it sits in owns it
+    // (`EpicSurfaceSheets`, `--canvas`), and the joined active tab takes that
+    // same fill (the sheet join in `index.css`). A fill here is a band under
+    // the strip that the tab does not run into.
     <div
-      className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden max-md:bg-background"
       data-testid="epic-shell"
       data-epic-shell-root="true"
       data-epic-id={epicId}
