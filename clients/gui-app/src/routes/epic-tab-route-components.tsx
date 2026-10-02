@@ -251,7 +251,7 @@ function EpicRouteTabSync(props: {
   // skeleton (never a blank/black frame). Once it exists the host's pane paints
   // over this and the route contributes nothing.
   if (routeTab?.epicId !== epicId || !routeTabIsOpen) {
-    return <EpicShell epicId={epicId} tabId={tabId} active />;
+    return <StandaloneEpicShell epicId={epicId} tabId={tabId} />;
   }
   return null;
 }
@@ -296,5 +296,22 @@ export function PhaseToEpicMigrationGate(props: {
     );
   }, [navigate, props.phaseId, props.search, routeTab]);
 
-  return <EpicShell epicId={props.phaseId} tabId={props.tabId} active />;
+  return <StandaloneEpicShell epicId={props.phaseId} tabId={props.tabId} />;
+}
+
+/**
+ * `EpicShell` paints no fill of its own from md up (the content sheet it sits
+ * in does), but these fallbacks render it in the route adapter layer with no
+ * sheet around it. This gives them the sheet's `--canvas` so the status-row
+ * band is not transparent over whatever is behind.
+ */
+function StandaloneEpicShell(props: {
+  readonly epicId: string;
+  readonly tabId: string;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col md:bg-canvas">
+      <EpicShell epicId={props.epicId} tabId={props.tabId} active />
+    </div>
+  );
 }
