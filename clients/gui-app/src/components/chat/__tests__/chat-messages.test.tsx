@@ -12,6 +12,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  type ComponentProps,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -31,6 +32,7 @@ import {
   type ChatMessageScrollRequest,
   type ChatScrollRequestOutcome,
 } from "@/components/chat/chat-messages";
+import { useSubagentDrillIn } from "@/components/chat/segments/subagent-open-as-chat";
 import {
   TileFindContext,
   type TileFindContextValue,
@@ -91,6 +93,18 @@ import {
   settleLegendList,
 } from "./legend-list-test-environment";
 import { useMeasuredElementHeight } from "@/hooks/ui/use-measured-element-height";
+
+/**
+ * `ChatMessages` takes the open-as-chat state from its owner (the chat tile).
+ * Real state here, not a stub: the tests that click a card's open-as-chat
+ * control need the view to actually open.
+ */
+function ChatMessagesWithDrillIn(
+  props: Omit<ComponentProps<typeof ChatMessages>, "subagentDrillIn">,
+): ReactElement {
+  const subagentDrillIn = useSubagentDrillIn(true);
+  return <ChatMessages {...props} subagentDrillIn={subagentDrillIn} />;
+}
 
 const VIEWPORT_HEIGHT_PX = 700;
 const VIEWPORT_WIDTH_PX = 800;
@@ -989,7 +1003,7 @@ function renderChatMessages(options: RenderChatMessagesOptions) {
         {...scopeAttributes}
         style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}
       >
-        <ChatMessages
+        <ChatMessagesWithDrillIn
           taskTitle={state.taskTitle}
           taskId={taskId}
           epicId={epicId}
@@ -4836,7 +4850,7 @@ describe("ChatMessages scroll policy", () => {
           data-active="true"
           style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}
         >
-          <ChatMessages
+          <ChatMessagesWithDrillIn
             taskTitle="Test chat"
             taskId="task-1"
             epicId="epic-1"
@@ -7935,7 +7949,7 @@ describe("ChatMessages scroll policy", () => {
             data-group-id="pane-1"
             style={{ height: VIEWPORT_HEIGHT_PX, width: VIEWPORT_WIDTH_PX }}
           >
-            <ChatMessages
+            <ChatMessagesWithDrillIn
               taskTitle="Test chat"
               taskId="task-1"
               epicId="epic-1"

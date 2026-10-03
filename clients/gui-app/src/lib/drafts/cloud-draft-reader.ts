@@ -1,7 +1,4 @@
-import type {
-  CloudChatIdentity,
-  CloudChatSummary,
-} from "@traycer/protocol/host/epic/cloud-chat";
+import type { CloudChatIdentity } from "@traycer/protocol/host/epic/cloud-chat";
 import type { CloudChatReadPort } from "@traycer-clients/shared/cloud-chat/cloud-chat-reader";
 import {
   utf8Bytes,
@@ -26,11 +23,7 @@ export interface ReadCloudDraftOptions {
 }
 
 export type CloudDraftReadOutcome =
-  | {
-      readonly kind: "ok";
-      readonly record: DraftHeadReaderRecord;
-      readonly summary: CloudChatSummary;
-    }
+  | { readonly kind: "ok"; readonly record: DraftHeadReaderRecord }
   | { readonly kind: "unpublished" }
   | {
       readonly kind: "needs-newer-app";
@@ -88,7 +81,5 @@ export async function readCloudDraft(
       diagnostic: decoded.diagnostic,
     };
   }
-  if (resolved.chat === null)
-    throw new Error("Resolved draft head has no publication metadata");
-  return { kind: "ok", record: decoded.record, summary: resolved.chat };
+  return { kind: "ok", record: decoded.record };
 }

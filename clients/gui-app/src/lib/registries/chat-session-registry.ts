@@ -422,7 +422,6 @@ export function useChatSessionHandle(
     // tile unmount), the socket stays alive across close -> warm -> reopen, so a
     // revived session is never handed a dead transport. `retry()` re-invokes
     // this factory, rebuilding the transport with live deps.
-    let acquiredHandle: ChatSessionStoreHandle | null = null;
     // The socket THIS chat's stream rides, captured as the transport is built.
     // A mutable slot rather than a value because `retry()` re-invokes the
     // factory and builds a new one: a wake must reach whichever socket is
@@ -459,7 +458,6 @@ export function useChatSessionHandle(
             callbacks,
           });
         },
-        () => acquiredHandle?.store.getState().retry(),
       );
       return {
         sendAction: (frame) => result.client.sendAction(frame),
@@ -563,7 +561,6 @@ export function useChatSessionHandle(
           return created;
         },
       );
-      acquiredHandle = next;
       // Hidden neighbours share the normal warm pool and byte accountant.
       // Only startup and visible demand pin a session.
       if (speculative || demand === "startup") registry.markPresented(next);

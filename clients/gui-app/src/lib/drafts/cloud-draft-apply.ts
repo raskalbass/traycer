@@ -26,7 +26,7 @@ export function draftDocumentFromCloudHead(
   const common = {
     draftId: summary.identity.chatId,
     target: record.target,
-    revision: summary.throughRecordSeq ?? 0,
+    revision: 0,
     lastTouchedAt: record.lastTouchedAt,
     workspace: null,
     ownerHostId: summary.ownerHostId,

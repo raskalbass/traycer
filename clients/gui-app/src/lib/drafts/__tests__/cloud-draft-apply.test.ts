@@ -58,37 +58,4 @@ describe("draftDocumentFromCloudHead", () => {
     expect(document.workspace).toBeNull();
     expect(document.publication.lastPublishedAt).toBe(9);
   });
-
-  it.each([
-    { throughRecordSeq: 7, revision: 7 },
-    { throughRecordSeq: null, revision: 0 },
-  ])(
-    "takes the revision from the head's own throughRecordSeq ($throughRecordSeq)",
-    ({ throughRecordSeq, revision }) => {
-      const record: DraftHeadReaderRecord = {
-        dialect: "draft/v1",
-        schemaVersion: DRAFT_HEAD_SCHEMA_VERSION,
-        kind: "draft",
-        surfaceKind: "landing",
-        lastTouchedAt: 4,
-        target: { epicId: null, chatId: null, blockId: null },
-        hostLocal: { hostId: "host-a", workspace: null },
-        portable: {
-          content: { type: "doc", content: [{ type: "paragraph" }] },
-          selection: null,
-          runSettings: null,
-          composerMode: "chat",
-          blobHashes: [],
-          closed: false,
-        },
-      };
-
-      const document = draftDocumentFromCloudHead(
-        { ...SUMMARY, throughRecordSeq },
-        record,
-      );
-
-      expect(document.revision).toBe(revision);
-    },
-  );
 });

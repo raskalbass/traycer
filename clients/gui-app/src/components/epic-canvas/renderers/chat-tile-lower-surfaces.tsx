@@ -18,6 +18,9 @@ import {
   type ChatComposerSubmitInput,
 } from "@/components/chat/composer/chat-composer";
 import { ChatComposerBannerPortalProvider } from "@/components/chat/composer/chat-composer-banner-portal";
+import type { SubagentDockView } from "@/components/chat/segments/subagent-open-as-chat";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { ChatProviderFallbackState } from "@/components/chat/fallback/fallback-state";
 import { ChatLowerDock } from "@/components/chat/chat-lower-dock";
 import { ChatDockCompactStripProvider } from "@/components/chat/chat-dock-compact-strip";
@@ -103,6 +106,21 @@ export interface ChatLowerInteractionSurfacesProps {
   readonly backgroundStopAllPending: boolean;
   readonly backgroundSessionStopPending: boolean;
   readonly onBackgroundItemClick: (item: BackgroundItem) => void;
+  /**
+   * Set while a subagent card's conversation covers the transcript, `null`
+   * while the transcript itself is showing.
+   *
+   * Everything this surface draws belongs to the PARENT chat: its model, its
+   * context, its workspace, its queue, its running work, and a composer that
+   * messages it. Under a subagent's conversation all of that reads as the
+   * subagent's, and none of it is - a message typed there went to the parent
+   * and queued behind its running turn. So one notice stands in for both,
+   * saying whose conversation this is and how to get back: the dock is hidden
+   * and the composer is not mounted.
+   * Approvals and interview questions stay: one of them may be what the
+   * subagent on screen is blocked on.
+   */
+  readonly subagentView: SubagentDockView | null;
 }
 
 export interface ChatLowerRuntimeState {
@@ -274,6 +292,8 @@ interface ComposerSurfaceModel {
   readonly providerFallback: ChatProviderFallbackState;
   readonly pendingApprovalCount: number;
   readonly hasPendingApprovals: boolean;
+  /** See `ChatLowerInteractionSurfacesProps.subagentView`. */
+  readonly subagentView: SubagentDockView | null;
 }
 
 interface ComposerSurfaceLayout {
@@ -323,12 +343,6 @@ export function ChatLowerInteractionSurfaces(
     readonly target: ChatStopConfirmationTarget;
     readonly readTarget: () => ChatStopConfirmationTarget;
   } | null>(null);
-  const stopTurnDialogOpen = stopConfirmation?.kind === "turn";
-  const [stopTurnDialogEverOpened, setStopTurnDialogEverOpened] =
-    useState(false);
-  if (stopTurnDialogOpen && !stopTurnDialogEverOpened) {
-    setStopTurnDialogEverOpened(true);
-  }
   // The SAME signal that puts Stop beside Send (`composer-send-button`), so
   // the confirmation exists exactly where the mis-tap does and desktop is
   // untouched by construction rather than by a second rule agreeing with the
@@ -480,6 +494,7 @@ export function ChatLowerInteractionSurfaces(
   });
   const activeAgentsVisible =
     stopControls.self !== null && activeAgents.length > 0;
+  const dockShown = props.subagentView === null;
   const chrome = useChatDockChrome({
     snapshotLoaded: props.runtime.snapshotLoaded,
     chatId: props.chatId,
@@ -508,12 +523,16 @@ export function ChatLowerInteractionSurfaces(
     topSpacing: lowerSurfaceTopSpacing,
   } = lowerSurfaceFrame({
     folded: chrome.folded,
-    openSection: chrome.openSection,
-    todoHasContent: props.runtime.snapshotLoaded && props.todo !== null,
-    filesChangedHasContent: chrome.hotspots.filesChanged.hasContent,
-    activeAgentsHasContent: activeAgentsVisible,
-    backgroundHasContent: backgroundVisible,
-    queueItemCount: props.queue.value.items.length,
+    // The dock is not drawn under a subagent's conversation (see
+    // `subagentView`), so none of its members shapes the spacing below it.
+    openSection: dockShown ? chrome.openSection : null,
+    todoHasContent:
+      dockShown && props.runtime.snapshotLoaded && props.todo !== null,
+    filesChangedHasContent:
+      dockShown && chrome.hotspots.filesChanged.hasContent,
+    activeAgentsHasContent: dockShown && activeAgentsVisible,
+    backgroundHasContent: dockShown && backgroundVisible,
+    queueItemCount: dockShown ? props.queue.value.items.length : 0,
   });
   const approvalVisible = approvalSurfaceVisible(
     props.runtime.snapshotLoaded,
@@ -568,6 +587,7 @@ export function ChatLowerInteractionSurfaces(
       providerFallback: props.providerFallback,
       pendingApprovalCount,
       hasPendingApprovals,
+      subagentView: props.subagentView,
     }),
     [
       props.viewTabId,
@@ -582,6 +602,7 @@ export function ChatLowerInteractionSurfaces(
       props.providerFallback,
       pendingApprovalCount,
       hasPendingApprovals,
+      props.subagentView,
     ],
   );
 
@@ -592,46 +613,55 @@ export function ChatLowerInteractionSurfaces(
           model={composerModel}
           layout={approvalLayout}
         />
-        <ChatLowerDock
-          snapshotLoaded={props.runtime.snapshotLoaded}
-          epicId={props.epicId}
-          chatId={props.chatId}
-          viewTabId={props.viewTabId}
-          selfAgent={stopControls.self}
-          activeAgents={activeAgents}
-          todo={props.todo}
-          restore={props.restoreContext}
-          queue={props.queue.value}
-          folded={chrome.folded}
-          dockOrder={chrome.dockOrder}
-          hotspots={chrome.hotspots}
-          backgroundItems={props.backgroundItems}
-          runningManagedCommandCount={runningManagedCommandCount}
-          heldManagedCommandCount={heldManagedCommandCount}
-          portForwardCount={portForwardCount}
-          backgroundStopPendingTaskIds={props.backgroundStopPendingTaskIds}
-          backgroundStopAllPending={props.backgroundStopAllPending}
-          backgroundSessionStopPending={props.backgroundSessionStopPending}
-          activeTurnStatus={props.turn.activeTurnStatus}
-          canAct={props.access.canAct}
-          queueResumeRequested={props.queue.resumeRequested}
-          queueKeepPausedRequested={props.queue.keepPausedRequested}
-          readOnly={props.access.isViewer}
-          editingQueueItemId={props.queue.editingItemId}
-          topSpacing={pinnedStackTopSpacing}
-          scrollRegionMaxHeightClass={scrollRegionMaxHeightClass}
-          onQueuePause={props.queue.onPause}
-          onQueueResume={props.queue.onResume}
-          onQueueEdit={props.queue.onEdit}
-          onQueueCancel={props.queue.onCancel}
-          onQueueAbortSteer={props.queue.onAbortSteer}
-          onQueueReorder={props.queue.onReorder}
-          onQueueSteerNow={props.queue.onSteerNow}
-          onBackgroundItemClick={props.onBackgroundItemClick}
-          onBackgroundItemStop={props.queue.onStopBackgroundItem}
-          onBackgroundItemsStopAll={props.queue.onStopAllBackgroundItems}
-          onBackgroundSessionStop={props.queue.onStopBackgroundSession}
-        />
+        {/* Hidden, never unmounted, under a subagent's conversation (see
+            `subagentView`): the dock holds state a remount would lose - which
+            panel is open, where it is scrolled, the Background rows' own
+            memory of their parents. */}
+        <div
+          className={cn(dockShown ? "contents" : "hidden")}
+          inert={!dockShown}
+        >
+          <ChatLowerDock
+            snapshotLoaded={props.runtime.snapshotLoaded}
+            epicId={props.epicId}
+            chatId={props.chatId}
+            viewTabId={props.viewTabId}
+            selfAgent={stopControls.self}
+            activeAgents={activeAgents}
+            todo={props.todo}
+            restore={props.restoreContext}
+            queue={props.queue.value}
+            folded={chrome.folded}
+            dockOrder={chrome.dockOrder}
+            hotspots={chrome.hotspots}
+            backgroundItems={props.backgroundItems}
+            runningManagedCommandCount={runningManagedCommandCount}
+            heldManagedCommandCount={heldManagedCommandCount}
+            portForwardCount={portForwardCount}
+            backgroundStopPendingTaskIds={props.backgroundStopPendingTaskIds}
+            backgroundStopAllPending={props.backgroundStopAllPending}
+            backgroundSessionStopPending={props.backgroundSessionStopPending}
+            activeTurnStatus={props.turn.activeTurnStatus}
+            canAct={props.access.canAct}
+            queueResumeRequested={props.queue.resumeRequested}
+            queueKeepPausedRequested={props.queue.keepPausedRequested}
+            readOnly={props.access.isViewer}
+            editingQueueItemId={props.queue.editingItemId}
+            topSpacing={pinnedStackTopSpacing}
+            scrollRegionMaxHeightClass={scrollRegionMaxHeightClass}
+            onQueuePause={props.queue.onPause}
+            onQueueResume={props.queue.onResume}
+            onQueueEdit={props.queue.onEdit}
+            onQueueCancel={props.queue.onCancel}
+            onQueueAbortSteer={props.queue.onAbortSteer}
+            onQueueReorder={props.queue.onReorder}
+            onQueueSteerNow={props.queue.onSteerNow}
+            onBackgroundItemClick={props.onBackgroundItemClick}
+            onBackgroundItemStop={props.queue.onStopBackgroundItem}
+            onBackgroundItemsStopAll={props.queue.onStopAllBackgroundItems}
+            onBackgroundSessionStop={props.queue.onStopBackgroundSession}
+          />
+        </div>
         <ChatComposerRegion model={composerModel} layout={composerLayout} />
         <StopChildrenDialog
           open={stopConfirmation?.kind === "children"}
@@ -654,34 +684,49 @@ export function ChatLowerInteractionSurfaces(
             turnOnStopTurn();
           }}
         />
-        {stopTurnDialogOpen || stopTurnDialogEverOpened ? (
-          <ConfirmDestructiveDialog
-            open={stopTurnDialogOpen}
-            onOpenChange={(open) => {
-              if (!open) setStopConfirmation(null);
-            }}
-            title="Stop this turn?"
-            description="The agent will stop working on its current response."
-            cascadeSummary={null}
-            actionLabel="Stop"
-            blockedReason={null}
-            isPending={false}
-            onConfirm={() => {
-              setStopConfirmation(null);
-              if (stopConfirmation === null || !isConfirmedTurnCurrent())
-                return;
-              // A sub-agent can start while this dialog is open. Go back through
-              // the same gate, retaining the turn this confirmation belongs to.
-              if (activeAgents.length > 0) {
-                setStopConfirmation({ ...stopConfirmation, kind: "children" });
-                return;
-              }
-              turnOnStopTurn();
-            }}
-          />
-        ) : null}
+        <StopTurnConfirmDialog
+          open={stopConfirmation?.kind === "turn"}
+          onOpenChange={(open) => {
+            if (!open) setStopConfirmation(null);
+          }}
+          onConfirm={() => {
+            setStopConfirmation(null);
+            if (stopConfirmation === null || !isConfirmedTurnCurrent()) return;
+            // A sub-agent can start while this dialog is open. Go back through
+            // the same gate, retaining the turn this confirmation belongs to.
+            if (activeAgents.length > 0) {
+              setStopConfirmation({ ...stopConfirmation, kind: "children" });
+              return;
+            }
+            turnOnStopTurn();
+          }}
+        />
       </ChatDockCompactStripProvider>
     </ChatComposerBannerPortalProvider>
+  );
+}
+
+/** Mounted on its first open only: a tile that never asks does not pay for the dialog. */
+function StopTurnConfirmDialog(props: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onConfirm: () => void;
+}) {
+  const [everOpened, setEverOpened] = useState(props.open);
+  if (props.open && !everOpened) setEverOpened(true);
+  if (!props.open && !everOpened) return null;
+  return (
+    <ConfirmDestructiveDialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      title="Stop this turn?"
+      description="The agent will stop working on its current response."
+      cascadeSummary={null}
+      actionLabel="Stop"
+      blockedReason={null}
+      isPending={false}
+      onConfirm={props.onConfirm}
+    />
   );
 }
 
@@ -743,27 +788,7 @@ function ComposerSurface(props: {
     return null;
   }
   if (model.access.isViewer) {
-    // The workspace row is LIVE: its selector targets the reading host and this
-    // surface's chat id, and both create/re-bind and remove are real mutations.
-    // For a viewer of a live chat that is the chat's own workspace and the row
-    // is informative. For a COPY (`readOnlyNotice` is set only by the published
-    // and doc-replica surfaces) the binding shown is `null` and the chat id is
-    // the one the OWNER minted, so acting on the row would commit a workspace
-    // change against whatever local lineage happens to hold that id here.
-    // A copy has no live workspace to show, so it shows none.
-    const isCopy = model.access.readOnlyNotice !== null;
-    return (
-      <ComposerSlotShell topSpacing={layout.topSpacing} bottomSpacing="normal">
-        <div className="flex flex-col gap-3">
-          <ReadOnlyComposerNotice notice={model.access.readOnlyNotice} />
-          {isCopy ? null : (
-            <ComposerReadonlyWorkspaceModeRow
-              workspaceSlot={model.composer.workspaceControls}
-            />
-          )}
-        </div>
-      </ComposerSlotShell>
-    );
+    return <ViewerComposerSurface model={model} layout={layout} />;
   }
   // The escape hatch stacks ABOVE the card/composer rather than replacing
   // either: a stuck block can coexist with an answerable one, and the composer
@@ -815,6 +840,21 @@ function ComposerSurface(props: {
       </>
     );
   }
+  // Unmounted under a subagent's conversation, not hidden: a composer that is
+  // merely out of sight is still this tile's active one, so the dictation and
+  // model-picker chords, the palette's composer commands and its portalled
+  // banners all go on acting on the parent chat from behind the notice.
+  // Unmounting is the path a pending interview already takes above.
+  if (model.subagentView !== null) {
+    return (
+      <>
+        {escapeHatch}
+        <ComposerSlotShell topSpacing={belowSpacing} bottomSpacing="normal">
+          <SubagentViewNotice view={model.subagentView} />
+        </ComposerSlotShell>
+      </>
+    );
+  }
   return (
     <>
       {escapeHatch}
@@ -824,6 +864,42 @@ function ComposerSurface(props: {
         hasPendingApprovals={model.hasPendingApprovals}
       />
     </>
+  );
+}
+
+/** What stands in the composer's slot for someone who cannot send. */
+function ViewerComposerSurface(props: {
+  readonly model: ComposerSurfaceModel;
+  readonly layout: ComposerSurfaceLayout;
+}): ReactNode {
+  const { model, layout } = props;
+  if (model.subagentView !== null) {
+    return (
+      <ComposerSlotShell topSpacing={layout.topSpacing} bottomSpacing="normal">
+        <SubagentViewNotice view={model.subagentView} />
+      </ComposerSlotShell>
+    );
+  }
+  // The workspace row is LIVE: its selector targets the reading host and this
+  // surface's chat id, and both create/re-bind and remove are real mutations.
+  // For a viewer of a live chat that is the chat's own workspace and the row
+  // is informative. For a COPY (`readOnlyNotice` is set only by the published
+  // and doc-replica surfaces) the binding shown is `null` and the chat id is
+  // the one the OWNER minted, so acting on the row would commit a workspace
+  // change against whatever local lineage happens to hold that id here.
+  // A copy has no live workspace to show, so it shows none.
+  const isCopy = model.access.readOnlyNotice !== null;
+  return (
+    <ComposerSlotShell topSpacing={layout.topSpacing} bottomSpacing="normal">
+      <div className="flex flex-col gap-3">
+        <ReadOnlyComposerNotice notice={model.access.readOnlyNotice} />
+        {isCopy ? null : (
+          <ComposerReadonlyWorkspaceModeRow
+            workspaceSlot={model.composer.workspaceControls}
+          />
+        )}
+      </div>
+    </ComposerSlotShell>
   );
 }
 
@@ -939,6 +1015,37 @@ export function ComposerSlotShell(props: {
       >
         {props.children}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Stands where the composer does while a subagent's conversation is open. The
+ * same frame as the viewer's read-only notice, because it is the same fact
+ * about this surface - nothing can be typed here - for a different reason.
+ */
+function SubagentViewNotice(props: { readonly view: SubagentDockView }) {
+  const { view } = props;
+  return (
+    <div
+      data-testid="subagent-view-notice"
+      className="flex items-center gap-2 rounded-md border border-canvas-border/70 bg-canvas px-3 py-2 text-ui-sm text-muted-foreground"
+    >
+      <Lock className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">
+        {view.name === null
+          ? "You're viewing a subagent's conversation."
+          : `You're viewing ${view.name}'s conversation.`}{" "}
+        Subagents can't take messages.
+      </span>
+      {view.runningCount > 0 ? (
+        <Badge variant="secondary" className="shrink-0">
+          {view.runningCount} running
+        </Badge>
+      ) : null}
+      <Button type="button" variant="outline" size="xs" onClick={view.close}>
+        Back to chat
+      </Button>
     </div>
   );
 }

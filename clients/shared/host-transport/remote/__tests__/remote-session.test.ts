@@ -1001,7 +1001,6 @@ type RecordedEvidenceCall =
       readonly hostId: string;
       readonly attemptId: string;
       readonly transportKind: SelectionTransportKind;
-      readonly refusalDetail: "plan-restricted" | null;
     }
   | {
       readonly method: "reportDialTimeout";
@@ -1082,14 +1081,12 @@ class RecordingEvidence implements TransportEvidenceReporter {
     hostId: string,
     attemptId: string,
     transportKind: SelectionTransportKind,
-    refusalDetail: "plan-restricted" | null,
   ): void {
     this.calls.push({
       method: "reportDialRefusal",
       hostId,
       attemptId,
       transportKind,
-      refusalDetail,
     });
   }
 
@@ -1728,7 +1725,7 @@ describe("RemoteSession terminal close notification", () => {
       const session = buildSession(relay, lease, {
         revalidateForReconnect: revalidate,
       });
-      const streamClient = new RemoteStreamClient(session, () => null);
+      const streamClient = new RemoteStreamClient(session);
       let closedEvents = 0;
       streamClient.onClosed(() => {
         closedEvents += 1;
@@ -1927,60 +1924,6 @@ describe("RemoteSession relay policy kills", () => {
   );
 });
 
-describe("RemoteSession plan-restricted entitlement denial", () => {
-  it(
-    "goes terminal on a plan-restricted mint - one mint, no relay dial, no revalidation spend",
-    async () => {
-      const relay = new FakeRelayHost();
-      const lease = new MutableBearerLease("valid-token", "user-1");
-      const revalidate = vi.fn(() => Promise.resolve("rotated" as const));
-      let mintCalls = 0;
-      let nextRequestId = 0;
-      const session = new RemoteSession({
-        hostId: "host-1",
-        attachBaseUrl: "wss://relay.test/attach",
-        hostStaticPublicKey: relay.hostStaticPublicKey,
-        grantProvider: () => {
-          mintCalls += 1;
-          return Promise.resolve({ kind: "plan-restricted" as const });
-        },
-        bearer: () => lease,
-        auth: { revalidateForReconnect: revalidate },
-        clock: null,
-        rpcRegistry: emptyRpcRegistry,
-        streamRegistry: emptyStreamRegistry,
-        webSocketFactory: relay.factory,
-        requestId: () => `req-${(nextRequestId += 1)}`,
-        evidence: NO_TRANSPORT_EVIDENCE,
-        clientIdentity: TEST_CLIENT_IDENTITY,
-        livenessProbe: null,
-      });
-      const streamClient = new RemoteStreamClient(session, () => null);
-      let closedEvents = 0;
-      streamClient.onClosed(() => {
-        closedEvents += 1;
-      });
-      try {
-        session.start();
-        await vi.waitFor(
-          () => expect(streamClient.isClosed()).toBe(true),
-          WAIT,
-        );
-        // Terminal, not a backoff loop: exactly one mint, and the relay was
-        // never dialed with a grant the account is not entitled to.
-        expect(closedEvents).toBe(1);
-        expect(mintCalls).toBe(1);
-        expect(relay.openBearers).toEqual([]);
-        // An entitlement denial is NOT an auth failure - no revalidation.
-        expect(revalidate).not.toHaveBeenCalled();
-      } finally {
-        session.close();
-      }
-    },
-    TEST_BUDGET_MS,
-  );
-});
-
 describe("RemoteSession availability-recovered evidence", () => {
   it(
     "fires (through RemoteStreamClient) at EVERY ready boundary - the clean first open AND a post-drop re-attach",
@@ -1988,7 +1931,7 @@ describe("RemoteSession availability-recovered evidence", () => {
       const relay = new FakeRelayHost();
       const lease = new MutableBearerLease("valid-token", "user-1");
       const session = buildSession(relay, lease, null);
-      const streamClient = new RemoteStreamClient(session, () => null);
+      const streamClient = new RemoteStreamClient(session);
       let recoveredEvents = 0;
       const recoveredKinds: string[] = [];
       streamClient.subscribeAvailabilityRecovered((kind) => {
@@ -2428,7 +2371,7 @@ describe("RemoteStreamClient dynamic subscribe params", () => {
       const streamClient = new RemoteStreamClient<
         VersionedRpcRegistry,
         typeof cursorStreamRegistry
-      >(session, () => null);
+      >(session);
       const supportChanges: string[] = [];
       const unsubscribe = streamClient.subscribeMethodSupport(() => {
         supportChanges.push(streamClient.getMethodSupport("cursor.subscribe"));
@@ -2498,7 +2441,7 @@ describe("RemoteStreamClient dynamic subscribe params", () => {
       const streamClient = new RemoteStreamClient<
         VersionedRpcRegistry,
         typeof cursorStreamRegistry
-      >(session, () => null);
+      >(session);
 
       try {
         session.start();
@@ -2582,7 +2525,7 @@ describe("RemoteStreamClient dynamic subscribe params", () => {
       const streamClient = new RemoteStreamClient<
         VersionedRpcRegistry,
         typeof hostStreamRpcRegistry
-      >(session, () => null);
+      >(session);
       const onUnsupported = vi.fn();
       const onConnectionStatus = vi.fn();
       const batch = new WorktreeDeleteBatchStreamClient({
@@ -2651,7 +2594,7 @@ describe("RemoteStreamClient dynamic subscribe params", () => {
       const streamClient = new RemoteStreamClient<
         VersionedRpcRegistry,
         typeof dualMajorCursorStreamRegistry
-      >(session, () => null);
+      >(session);
       const stream = streamClient.subscribe("cursor.subscribe", {
         cursor: null,
       });
@@ -2690,7 +2633,7 @@ describe("RemoteStreamClient dynamic subscribe params", () => {
       const streamClient = new RemoteStreamClient<
         VersionedRpcRegistry,
         typeof cursorStreamRegistry
-      >(session, () => null);
+      >(session);
       let cursor: number | null = null;
       const stream = streamClient.subscribeWithParamsProvider(
         "cursor.subscribe",
@@ -2794,7 +2737,7 @@ describe("RemoteSession method-support listener isolation", () => {
       const streamClient = new RemoteStreamClient<
         VersionedRpcRegistry,
         typeof cursorStreamRegistry
-      >(session, () => null);
+      >(session);
       // Registered FIRST, so the set's insertion order puts the fault ahead of
       // the healthy observer - which is what makes the second assertion below
       // evidence that a throw does not silence the rest of the set.
@@ -2857,7 +2800,7 @@ describe("RemoteSession method-support listener isolation", () => {
       const streamClient = new RemoteStreamClient<
         VersionedRpcRegistry,
         typeof cursorStreamRegistry
-      >(session, () => null);
+      >(session);
       const observed: string[] = [];
       const unsubscribe = streamClient.subscribeMethodSupport(() => {
         observed.push(streamClient.getMethodSupport("cursor.subscribe"));
@@ -3221,16 +3164,21 @@ describe("RemoteSession dial-failure logging", () => {
   it(
     "rejects an in-flight sendUnary as non-retryable when the session goes terminal mid-wait",
     async () => {
-      // A plan-restricted grant is terminal: a parked caller must get
+      // An incompatible-protocol fatal is terminal: a parked caller must get
       // HostTransportFailureError (with fatal details), not hang forever and
       // not inherit a retry license for a session that will never answer.
       const relay = new FakeRelayHost();
       const lease = new MutableBearerLease("token", "user-1");
-      const session = new RemoteSession({
-        ...buildSessionOptions(relay, lease, null),
-        grantProvider: () =>
-          Promise.resolve({ kind: "plan-restricted" as const }),
+      relay.decideOpen = () => ({
+        kind: "fatal",
+        details: {
+          code: "INCOMPATIBLE",
+          reason: "manifest mismatch",
+          incompatibleMethods: null,
+          upgradeGuidance: null,
+        },
       });
+      const session = buildSession(relay, lease, null);
       try {
         session.start();
         const error: unknown = await session
@@ -4484,7 +4432,7 @@ describe("RemoteSession wake", () => {
       { proactiveWakeEligible: true },
       () => session,
     );
-    const streamClient = new RemoteStreamClient(view, () => null);
+    const streamClient = new RemoteStreamClient(view);
     try {
       view.start();
       await vi.waitFor(() => expect(relay.openBearers).toHaveLength(3), {
@@ -7900,35 +7848,6 @@ describe("RemoteSession poisoned inbound on a subscription stream (S2 / S4-clien
 
 describe("RemoteSession evidence classification (redesign P1.3 invariant 5)", () => {
   it(
-    "plan-restricted attach-grant denial reports exactly one refusal, never an indeterminate",
-    async () => {
-      const relay = new FakeRelayHost();
-      const lease = new MutableBearerLease("valid-token", "user-1");
-      const recorder = new RecordingEvidence();
-      const session = new RemoteSession({
-        ...buildSessionOptions(relay, lease, null),
-        grantProvider: () =>
-          Promise.resolve({ kind: "plan-restricted" as const }),
-        evidence: recorder,
-      });
-      try {
-        session.start();
-        await vi.waitFor(() => expect(session.isClosed()).toBe(true), WAIT);
-
-        const refusals = recorder.callsNamed("reportDialRefusal");
-        expect(refusals).toHaveLength(1);
-        expect(refusals[0].refusalDetail).toBe("plan-restricted");
-        expect(refusals[0].hostId).toBe("host-1");
-        expect(refusals[0].transportKind).toBe("remote-relay");
-        expect(recorder.callsNamed("reportDialIndeterminate")).toHaveLength(0);
-      } finally {
-        session.close();
-      }
-    },
-    TEST_BUDGET_MS,
-  );
-
-  it(
     "an unavailable attach-grant mint (signed out / revoked / authn 5xx) reports exactly one indeterminate, never a refusal",
     async () => {
       const relay = new FakeRelayHost();
@@ -8039,7 +7958,6 @@ describe("RemoteSession evidence retraction on terminal-fatal (redesign P1.3)", 
           const freshRefusals = recorder.callsNamed("reportDialRefusal");
           expect(freshRefusals).toHaveLength(1);
           expect(freshRefusals[0].hostId).toBe("host-1");
-          expect(freshRefusals[0].refusalDetail).toBeNull();
         } finally {
           freshSession.close();
         }

@@ -73,9 +73,9 @@ import { setEpicSurfaceVisibility } from "@/lib/browser-view/tiles/surface-host-
 import { PARK_HIDDEN_EPIC_AFTER_MS } from "@/stores/replica-memory/retention-profile";
 import { TITLE_GENERATION_PENDING_TIMEOUT_MS } from "@/stores/epics/canvas/canvas-title-timers";
 import {
-  PLAN_RESTRICTED_SESSION_REBUILD_INITIAL_BACKOFF_MS,
-  PLAN_RESTRICTED_SESSION_REBUILD_MAX_BACKOFF_MS,
-} from "@/lib/host/plan-restricted-session-rebuild-backoff";
+  SESSION_REBUILD_INITIAL_BACKOFF_MS,
+  SESSION_REBUILD_MAX_BACKOFF_MS,
+} from "@/lib/host/session-rebuild-backoff";
 import {
   __resetAgentActivityStoreForTests,
   __setAgentActivityPlaneAnsweringForTests,
@@ -890,7 +890,7 @@ describe("EpicSessionController: session lifecycle with no surface mounted", () 
     expect(calls).toBe(1);
 
     shouldFail = false;
-    vi.advanceTimersByTime(PLAN_RESTRICTED_SESSION_REBUILD_INITIAL_BACKOFF_MS);
+    vi.advanceTimersByTime(SESSION_REBUILD_INITIAL_BACKOFF_MS);
 
     expect(__getOpenEpicRegistryForTests().peek(EPIC_ID)).not.toBeNull();
     status = controller.readEntryStatusForTests(EPIC_ID);
@@ -1013,7 +1013,7 @@ describe("EpicSessionController: session lifecycle with no surface mounted", () 
       // the next sign-in - there is no rung to fire in the first place.
       vi.useFakeTimers();
       try {
-        vi.advanceTimersByTime(PLAN_RESTRICTED_SESSION_REBUILD_MAX_BACKOFF_MS);
+        vi.advanceTimersByTime(SESSION_REBUILD_MAX_BACKOFF_MS);
       } finally {
         vi.useRealTimers();
       }
