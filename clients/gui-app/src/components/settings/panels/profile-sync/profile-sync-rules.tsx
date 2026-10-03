@@ -44,7 +44,7 @@ export function ProfileSyncRules(props: {
   readonly batches: readonly ProfileSyncBatch[];
   readonly onViewRun: (batchId: string) => void;
 }): ReactNode {
-  const [editor, setEditor] = useState<ProfileSyncRule | "new" | null>(null);
+  const [editor, setEditor] = useState<string | null>(null);
   const [stop, setStop] = useState<ProfileSyncRule | null>(null);
   const save = useProfileSyncSaveRule(props.hostId),
     remove = useProfileSyncStopRule(props.hostId);
@@ -68,10 +68,11 @@ export function ProfileSyncRules(props: {
     );
   if (editor !== null)
     return (
-      <ProfileSyncRuleEditor
-        key={editor === "new" ? "new" : editor.ruleId}
+      <ProfileSyncRuleEditView
+        key={editor}
+        editor={editor}
+        rules={props.rules}
         hostId={props.hostId}
-        rule={editor === "new" ? null : editor}
         hosts={props.hosts}
         candidates={atCapacity ? [] : destinations.map((h) => h.hostId)}
         atCapacity={atCapacity}
@@ -131,7 +132,7 @@ export function ProfileSyncRules(props: {
               <Button
                 size="xs"
                 variant="outline"
-                onClick={() => setEditor(rule)}
+                onClick={() => setEditor(rule.ruleId)}
               >
                 Edit
               </Button>
@@ -145,13 +146,13 @@ export function ProfileSyncRules(props: {
                     sourceHostId: props.hostId,
                     destinationHostId: rule.destinationHostId,
                     scope: rule.scope,
-                    paused: !rule.paused,
+                    paused: !rulePaused(rule),
                     expectedRevision: rule.revision,
                   })
                 }
               >
                 {save.isPending ? <MutedAgentSpinner /> : null}
-                {rule.paused ? "Resume" : "Pause"}
+                {rulePaused(rule) ? "Resume" : "Pause"}
               </Button>
               {canViewRuleRun(rule, props.batches, props.hostId) ? (
                 <Button
@@ -247,6 +248,46 @@ function ruleActionError(
     : null;
 }
 
+function ProfileSyncRuleEditView(props: {
+  readonly editor: string;
+  readonly rules: readonly ProfileSyncRule[];
+  readonly hostId: string;
+  readonly hosts: ProfileCopyHosts;
+  readonly candidates: readonly string[];
+  readonly atCapacity: boolean;
+  readonly providers: readonly ProviderCliState[];
+  readonly close: () => void;
+}): ReactNode {
+  const rule = props.rules.find((rule) => rule.ruleId === props.editor) ?? null;
+  if (props.editor !== "new" && rule === null)
+    return (
+      <div className="flex flex-col gap-4">
+        <Button
+          size="xs"
+          variant="ghost"
+          className="self-start"
+          onClick={props.close}
+        >
+          ← Automatic sync
+        </Button>
+        <p role="alert" className="text-ui-xs text-destructive">
+          This rule was stopped while you were editing.
+        </p>
+      </div>
+    );
+  return (
+    <ProfileSyncRuleEditor
+      hostId={props.hostId}
+      rule={rule}
+      hosts={props.hosts}
+      candidates={props.candidates}
+      atCapacity={props.atCapacity}
+      providers={props.providers}
+      close={props.close}
+    />
+  );
+}
+
 function ProfileSyncRuleEditor(props: {
   readonly hostId: string;
   readonly rule: ProfileSyncRule | null;
@@ -258,6 +299,8 @@ function ProfileSyncRuleEditor(props: {
 }): ReactNode {
   const id = useId();
   const [ruleId] = useState(() => props.rule?.ruleId ?? crypto.randomUUID());
+  const [expectedRevision] = useState(() => ruleRevision(props.rule));
+  const changed = ruleRevision(props.rule) !== expectedRevision;
   const [destination, setDestination] = useState(
     props.rule?.destinationHostId ?? "",
   );
@@ -274,6 +317,7 @@ function ProfileSyncRuleEditor(props: {
     : { kind: "selected", providers: selected };
   const canSave = canSaveRule({
     rule: props.rule,
+    changed,
     destination,
     candidates: props.candidates,
     scope,
@@ -292,6 +336,12 @@ function ProfileSyncRuleEditor(props: {
       <ProfileSyncRuleCapacity
         reached={props.rule === null && props.atCapacity}
       />
+      {changed ? (
+        <p role="alert" className="text-ui-xs text-destructive">
+          This rule changed while you were editing. Go back and reopen it to
+          review the latest settings.
+        </p>
+      ) : null}
       <div className="flex flex-col gap-2">
         <span className="text-ui-xs text-muted-foreground">
           Destination device
@@ -364,8 +414,8 @@ function ProfileSyncRuleEditor(props: {
                 ruleId,
                 destinationHostId: destination,
                 scope,
-                paused: props.rule?.paused ?? false,
-                expectedRevision: props.rule?.revision ?? 0,
+                paused: rulePaused(props.rule),
+                expectedRevision,
               },
               { onSuccess: props.close },
             )
@@ -411,12 +461,14 @@ function canViewRuleRun(
 
 function canSaveRule({
   rule,
+  changed,
   destination,
   candidates,
   scope,
   pending,
 }: {
   readonly rule: ProfileSyncRule | null;
+  readonly changed: boolean;
   readonly destination: string;
   readonly candidates: readonly string[];
   readonly scope: ProfileSyncScope;
@@ -424,6 +476,7 @@ function canSaveRule({
 }): boolean {
   return (
     !pending &&
+    !changed &&
     destination.length > 0 &&
     (rule !== null || candidates.includes(destination)) &&
     (scope.kind === "all" || scope.providers.length > 0)
@@ -443,8 +496,16 @@ function ruleProviders(
   );
 }
 
+function ruleRevision(rule: ProfileSyncRule | null): number {
+  return rule?.revision ?? 0;
+}
+
+function rulePaused(rule: ProfileSyncRule | null): boolean {
+  return rule?.paused === true || rule?.status === "paused";
+}
+
 function ruleStatus(rule: ProfileSyncRule): string {
-  if (rule.paused || rule.status === "paused") return "Paused";
+  if (rulePaused(rule)) return "Paused";
   if (rule.status === "waiting") return "Waiting for device";
   if (rule.status === "needs-action") return "Needs attention";
   return "Active";

@@ -16,6 +16,7 @@ import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtur
 import type { ProfileCopyOutcome } from "@traycer/protocol/host/profile-copy-schemas";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
 import {
+  profileSyncSaveRuleSchema,
   profileSyncSelectionSchema,
   profileSyncStartSchema,
 } from "@traycer/protocol/host/profile-sync-schemas";
@@ -1945,6 +1946,198 @@ describe("ProfileSyncModal review regressions", () => {
       expect(screen.getByText(REACH_ERROR)).toBeTruthy();
       await pollRules([]);
       await waitFor(() => expect(screen.queryByText(REACH_ERROR)).toBeNull());
+    });
+  });
+
+  describe("round 10: effective pause, editor drift and vanished runs", () => {
+    const CHANGED_TEXT =
+      "This rule changed while you were editing. Go back and reopen it to review the latest settings.";
+    const STOPPED_TEXT = "This rule was stopped while you were editing.";
+
+    function saveCalls(messenger: MockHostMessenger<HostRpcRegistry>) {
+      return messenger.calls.filter(
+        (call) => call.method === "providers.profileCopy.sync.saveRule",
+      );
+    }
+
+    async function openAutomaticTab(): Promise<void> {
+      openSync(null);
+      fireEvent.mouseDown(
+        await screen.findByRole("tab", { name: /Automatic sync/ }),
+        { button: 0 },
+      );
+      await screen.findByRole("heading", { name: "Linux box" });
+    }
+
+    const pauseCases: ReadonlyArray<
+      readonly [string, ProfileSyncRule, string, boolean]
+    > = [
+      [
+        "an active rule",
+        { ...SAVED_RULE, paused: false, status: "active" },
+        "Pause",
+        true,
+      ],
+      [
+        "a rule with paused:true",
+        { ...SAVED_RULE, paused: true, status: "paused" },
+        "Resume",
+        false,
+      ],
+      [
+        "a rule with status paused but paused:false",
+        { ...SAVED_RULE, paused: false, status: "paused" },
+        "Resume",
+        false,
+      ],
+    ];
+    it.each(pauseCases)(
+      "%s offers the effective action and saves the matching paused flag",
+      async (_label, rule, button, expectedPaused) => {
+        const messenger = mount([rule]);
+        await openAutomaticTab();
+        fireEvent.click(screen.getByRole("button", { name: button }));
+        await waitFor(() => expect(saveCalls(messenger)).toHaveLength(1));
+        const sent = profileSyncSaveRuleSchema.parse(
+          saveCalls(messenger)[0].params,
+        );
+        expect(sent.paused).toBe(expectedPaused);
+        expect(sent.expectedRevision).toBe(rule.revision);
+      },
+    );
+
+    async function openEditorWithDraft(): Promise<
+      MockHostMessenger<HostRpcRegistry>
+    > {
+      const messenger = mount([SAVED_RULE]);
+      await openAutomaticTab();
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      // The user's draft: every provider instead of the saved codex-only scope.
+      fireEvent.click(
+        await screen.findByRole("checkbox", {
+          name: /All supported providers/,
+        }),
+      );
+      return messenger;
+    }
+
+    async function pollRulesNow(
+      rules: readonly ProfileSyncRule[],
+    ): Promise<void> {
+      listRules = rules;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+    }
+
+    it("keeps the draft but blocks Save when the open rule changed, and reopening saves against the latest revision", async () => {
+      const messenger = await openEditorWithDraft();
+      const latest: ProfileSyncRule = {
+        ...SAVED_RULE,
+        scope: { kind: "selected", providers: ["claude"] },
+        paused: true,
+        status: "paused",
+        revision: 2,
+      };
+      await pollRulesNow([latest]);
+      expect(await screen.findByText(CHANGED_TEXT)).toBeTruthy();
+      expect(
+        screen
+          .getByRole("checkbox", { name: /All supported providers/ })
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+      const save = screen.getByRole("button", { name: "Save changes" });
+      expect(save.hasAttribute("disabled")).toBe(true);
+      fireEvent.click(save);
+      expect(saveCalls(messenger)).toHaveLength(0);
+      fireEvent.click(screen.getByRole("button", { name: "← Automatic sync" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+      const trigger = await screen.findByRole("button", {
+        name: "Choose providers",
+      });
+      expect(trigger.textContent).toMatch(/Claude/);
+      expect(trigger.textContent).not.toMatch(/Codex/);
+      const reopened = screen.getByRole("button", { name: "Save changes" });
+      expect(reopened.hasAttribute("disabled")).toBe(false);
+      fireEvent.click(reopened);
+      await waitFor(() => expect(saveCalls(messenger)).toHaveLength(1));
+      const sent = profileSyncSaveRuleSchema.parse(
+        saveCalls(messenger)[0].params,
+      );
+      expect(sent.expectedRevision).toBe(2);
+      expect(sent.paused).toBe(true);
+      expect(sent.scope).toEqual({ kind: "selected", providers: ["claude"] });
+    });
+
+    it("says the rule was stopped, offers only Back, and never recreates it", async () => {
+      const messenger = await openEditorWithDraft();
+      await pollRulesNow([]);
+      expect(await screen.findByText(STOPPED_TEXT)).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "← Automatic sync" }),
+      ).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
+      expect(saveCalls(messenger)).toHaveLength(0);
+    });
+
+    it("returns to the selection body and footer when the opened run leaves the history, and previews again", async () => {
+      listBatches = [
+        {
+          batchId: "00000000-0000-4000-8000-0000000000a9",
+          sourceHostId: SOURCE_HOST_ID,
+          createdAt: 1_700_000_000_000,
+          automatic: false,
+          items: [listedItem(DEST_HOST_ID)],
+        },
+      ];
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: () => [
+          syncItem(1, DEST_HOST_ID, "ready", [
+            previewDestination(DEST_HOST_ID, "automatic"),
+          ]),
+        ],
+        startItems: noItems,
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(
+        await screen.findByRole("button", { name: /profile transfers/ }),
+      );
+      expect(
+        await screen.findByRole("button", { name: "← Back" }),
+      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+      listBatches = [];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "Done" })).toBeNull(),
+      );
+      expect(screen.queryByRole("button", { name: "← Back" })).toBeNull();
+      expect(
+        screen
+          .getByRole("checkbox", { name: /Linux box/ })
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      // The cached preview for the unchanged selection may be reused, so the
+      // rendered state, not a new request, is what proves it resumed.
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("button", { name: "Sync now" })
+            .hasAttribute("disabled"),
+        ).toBe(false),
+      );
+      expect(screen.getByText("1 profile transfers selected")).toBeTruthy();
+      expect(previewCalls(messenger).length).toBeGreaterThan(0);
     });
   });
 });

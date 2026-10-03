@@ -70,7 +70,6 @@ export function ProfileSyncModal(props: {
     setSelected,
     destinations,
     setDestinations,
-    batchId,
     setBatchId,
     close,
     catalog,
@@ -174,7 +173,7 @@ export function ProfileSyncModal(props: {
       </div>
       <ProfileSyncFooter
         tab={tab}
-        batchId={batchId}
+        batch={batch}
         selected={selected}
         selectionTooLarge={selectionTooLarge}
         destinations={destinations}
@@ -195,7 +194,7 @@ function automaticTabLabel(list: ProfileSyncList | undefined): string {
 
 function ProfileSyncFooter({
   tab,
-  batchId,
+  batch,
   selected,
   selectionTooLarge,
   destinations,
@@ -207,7 +206,7 @@ function ProfileSyncFooter({
 }: Pick<
   SyncModalModel,
   | "tab"
-  | "batchId"
+  | "batch"
   | "selected"
   | "selectionTooLarge"
   | "destinations"
@@ -219,7 +218,7 @@ function ProfileSyncFooter({
 >): ReactNode {
   return (
     <DialogFooter>
-      {tab === "now" && batchId === null ? (
+      {tab === "now" && batch === null ? (
         <>
           <p className="mr-auto self-center text-ui-xs text-muted-foreground">
             {selectionStatus(
@@ -643,9 +642,13 @@ function useProfileSyncModalState(props: {
   );
   const selectionKey = JSON.stringify(selection);
   const settledKey = useDebouncedValue(selectionKey, 400);
+  const start = useProfileSyncStart(sourceHostId);
+  const batch =
+    list.data?.batches.find((b) => b.batchId === batchId) ??
+    (start.data?.batchId === batchId ? start.data : null);
   const preview = useProfileSyncPreview(
     sourceHostId,
-    selectionKey === settledKey && tab === "now" && batchId === null
+    selectionKey === settledKey && tab === "now" && batch === null
       ? selection
       : null,
   );
@@ -654,15 +657,11 @@ function useProfileSyncModalState(props: {
     selection,
     selectionKey === settledKey,
   );
-  const start = useProfileSyncStart(sourceHostId);
   const startError =
     start.variables !== undefined &&
     JSON.stringify(start.variables.selection) === selectionKey
       ? start.error
       : null;
-  const batch =
-    list.data?.batches.find((b) => b.batchId === batchId) ??
-    (start.data?.batchId === batchId ? start.data : null);
   const sourceName = hosts.nameFor(sourceHostId);
   const canStart =
     currentPreview !== null &&
