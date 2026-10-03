@@ -14,8 +14,7 @@ const REFUSAL_COPY: Record<ContinueSubagentRefusalReason, string> = {
     "Only Codex and Claude subagents can be continued as a chat.",
   block_not_subagent: "This subagent can't be continued as a chat.",
   still_running: "This subagent is still running. Try again when it finishes.",
-  session_unreadable:
-    "The provider no longer has this subagent's conversation.",
+  session_unreadable: "Couldn't read this subagent's conversation.",
   creation_failed: "Couldn't create the chat.",
 };
 

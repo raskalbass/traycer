@@ -80,7 +80,7 @@ interface Overrides {
   readonly isLiveSession: boolean;
 }
 
-function render(overrides: Partial<Overrides>) {
+function hookArgs(overrides: Partial<Overrides>) {
   const base: Overrides = {
     openId: "card-1",
     messages: messagesOf(card("card-1", null)),
@@ -89,18 +89,23 @@ function render(overrides: Partial<Overrides>) {
     isLiveSession: true,
     ...overrides,
   };
-  return renderHook(() =>
-    useSubagentContinueAsChat({
-      drillIn: drillIn(base.openId),
-      messages: base.messages,
-      epicId: "epic-1",
-      chatId: "chat-1",
-      hostId: "host-1",
-      viewTabId: "tab-1",
-      settings: base.settings,
-      canAct: base.canAct,
-      isLiveSession: base.isLiveSession,
-    }),
+  return {
+    drillIn: drillIn(base.openId),
+    messages: base.messages,
+    epicId: "epic-1",
+    chatId: "chat-1",
+    hostId: "host-1",
+    viewTabId: "tab-1",
+    settings: base.settings,
+    canAct: base.canAct,
+    isLiveSession: base.isLiveSession,
+  };
+}
+
+function render(overrides: Partial<Overrides>) {
+  return renderHook(
+    (props: Partial<Overrides>) => useSubagentContinueAsChat(hookArgs(props)),
+    { initialProps: overrides },
   );
 }
 
@@ -114,6 +119,24 @@ function answerWith(response: ContinueSubagentResponse): void {
       options.onSuccess(response);
     },
   );
+}
+
+type AnswerCallback = (response: ContinueSubagentResponse) => void;
+
+/** Makes `mutate` hold its `onSuccess` so the test delivers the answer later. */
+function deferAnswer(): { deliver: AnswerCallback } {
+  let pending: AnswerCallback | null = null;
+  mutate.mockImplementation(
+    (_variables: unknown, options: { onSuccess: AnswerCallback }) => {
+      pending = options.onSuccess;
+    },
+  );
+  return {
+    deliver: (response) => {
+      if (pending === null) throw new Error("no request was made");
+      pending(response);
+    },
+  };
 }
 
 describe("useSubagentContinueAsChat", () => {
@@ -248,6 +271,57 @@ describe("useSubagentContinueAsChat", () => {
         expect(close).toHaveBeenCalledTimes(1);
       },
     );
+
+    describe("when the answer arrives after the reader moved", () => {
+      const twoCards = (): ReadonlyArray<ChatMessageModel> =>
+        messagesOf({
+          ...card("card-1", null),
+          children: [],
+        }).concat(messagesOf(card("card-2", null)));
+
+      it("opens the chat but keeps another card's view open", () => {
+        const answer = deferAnswer();
+        const messages = twoCards();
+        const { result, rerender } = render({ openId: "card-1", messages });
+        result.current?.run();
+        rerender({ openId: "card-2", messages });
+        answer.deliver({ kind: "created", epicId: "epic-1", chatId: "chat-a" });
+        expect(openTile).toHaveBeenCalledTimes(1);
+        expect(openTile).toHaveBeenCalledWith(
+          expect.objectContaining({
+            node: expect.objectContaining({ id: "chat-a" }) as object,
+          }),
+        );
+        expect(close).not.toHaveBeenCalled();
+      });
+
+      it("opens the chat but does not close once the reader is back on the chat", () => {
+        const answer = deferAnswer();
+        const { result, rerender } = render({ openId: "card-1" });
+        result.current?.run();
+        rerender({ openId: null });
+        answer.deliver({ kind: "created", epicId: "epic-1", chatId: "chat-a" });
+        expect(openTile).toHaveBeenCalledTimes(1);
+        expect(close).not.toHaveBeenCalled();
+      });
+
+      it("still closes when the same card stays open across a streamed update", () => {
+        const answer = deferAnswer();
+        const { result, rerender } = render({ openId: "card-1" });
+        result.current?.run();
+        rerender({
+          openId: "card-1",
+          messages: messagesOf(card("card-1", null)),
+        });
+        answer.deliver({
+          kind: "existing",
+          epicId: "epic-1",
+          chatId: "chat-a",
+        });
+        expect(openTile).toHaveBeenCalledTimes(1);
+        expect(close).toHaveBeenCalledTimes(1);
+      });
+    });
 
     it("opens nothing and leaves the view open on a refusal", () => {
       answerWith({

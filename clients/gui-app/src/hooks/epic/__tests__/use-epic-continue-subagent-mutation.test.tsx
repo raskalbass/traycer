@@ -107,6 +107,12 @@ describe("useEpicContinueSubagent", () => {
       copies.push(copy);
     }
     expect(new Set(copies).size).toBe(REASONS.length);
+    expect(copies[REASONS.indexOf("session_unreadable")]).toBe(
+      "Couldn't read this subagent's conversation.",
+    );
+    // `session_unreadable` also covers a truncated record and a provider
+    // refusal, so no copy may assert the conversation is gone.
+    for (const copy of copies) expect(copy).not.toContain("no longer");
     expect(toastFromHostError).not.toHaveBeenCalled();
   });
 

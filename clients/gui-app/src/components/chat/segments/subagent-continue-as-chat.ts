@@ -1,4 +1,11 @@
-import { createContext, use, useCallback, useMemo } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { v4 as uuidv4 } from "uuid";
 import type { ChatRunSettings } from "@traycer/protocol/persistence/epic/schemas";
 import {
@@ -86,6 +93,13 @@ export function useSubagentContinueAsChat(
     canAct &&
     hostSupported &&
     (harnessId === "codex" || harnessId === "claude");
+  // What is open when an answer ARRIVES, which need not be what was open
+  // when it was asked for: the reader can step to another card, or back to
+  // the chat, while the request is in flight.
+  const openIdRef = useRef(openId);
+  useEffect(() => {
+    openIdRef.current = openId;
+  }, [openId]);
   const run = useCallback((): void => {
     if (openId === null) return;
     mutate(
@@ -108,7 +122,10 @@ export function useSubagentContinueAsChat(
               "direct_ui",
             ),
           );
-          close();
+          // The chat opens whatever the reader is looking at now - they
+          // asked for it. The view closes only if it still shows the card
+          // the chat was made from: another card opened since is theirs.
+          if (openIdRef.current === openId) close();
         },
       },
     );
