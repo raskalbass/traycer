@@ -132,6 +132,8 @@ let retryResult: "current" | "stale-revision" | "unavailable" = "current";
 let retryOutcome: ProfileCopyOutcome | null = null;
 let retryThrows = false;
 let resolveThrows = false;
+let saveRuleThrows = false;
+let stopRuleThrows = false;
 
 interface MountOptions {
   readonly rules: readonly ProfileSyncRule[];
@@ -254,6 +256,36 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
           result: retryResult,
           outcome: retryOutcome ?? profileCopyOutcome({}),
         };
+      },
+      "providers.profileCopy.sync.saveRule": (params): ProfileSyncRule => {
+        if (saveRuleThrows) {
+          throw new HostRpcError({
+            code: "RPC_ERROR",
+            message: "save unreachable",
+            requestId: "req-sync",
+            method: "providers.profileCopy.sync.saveRule",
+            fatalDetails: null,
+          });
+        }
+        return {
+          ...SAVED_RULE,
+          ruleId: params.ruleId,
+          scope: params.scope,
+          paused: params.paused,
+          revision: params.expectedRevision + 1,
+        };
+      },
+      "providers.profileCopy.sync.stopRule": () => {
+        if (stopRuleThrows) {
+          throw new HostRpcError({
+            code: "RPC_ERROR",
+            message: "stop unreachable",
+            requestId: "req-sync",
+            method: "providers.profileCopy.sync.stopRule",
+            fatalDetails: null,
+          });
+        }
+        return { batches: [], rules: [] };
       },
       "providers.profileCopy.sync.resolve": (params): ProfileSyncBatch => {
         if (resolveThrows) {
@@ -532,6 +564,8 @@ describe("ProfileSyncModal review regressions", () => {
     retryOutcome = null;
     retryThrows = false;
     resolveThrows = false;
+    saveRuleThrows = false;
+    stopRuleThrows = false;
     resetStores();
     harness.spine = null;
     harness.hosts = [
@@ -1864,5 +1898,53 @@ describe("ProfileSyncModal review regressions", () => {
         });
       }
     }
+  });
+
+  describe("round 9: listed rule control errors follow the polled rule", () => {
+    const REACH_ERROR = /Couldn't reach Studio Mac right now/;
+
+    async function openRules(): Promise<void> {
+      mount([SAVED_RULE]);
+      openSync(null);
+      fireEvent.mouseDown(
+        await screen.findByRole("tab", { name: /Automatic sync/ }),
+        { button: 0 },
+      );
+      await screen.findByRole("heading", { name: "Linux box" });
+    }
+
+    function pollRules(rules: readonly ProfileSyncRule[]): Promise<void> {
+      listRules = rules;
+      return act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+    }
+
+    it("keeps a Pause error at the same rule revision and hides it once a later revision is listed", async () => {
+      saveRuleThrows = true;
+      await openRules();
+      fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+      expect(await screen.findByText(REACH_ERROR)).toBeTruthy();
+      await pollRules([SAVED_RULE]);
+      expect(screen.getByText(REACH_ERROR)).toBeTruthy();
+      await pollRules([
+        { ...SAVED_RULE, paused: true, status: "paused", revision: 2 },
+      ]);
+      await waitFor(() => expect(screen.queryByText(REACH_ERROR)).toBeNull());
+    });
+
+    it("keeps a Stop error while the rule is listed unchanged and hides it once the rule is gone", async () => {
+      stopRuleThrows = true;
+      await openRules();
+      fireEvent.click(screen.getByRole("button", { name: "Stop…" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Stop automatic sync" }),
+      );
+      expect(await screen.findByText(REACH_ERROR)).toBeTruthy();
+      await pollRules([SAVED_RULE]);
+      expect(screen.getByText(REACH_ERROR)).toBeTruthy();
+      await pollRules([]);
+      await waitFor(() => expect(screen.queryByText(REACH_ERROR)).toBeNull());
+    });
   });
 });

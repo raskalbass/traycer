@@ -1,9 +1,11 @@
 import { useId, useState, type ReactNode } from "react";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
+import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import {
   PROFILE_SYNC_MAX_RULES,
   type ProfileSyncBatch,
   type ProfileSyncRule,
+  type ProfileSyncSaveRule,
   type ProfileSyncScope,
 } from "@traycer/protocol/host/profile-sync-schemas";
 import { Button } from "@/components/ui/button";
@@ -46,6 +48,12 @@ export function ProfileSyncRules(props: {
   const [stop, setStop] = useState<ProfileSyncRule | null>(null);
   const save = useProfileSyncSaveRule(props.hostId),
     remove = useProfileSyncStopRule(props.hostId);
+  const saveError = ruleActionError(props.rules, save.variables, save.error);
+  const removeError = ruleActionError(
+    props.rules,
+    remove.variables,
+    remove.error,
+  );
   const atCapacity = props.rules.length >= PROFILE_SYNC_MAX_RULES;
   const destinations = props.hosts.options.filter(
     (h) =>
@@ -197,18 +205,18 @@ export function ProfileSyncRules(props: {
           </article>
         ))
       )}
-      {save.error ? (
+      {saveError !== null ? (
         <p role="alert" className="text-ui-xs text-destructive">
           {profileCopyRequestErrorText(
-            save.error,
+            saveError,
             props.hosts.nameFor(props.hostId),
           )}
         </p>
       ) : null}
-      {remove.error ? (
+      {removeError !== null ? (
         <p role="alert" className="text-ui-xs text-destructive">
           {profileCopyRequestErrorText(
-            remove.error,
+            removeError,
             props.hosts.nameFor(props.hostId),
           )}
         </p>
@@ -220,6 +228,25 @@ export function ProfileSyncRules(props: {
     </section>
   );
 }
+type RuleActionRequest = Pick<
+  ProfileSyncSaveRule,
+  "ruleId" | "expectedRevision"
+>;
+function ruleActionError(
+  rules: readonly ProfileSyncRule[],
+  request: RuleActionRequest | undefined,
+  error: HostRpcError | null,
+): HostRpcError | null {
+  if (request === undefined) return null;
+  return rules.some(
+    (rule) =>
+      rule.ruleId === request.ruleId &&
+      rule.revision <= request.expectedRevision,
+  )
+    ? error
+    : null;
+}
+
 function ProfileSyncRuleEditor(props: {
   readonly hostId: string;
   readonly rule: ProfileSyncRule | null;
