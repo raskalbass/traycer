@@ -291,3 +291,45 @@ describe("profile sync operation uniqueness and self-targeted rules", () => {
     ).toBe(false);
   });
 });
+
+describe("profile sync list identity and conflict contract", () => {
+  const twin = (): ProfileSyncBatch => batch(SOURCE_HOST, []);
+
+  it("rejects two batches sharing a batchId and two rules sharing a ruleId", () => {
+    expect(
+      profileSyncListSchema.safeParse({ batches: [twin(), twin()], rules: [] })
+        .success,
+    ).toBe(false);
+    expect(
+      profileSyncListSchema.safeParse({
+        batches: [],
+        rules: [rule(1), { ...rule(2), ruleId: rule(1).ruleId }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts distinct batch and rule ids", () => {
+    expect(
+      profileSyncListSchema.safeParse({
+        batches: [twin(), { ...twin(), batchId: uuid(2) }],
+        rules: [rule(1), rule(2)],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("requires destination settings on a conflict item", () => {
+    const conflict = { ...item(), state: "conflict" as const };
+    expect(
+      profileSyncItemSchema.safeParse({
+        ...conflict,
+        destinationSettings: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      profileSyncItemSchema.safeParse({
+        ...conflict,
+        destinationSettings: { name: "Other", color: "#10b981", enabled: true },
+      }).success,
+    ).toBe(true);
+  });
+});

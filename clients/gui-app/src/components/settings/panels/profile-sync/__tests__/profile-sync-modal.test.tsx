@@ -13,6 +13,7 @@ import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
+import type { ProfileCopyOutcome } from "@traycer/protocol/host/profile-copy-schemas";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
 import {
   profileSyncSelectionSchema,
@@ -38,10 +39,13 @@ import { useSettingsHostScopeStore } from "@/stores/settings/settings-host-scope
 import {
   DEST_HOST_ID,
   DEST_HOST_TWO_ID,
+  ATTEMPT_ID,
+  ATTEMPT_TWO_ID,
   hostDirectoryEntry,
   PREVIEW_REVISION,
   profileCopyAttempt,
   profileCopyOutcome,
+  recordedOutcome,
   SCOPED_HOST_ID,
   SOURCE_HOST_ID,
   SOURCE_PROFILE_ID,
@@ -121,6 +125,11 @@ let previewSelection: ProfileSyncSelection | null = null;
 let startBatchMutator: ((batch: ProfileSyncBatch) => ProfileSyncBatch) | null =
   null;
 let listRules: readonly ProfileSyncRule[] | null = null;
+let lastStarted: ProfileSyncBatch | null = null;
+let updateStarted: ((batch: ProfileSyncBatch) => ProfileSyncBatch) | null =
+  null;
+let retryResult: "current" | "stale-revision" | "unavailable" = "current";
+let retryOutcome: ProfileCopyOutcome | null = null;
 
 interface MountOptions {
   readonly rules: readonly ProfileSyncRule[];
@@ -181,7 +190,12 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
           });
         }
         return {
-          batches: [...listBatches],
+          batches: [
+            ...listBatches,
+            ...(lastStarted !== null && updateStarted !== null
+              ? [updateStarted(lastStarted)]
+              : []),
+          ],
           rules: [...(listRules ?? options.rules)],
         };
       },
@@ -209,10 +223,15 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
           automatic: false,
           items: [...options.startItems(params.selection)],
         };
-        return startBatchMutator === null
-          ? started
-          : startBatchMutator(started);
+        const answered =
+          startBatchMutator === null ? started : startBatchMutator(started);
+        lastStarted = answered;
+        return answered;
       },
+      "providers.profileCopy.retry": () => ({
+        result: retryResult,
+        outcome: retryOutcome ?? profileCopyOutcome({}),
+      }),
       "providers.profileCopy.sync.resolve": (params): ProfileSyncBatch => ({
         batchId: params.batchId,
         sourceHostId: params.sourceHostId,
@@ -473,6 +492,10 @@ describe("ProfileSyncModal review regressions", () => {
     previewSelection = null;
     startBatchMutator = null;
     listRules = null;
+    lastStarted = null;
+    updateStarted = null;
+    retryResult = "current";
+    retryOutcome = null;
     resetStores();
     harness.spine = null;
     harness.hosts = [
@@ -1388,6 +1411,7 @@ describe("ProfileSyncModal review regressions", () => {
         ],
       ],
       ["another source", [autoBatch({ sourceHostId: "foreign-source-host" })]],
+      ["empty items", [autoBatch({ items: [] })]],
     ])("hides View results for a %s link", async (_label, batches) => {
       listBatches = batches;
       mount([{ ...SAVED_RULE, batchId: AUTO_BATCH }]);
@@ -1515,6 +1539,128 @@ describe("ProfileSyncModal review regressions", () => {
       expect(
         screen.getAllByRole("button", { name: /profile transfers/ }),
       ).toHaveLength(2);
+    });
+  });
+
+  describe("round 7: paused status and retry notices", () => {
+    it("renders Paused for status paused even when the paused flag is false", async () => {
+      mount([{ ...SAVED_RULE, paused: false, status: "paused" }]);
+      openSync(null);
+      fireEvent.mouseDown(
+        await screen.findByRole("tab", { name: /Automatic sync/ }),
+        { button: 0 },
+      );
+      await screen.findByRole("heading", { name: "Linux box" });
+      expect(screen.getByText("Paused")).toBeTruthy();
+    });
+
+    const RETRY_OPERATION = "00000000-0000-4000-8000-000000000001";
+    const STALE_TEXT = "This changed since you last looked. Review it again.";
+    const UNAVAILABLE_TEXT =
+      "Retry isn't possible right now. Linux box may be offline, a sign-in there may still be holding a shared resource, or this copy was cancelled.";
+
+    function quarantined(
+      attemptId: string,
+      revision: number,
+    ): ProfileCopyOutcome {
+      return recordedOutcome({
+        attempt: profileCopyAttempt({
+          operationId: RETRY_OPERATION,
+          attemptId,
+        }),
+        revision,
+        state: "quarantined",
+      });
+    }
+
+    async function openRetry(): Promise<MockHostMessenger<HostRpcRegistry>> {
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: () => [
+          syncItem(1, DEST_HOST_ID, "ready", [
+            previewDestination(DEST_HOST_ID, "automatic"),
+          ]),
+        ],
+        startItems: () => [
+          {
+            ...syncItem(1, DEST_HOST_ID, "needs-action", []),
+            preview: null,
+            outcome: quarantined(ATTEMPT_ID, 3),
+          },
+        ],
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+      return messenger;
+    }
+
+    function advanceList(): Promise<void> {
+      return act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+    }
+
+    it("keeps the stale notice while the attempt has not advanced past the response, and hides it on a later revision", async () => {
+      retryResult = "stale-revision";
+      retryOutcome = quarantined(ATTEMPT_ID, 3);
+      await openRetry();
+      expect(await screen.findByText(STALE_TEXT)).toBeTruthy();
+      // A refetch of the same revision must not clear it.
+      updateStarted = (batch) => ({
+        ...batch,
+        items: batch.items.map((entry) => ({
+          ...entry,
+          outcome: quarantined(ATTEMPT_ID, 3),
+        })),
+      });
+      await advanceList();
+      expect(screen.getByText(STALE_TEXT)).toBeTruthy();
+      updateStarted = (batch) => ({
+        ...batch,
+        items: batch.items.map((entry) => ({
+          ...entry,
+          outcome: quarantined(ATTEMPT_ID, 4),
+        })),
+      });
+      await advanceList();
+      await waitFor(() => expect(screen.queryByText(STALE_TEXT)).toBeNull());
+    });
+
+    it("shows the unavailable notice and hides it once another attempt is displayed", async () => {
+      retryResult = "unavailable";
+      retryOutcome = quarantined(ATTEMPT_ID, 3);
+      await openRetry();
+      expect(await screen.findByText(UNAVAILABLE_TEXT)).toBeTruthy();
+      updateStarted = (batch) => ({
+        ...batch,
+        items: batch.items.map((entry) => ({
+          ...entry,
+          outcome: quarantined(ATTEMPT_TWO_ID, 3),
+        })),
+      });
+      await advanceList();
+      await waitFor(() =>
+        expect(screen.queryByText(UNAVAILABLE_TEXT)).toBeNull(),
+      );
+    });
+
+    it("shows no notice for a current retry", async () => {
+      retryResult = "current";
+      retryOutcome = quarantined(ATTEMPT_ID, 3);
+      const messenger = await openRetry();
+      await waitFor(() =>
+        expect(
+          messenger.calls.filter(
+            (call) => call.method === "providers.profileCopy.retry",
+          ).length,
+        ).toBeGreaterThan(0),
+      );
+      expect(screen.queryByText(STALE_TEXT)).toBeNull();
+      expect(screen.queryByText(UNAVAILABLE_TEXT)).toBeNull();
     });
   });
 });

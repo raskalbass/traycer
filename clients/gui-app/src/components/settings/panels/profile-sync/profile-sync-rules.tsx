@@ -374,6 +374,7 @@ function canViewRuleRun(
         batch.batchId === rule.batchId &&
         batch.sourceHostId === sourceHostId &&
         batch.automatic &&
+        batch.items.length > 0 &&
         batch.items.every(
           (item) => item.destinationHostId === rule.destinationHostId,
         ),
@@ -416,7 +417,7 @@ function ruleProviders(
 }
 
 function ruleStatus(rule: ProfileSyncRule): string {
-  if (rule.paused) return "Paused";
+  if (rule.paused || rule.status === "paused") return "Paused";
   if (rule.status === "waiting") return "Waiting for device";
   if (rule.status === "needs-action") return "Needs attention";
   return "Active";

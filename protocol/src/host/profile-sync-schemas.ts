@@ -105,6 +105,10 @@ export const profileSyncItemSchema = lazySchema(() =>
               destination.destinationHostId === item.destinationHostId,
           )),
       { message: "Copy preview must match its sync item" },
+    )
+    .refine(
+      (item) => item.state !== "conflict" || item.destinationSettings !== null,
+      { message: "Conflict items must include destination settings" },
     ),
 );
 export type ProfileSyncItem = z.infer<typeof profileSyncItemSchema>;
@@ -185,10 +189,23 @@ export const profileSyncRuleSchema = lazySchema(() =>
 );
 export type ProfileSyncRule = z.infer<typeof profileSyncRuleSchema>;
 export const profileSyncListSchema = lazySchema(() =>
-  z.strictObject({
-    batches: z.array(profileSyncBatchSchema).max(PROFILE_SYNC_MAX_BATCHES),
-    rules: z.array(profileSyncRuleSchema).max(PROFILE_SYNC_MAX_RULES),
-  }),
+  z
+    .strictObject({
+      batches: z.array(profileSyncBatchSchema).max(PROFILE_SYNC_MAX_BATCHES),
+      rules: z.array(profileSyncRuleSchema).max(PROFILE_SYNC_MAX_RULES),
+    })
+    .refine(
+      (list) =>
+        new Set(list.batches.map((batch) => batch.batchId)).size ===
+        list.batches.length,
+      { message: "Sync batch IDs must be unique within a list" },
+    )
+    .refine(
+      (list) =>
+        new Set(list.rules.map((rule) => rule.ruleId)).size ===
+        list.rules.length,
+      { message: "Sync rule IDs must be unique within a list" },
+    ),
 );
 export type ProfileSyncList = z.infer<typeof profileSyncListSchema>;
 

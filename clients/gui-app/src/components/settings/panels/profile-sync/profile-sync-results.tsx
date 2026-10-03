@@ -1,5 +1,6 @@
 import { SYNC_STATE_LABELS } from "./profile-sync-state";
 import { useRef, useState, type ReactNode } from "react";
+import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import type {
   ProfileSyncBatch,
   ProfileSyncItem,
@@ -70,8 +71,7 @@ function ProfileSyncResultItem(props: {
   const { item, batch, hosts, sourceHostId } = props;
   const [expanded, setExpanded] = useState(false);
   const resolve = useProfileSyncResolve(sourceHostId);
-  const retry = useProfileCopyRetryMutation(sourceHostId, item.operationId);
-  const retryIds = useRef(new Map<string, string>());
+  const retry = useProfileSyncItemRetry(sourceHostId, item);
   const sourceName = hosts.nameFor(sourceHostId);
   const outcome = item.outcome;
   const canRetry =
@@ -118,22 +118,10 @@ function ProfileSyncResultItem(props: {
             <Button
               size="xs"
               variant="outline"
-              disabled={retry.isPending}
-              onClick={() => {
-                const key = `${outcome.attempt.attemptId}:${outcome.revision}`;
-                let id = retryIds.current.get(key);
-                if (id === undefined) {
-                  id = crypto.randomUUID();
-                  retryIds.current.set(key, id);
-                }
-                retry.mutate({
-                  attempt: outcome.attempt,
-                  expectedRevision: outcome.revision,
-                  retryRequestId: id,
-                });
-              }}
+              disabled={retry.pending}
+              onClick={retry.run}
             >
-              {retry.isPending ? <MutedAgentSpinner /> : null}Retry
+              {retry.pending ? <MutedAgentSpinner /> : null}Retry
             </Button>
           ) : null}
           {outcome !== null || item.state === "conflict" ? (
@@ -169,12 +157,90 @@ function ProfileSyncResultItem(props: {
           doResolve={doResolve}
         />
       ) : null}
+      <ProfileSyncRetryFeedback
+        notice={retry.notice}
+        destinationName={hosts.nameFor(item.destinationHostId)}
+      />
       {error !== null ? (
         <p role="alert" className="text-ui-xs text-destructive">
           {profileCopyRequestErrorText(error, sourceName)}
         </p>
       ) : null}
     </div>
+  );
+}
+
+interface SyncRetryNotice {
+  readonly kind: "stale-revision" | "unavailable";
+  readonly attemptId: string;
+  readonly revision: number;
+}
+interface SyncItemRetry {
+  readonly pending: boolean;
+  readonly error: HostRpcError | null;
+  readonly notice: SyncRetryNotice | null;
+  readonly run: () => void;
+}
+function useProfileSyncItemRetry(
+  sourceHostId: string,
+  item: ProfileSyncItem,
+): SyncItemRetry {
+  const retry = useProfileCopyRetryMutation(sourceHostId, item.operationId);
+  const retryIds = useRef(new Map<string, string>());
+  const [notice, setNotice] = useState<SyncRetryNotice | null>(null);
+  const outcome = item.outcome;
+  const run = (): void => {
+    if (outcome === null) return;
+    const key = `${outcome.attempt.attemptId}:${outcome.revision}`;
+    let id = retryIds.current.get(key);
+    if (id === undefined) {
+      id = crypto.randomUUID();
+      retryIds.current.set(key, id);
+    }
+    setNotice(null);
+    retry.mutate(
+      {
+        attempt: outcome.attempt,
+        expectedRevision: outcome.revision,
+        retryRequestId: id,
+      },
+      {
+        onSuccess: (response) => {
+          if (response.result !== "current") {
+            setNotice({
+              kind: response.result,
+              attemptId: outcome.attempt.attemptId,
+              revision: response.outcome.revision,
+            });
+          }
+        },
+      },
+    );
+  };
+  return {
+    pending: retry.isPending,
+    error: retry.error,
+    notice:
+      notice !== null &&
+      outcome !== null &&
+      notice.attemptId === outcome.attempt.attemptId &&
+      notice.revision >= outcome.revision
+        ? notice
+        : null,
+    run,
+  };
+}
+function ProfileSyncRetryFeedback(props: {
+  readonly notice: SyncRetryNotice | null;
+  readonly destinationName: string;
+}): ReactNode {
+  if (props.notice === null) return null;
+  return (
+    <p role="status" className="text-ui-xs text-warning-foreground">
+      {props.notice.kind === "stale-revision"
+        ? "This changed since you last looked. Review it again."
+        : `Retry isn't possible right now. ${props.destinationName} may be offline, a sign-in there may still be holding a shared resource, or this copy was cancelled.`}
+    </p>
   );
 }
 
