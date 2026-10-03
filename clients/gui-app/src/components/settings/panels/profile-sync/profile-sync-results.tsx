@@ -25,6 +25,12 @@ export function ProfileSyncResults(props: {
   readonly batch: ProfileSyncBatch;
   readonly hosts: ProfileCopyHosts;
 }): ReactNode {
+  if (props.batch.sourceHostId !== props.sourceHostId)
+    return (
+      <p role="alert" className="text-ui-xs text-destructive">
+        The device returned a run for another source. Check sync history again.
+      </p>
+    );
   const destinations = [
     ...new Set(props.batch.items.map((i) => i.destinationHostId)),
   ];

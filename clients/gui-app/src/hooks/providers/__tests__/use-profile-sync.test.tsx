@@ -20,7 +20,13 @@ import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { hostRpcSchedulingPolicy } from "@/lib/host-rpc-policy/host-method-policy-table";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
 import { createAppQueryClient } from "@/lib/query-client";
-import { hostDirectoryEntry } from "@/lib/profile-copy/__tests__/profile-copy-test-fixtures";
+import {
+  hostDirectoryEntry,
+  OPERATION_ID as COPY_OPERATION_ID,
+  RETRY_REQUEST_ID,
+  profileCopyAttempt,
+  profileCopyOutcome,
+} from "@/lib/profile-copy/__tests__/profile-copy-test-fixtures";
 
 const harness = vi.hoisted(
   (): { spine: HostClient<HostRpcRegistry> | null } => ({ spine: null }),
@@ -33,7 +39,9 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   },
 }));
 
+import { useProfileCopyRetryMutation } from "@/hooks/providers/profile-copy/use-profile-copy-operation-mutations";
 import {
+  useProfileSyncList,
   useProfileSyncResolve,
   useProfileSyncSaveRule,
   useProfileSyncStart,
@@ -201,5 +209,81 @@ describe("profile sync mutation hooks dispatch", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.params).toEqual(request);
     expect(calls[0]?.authority.endpoint.hostId).toBe(SOURCE);
+  });
+});
+
+describe("a successful transfer retry refreshes the sync history", () => {
+  beforeEach(() => {
+    harness.spine = null;
+  });
+  afterEach(() => {
+    cleanup();
+    harness.spine = null;
+  });
+
+  it("refetches the retried source's sync.list at once and leaves another source's cache alone", async () => {
+    const queryClient = createAppQueryClient();
+    const messenger = new MockHostMessenger<HostRpcRegistry>({
+      registry: hostRpcRegistry,
+      requestId: () => "req-retry-hook",
+      handlers: {
+        "providers.profileCopy.sync.list": () => ({ batches: [], rules: [] }),
+        "providers.profileCopy.retry": () => ({
+          result: "current" as const,
+          outcome: profileCopyOutcome({}),
+        }),
+      },
+    });
+    const spine = new HostClient<HostRpcRegistry>({
+      registry: hostRpcRegistry,
+      schedulingPolicy: hostRpcSchedulingPolicy,
+      invalidator: createHostQueryInvalidator(queryClient),
+      findHostById: (hostId) => hostDirectoryEntry(hostId, hostId),
+      messenger,
+    });
+    spine.setRequestContext(
+      createRequestContextFixture({
+        origin: "renderer",
+        bearerToken: "tok-sync",
+      }),
+    );
+    harness.spine = spine;
+    const OTHER_SOURCE = "other-source-host";
+    const { result } = renderHook(
+      () => ({
+        sourceList: useProfileSyncList(SOURCE),
+        otherList: useProfileSyncList(OTHER_SOURCE),
+        retry: useProfileCopyRetryMutation(SOURCE, COPY_OPERATION_ID),
+      }),
+      {
+        wrapper: (props) => (
+          <QueryClientProvider client={queryClient}>
+            {props.children}
+          </QueryClientProvider>
+        ),
+      },
+    );
+    const listCalls = (hostId: string): number =>
+      messenger.calls.filter(
+        (call) =>
+          call.method === "providers.profileCopy.sync.list" &&
+          call.authority.endpoint.hostId === hostId,
+      ).length;
+    await waitFor(() => {
+      expect(result.current.sourceList.isSuccess).toBe(true);
+      expect(result.current.otherList.isSuccess).toBe(true);
+    });
+    expect(listCalls(SOURCE)).toBe(1);
+    expect(listCalls(OTHER_SOURCE)).toBe(1);
+    act(() => {
+      result.current.retry.mutate({
+        attempt: profileCopyAttempt({ sourceHostId: SOURCE }),
+        expectedRevision: 1,
+        retryRequestId: RETRY_REQUEST_ID,
+      });
+    });
+    await waitFor(() => expect(result.current.retry.isSuccess).toBe(true));
+    await waitFor(() => expect(listCalls(SOURCE)).toBe(2));
+    expect(listCalls(OTHER_SOURCE)).toBe(1);
   });
 });

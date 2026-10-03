@@ -13,6 +13,9 @@ import {
 
 /** The source checks the current profile count before preparing a selection. */
 export const PROFILE_SYNC_MAX_ITEMS = 512;
+/** Match the source's durable history and rule capacities. */
+export const PROFILE_SYNC_MAX_BATCHES = 100;
+export const PROFILE_SYNC_MAX_RULES = 64;
 
 export const profileSyncSettingsSchema = lazySchema(() =>
   z.strictObject({
@@ -54,42 +57,77 @@ export const profileSyncSourceRequestSchema = lazySchema(() =>
   z.strictObject({ sourceHostId: profileCopyHostIdSchema }),
 );
 export const profileSyncItemSchema = lazySchema(() =>
-  z.strictObject({
-    providerId: profileCopyProviderSchema,
-    sourceProfileId: profileCopySourceProfileIdSchema,
-    name: z.string().max(128),
-    destinationHostId: profileCopyHostIdSchema,
-    operationId: profileCopyIdSchema,
-    preview: profileCopyPreviewResponseSchema.nullable(),
-    outcome: profileCopyOutcomeSchema.nullable(),
-    state: z.enum([
-      "ready",
-      "queued",
-      "copying",
-      "synced",
-      "already-present",
-      "needs-action",
-      "conflict",
-      "paused",
-      "unavailable",
-      "update-required",
-      "unconfirmed",
-      "source-removed",
-    ]),
-    sourceSettings: profileSyncSettingsSchema,
-    sourceIdentityStamp: z.string().regex(/^[a-f0-9]{64}$/),
-    identityChanged: z.boolean(),
-    destinationSettings: profileSyncSettingsSchema.nullable(),
-    baseline: profileSyncSettingsSchema.nullable(),
-  }),
+  z
+    .strictObject({
+      providerId: profileCopyProviderSchema,
+      sourceProfileId: profileCopySourceProfileIdSchema,
+      name: z.string().max(128),
+      destinationHostId: profileCopyHostIdSchema,
+      operationId: profileCopyIdSchema,
+      preview: profileCopyPreviewResponseSchema.nullable(),
+      outcome: profileCopyOutcomeSchema.nullable(),
+      state: z.enum([
+        "ready",
+        "queued",
+        "copying",
+        "synced",
+        "already-present",
+        "needs-action",
+        "conflict",
+        "paused",
+        "unavailable",
+        "update-required",
+        "unconfirmed",
+        "source-removed",
+      ]),
+      sourceSettings: profileSyncSettingsSchema,
+      sourceIdentityStamp: z.string().regex(/^[a-f0-9]{64}$/),
+      identityChanged: z.boolean(),
+      destinationSettings: profileSyncSettingsSchema.nullable(),
+      baseline: profileSyncSettingsSchema.nullable(),
+    })
+    .refine(
+      (item) =>
+        item.outcome === null ||
+        (item.outcome.attempt.providerId === item.providerId &&
+          item.outcome.attempt.sourceProfileId === item.sourceProfileId &&
+          item.outcome.attempt.destinationHostId === item.destinationHostId &&
+          item.outcome.attempt.operationId === item.operationId),
+      { message: "Copy outcome must match its sync item" },
+    )
+    .refine(
+      (item) =>
+        item.preview === null ||
+        (item.preview.source.providerId === item.providerId &&
+          item.preview.source.sourceProfileId === item.sourceProfileId &&
+          item.preview.destinations.some(
+            (destination) =>
+              destination.destinationHostId === item.destinationHostId,
+          )),
+      { message: "Copy preview must match its sync item" },
+    ),
 );
 export type ProfileSyncItem = z.infer<typeof profileSyncItemSchema>;
 export const profileSyncPreviewSchema = lazySchema(() =>
-  z.strictObject({
-    selection: profileSyncSelectionSchema,
-    revision: z.string().regex(/^[a-f0-9]{64}$/),
-    items: z.array(profileSyncItemSchema).max(PROFILE_SYNC_MAX_ITEMS),
-  }),
+  z
+    .strictObject({
+      selection: profileSyncSelectionSchema,
+      revision: z.string().regex(/^[a-f0-9]{64}$/),
+      items: z.array(profileSyncItemSchema).max(PROFILE_SYNC_MAX_ITEMS),
+    })
+    .refine(
+      (preview) =>
+        preview.items.every(
+          (item) =>
+            itemMatchesSource(item, preview.selection.sourceHostId) &&
+            preview.selection.destinationHostIds.includes(
+              item.destinationHostId,
+            ) &&
+            (preview.selection.scope.kind === "all" ||
+              preview.selection.scope.providers.includes(item.providerId)),
+        ),
+      { message: "Sync items must match the preview selection" },
+    ),
 );
 export type ProfileSyncPreview = z.infer<typeof profileSyncPreviewSchema>;
 export const profileSyncStartSchema = lazySchema(() =>
@@ -100,13 +138,23 @@ export const profileSyncStartSchema = lazySchema(() =>
   }),
 );
 export const profileSyncBatchSchema = lazySchema(() =>
-  z.strictObject({
-    batchId: profileCopyIdSchema,
-    sourceHostId: profileCopyHostIdSchema,
-    createdAt: z.number(),
-    automatic: z.boolean(),
-    items: z.array(profileSyncItemSchema).max(PROFILE_SYNC_MAX_ITEMS),
-  }),
+  z
+    .strictObject({
+      batchId: profileCopyIdSchema,
+      sourceHostId: profileCopyHostIdSchema,
+      createdAt: z.number(),
+      automatic: z.boolean(),
+      items: z.array(profileSyncItemSchema).max(PROFILE_SYNC_MAX_ITEMS),
+    })
+    .refine(
+      (batch) =>
+        batch.items.every((item) =>
+          itemMatchesSource(item, batch.sourceHostId),
+        ),
+      {
+        message: "Sync items must match the batch source",
+      },
+    ),
 );
 export type ProfileSyncBatch = z.infer<typeof profileSyncBatchSchema>;
 export const profileSyncRuleSchema = lazySchema(() =>
@@ -125,11 +173,23 @@ export const profileSyncRuleSchema = lazySchema(() =>
 export type ProfileSyncRule = z.infer<typeof profileSyncRuleSchema>;
 export const profileSyncListSchema = lazySchema(() =>
   z.strictObject({
-    batches: z.array(profileSyncBatchSchema),
-    rules: z.array(profileSyncRuleSchema),
+    batches: z.array(profileSyncBatchSchema).max(PROFILE_SYNC_MAX_BATCHES),
+    rules: z.array(profileSyncRuleSchema).max(PROFILE_SYNC_MAX_RULES),
   }),
 );
 export type ProfileSyncList = z.infer<typeof profileSyncListSchema>;
+
+function itemMatchesSource(
+  item: ProfileSyncItem,
+  sourceHostId: string,
+): boolean {
+  return (
+    item.destinationHostId !== sourceHostId &&
+    (item.outcome === null ||
+      item.outcome.attempt.sourceHostId === sourceHostId) &&
+    (item.preview === null || item.preview.source.sourceHostId === sourceHostId)
+  );
+}
 export const profileSyncSaveRuleSchema = lazySchema(() =>
   z
     .strictObject({

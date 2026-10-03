@@ -40,6 +40,8 @@ import {
   DEST_HOST_TWO_ID,
   hostDirectoryEntry,
   PREVIEW_REVISION,
+  profileCopyAttempt,
+  profileCopyOutcome,
   SCOPED_HOST_ID,
   SOURCE_HOST_ID,
   SOURCE_PROFILE_ID,
@@ -114,6 +116,8 @@ function resetStores(): void {
 let startFailures = 0;
 let startBatchSource: string | null = null;
 let listFails = false;
+let listBatches: readonly ProfileSyncBatch[] = [];
+let previewSelection: ProfileSyncSelection | null = null;
 
 interface MountOptions {
   readonly rules: readonly ProfileSyncRule[];
@@ -173,10 +177,10 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
             fatalDetails: null,
           });
         }
-        return { batches: [], rules: [...options.rules] };
+        return { batches: [...listBatches], rules: [...options.rules] };
       },
       "providers.profileCopy.sync.preview": (params) => ({
-        selection: params,
+        selection: previewSelection ?? params,
         revision: PREVIEW_REVISION,
         items: [...options.previewItems(params)],
       }),
@@ -456,6 +460,8 @@ describe("ProfileSyncModal review regressions", () => {
     startFailures = 0;
     startBatchSource = null;
     listFails = false;
+    listBatches = [];
+    previewSelection = null;
     resetStores();
     harness.spine = null;
     harness.hosts = [
@@ -760,42 +766,53 @@ describe("ProfileSyncModal review regressions", () => {
       expect(second.batchId).toBe(first.batchId);
     });
 
-    it("result actions dispatch to the captured source even when the returned batch names another host", async () => {
+    it("refuses a returned run for another source: no actions, and nothing dispatches to either device", async () => {
+      // A run that is internally consistent for ANOTHER source (batch B and
+      // the nested outcome's attempt both name B) must still not act on A.
       startBatchSource = DEST_HOST_ID;
       const messenger = mountWith({
         rules: [],
         providers: defaultProviders(),
         previewItems: READY_ITEM,
         startItems: () => [
-          syncItem(1, DEST_HOST_ID, "unconfirmed", [
-            previewDestination(DEST_HOST_ID, "automatic"),
-          ]),
+          {
+            ...syncItem(1, DEST_HOST_TWO_ID, "unconfirmed", [
+              previewDestination(DEST_HOST_TWO_ID, "automatic"),
+            ]),
+            preview: null,
+            outcome: profileCopyOutcome({
+              attempt: profileCopyAttempt({
+                sourceHostId: DEST_HOST_ID,
+                destinationHostId: DEST_HOST_TWO_ID,
+                operationId: "00000000-0000-4000-8000-000000000001",
+              }),
+              state: "failed",
+            }),
+          },
         ],
       });
       openSync(null);
       await pickDestinations([/Linux box/]);
       await screen.findByText("1 profile transfers selected");
       fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
-      fireEvent.click(
-        await screen.findByRole("button", { name: "Check status" }),
-      );
-      const resolves = () =>
-        messenger.calls.filter(
-          (call) => call.method === "providers.profileCopy.sync.resolve",
-        );
-      await waitFor(() => expect(resolves()).toHaveLength(1));
-      expect(resolves()[0]?.authority.endpoint.hostId).toBe(SOURCE_HOST_ID);
-      expect(resolves()[0]?.params).toMatchObject({
-        sourceHostId: SOURCE_HOST_ID,
-      });
       expect(
-        messenger.calls.some(
-          (call) =>
-            call.method.startsWith("providers.profileCopy.") &&
-            call.method !== "providers.profileCopy.sync.start" &&
-            call.authority.endpoint.hostId === DEST_HOST_ID,
+        await screen.findByText(
+          "The device returned a run for another source. Check sync history again.",
         ),
-      ).toBe(false);
+      ).toBeTruthy();
+      for (const name of [/Check status/, /Retry/, /Review/])
+        expect(screen.queryByRole("button", { name })).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      const dispatched = messenger.calls.filter(
+        (call) =>
+          call.method !== "providers.profileCopy.sync.start" &&
+          call.method !== "providers.profileCopy.sync.preview" &&
+          call.method !== "providers.profileCopy.sync.list" &&
+          call.method !== "providers.list",
+      );
+      expect(dispatched).toEqual([]);
     });
 
     describe("run capacity of 512 profile transfers", () => {
@@ -1060,6 +1077,139 @@ describe("ProfileSyncModal review regressions", () => {
       );
       expect(finalPreview.destinationHostIds).not.toContain("limit-host-16");
       expect(finalPreview.destinationHostIds).toHaveLength(16);
+    });
+  });
+
+  describe("round 4: echoed selection, recent runs and failure scoping", () => {
+    const READY = (): ProfileSyncItem[] => [
+      syncItem(1, DEST_HOST_ID, "ready", [
+        previewDestination(DEST_HOST_ID, "automatic"),
+      ]),
+    ];
+
+    async function settledAfter(
+      messenger: MockHostMessenger<HostRpcRegistry>,
+      previewsBefore: number,
+    ): Promise<void> {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      await waitFor(() => {
+        expect(previewCalls(messenger).length).toBeGreaterThan(previewsBefore);
+        expect(
+          screen
+            .getByRole("button", { name: "Sync now" })
+            .hasAttribute("disabled"),
+        ).toBe(false);
+      });
+    }
+
+    it("a valid preview that echoes a different selection never enables Sync now or dispatches, and keeps the local choices", async () => {
+      previewSelection = {
+        sourceHostId: SOURCE_HOST_ID,
+        scope: { kind: "all" },
+        destinationHostIds: [DEST_HOST_TWO_ID],
+      };
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        // Ready, and consistent with the ECHOED selection (Old Mac), so only
+        // the mismatch with the requested one can disable Sync now.
+        previewItems: () => [
+          syncItem(1, DEST_HOST_TWO_ID, "ready", [
+            previewDestination(DEST_HOST_TWO_ID, "automatic"),
+          ]),
+        ],
+        startItems: noItems,
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await waitFor(() =>
+        expect(previewCalls(messenger).length).toBeGreaterThan(0),
+      );
+      expect(
+        await screen.findByText(
+          "The device returned a different selection. Check again.",
+        ),
+      ).toBeTruthy();
+      const sync = screen.getByRole("button", { name: "Sync now" });
+      expect(sync.hasAttribute("disabled")).toBe(true);
+      fireEvent.click(sync);
+      expect(startCalls(messenger)).toHaveLength(0);
+      expect(
+        screen
+          .getByRole("checkbox", { name: /Linux box/ })
+          .getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(
+        screen
+          .getByRole("checkbox", { name: /Old Mac/ })
+          .getAttribute("aria-checked"),
+      ).toBe("false");
+    });
+
+    it("shows the five newest recent runs, newest first, whatever order the host lists them in", async () => {
+      const base = 1_700_000_000_000;
+      const minutes = [3, 7, 1, 6, 2, 5, 4];
+      listBatches = minutes.map((minute): ProfileSyncBatch => ({
+        batchId: `00000000-0000-4000-8000-${String(minute).padStart(12, "0")}`,
+        sourceHostId: SOURCE_HOST_ID,
+        createdAt: base + minute * 60_000,
+        automatic: false,
+        items: [],
+      }));
+      mount([]);
+      openSync(null);
+      await screen.findByText("Recent runs");
+      const rows = screen
+        .getAllByRole("button", { name: /profile transfers/ })
+        .map((row) => row.textContent);
+      expect(rows).toHaveLength(5);
+      [7, 6, 5, 4, 3].forEach((minute, index) => {
+        expect(rows[index]).toContain(
+          new Date(base + minute * 60_000).toLocaleString(),
+        );
+      });
+    });
+
+    it("an uncertain start's failure text follows its own selection: hidden on another choice, back on return, with the same batch id", async () => {
+      startFailures = 1;
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: READY,
+        startItems: noItems,
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      expect(await screen.findByText(/could not be confirmed/)).toBeTruthy();
+      const before = previewCalls(messenger).length;
+      fireEvent.click(screen.getByRole("checkbox", { name: /Old Mac/ }));
+      await settledAfter(messenger, before);
+      expect(screen.queryByText(/could not be confirmed/)).toBeNull();
+      // Back on the original choices the cached preview is reused, so no new
+      // preview request is expected: wait for the rendered state instead.
+      fireEvent.click(screen.getByRole("checkbox", { name: /Old Mac/ }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      expect(await screen.findByText(/could not be confirmed/)).toBeTruthy();
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("button", { name: "Sync now" })
+            .hasAttribute("disabled"),
+        ).toBe(false),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      await waitFor(() => expect(startCalls(messenger)).toHaveLength(2));
+      const [firstCall, secondCall] = startCalls(messenger);
+      const first = profileSyncStartSchema.parse(firstCall.params);
+      const second = profileSyncStartSchema.parse(secondCall.params);
+      expect(second.selection).toEqual(first.selection);
+      expect(second.batchId).toBe(first.batchId);
     });
   });
 });

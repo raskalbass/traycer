@@ -80,7 +80,9 @@ export function ProfileSyncModal(props: {
     settledKey,
     preview,
     currentPreview,
+    previewMismatch,
     start,
+    startError,
     batch,
     sourceName,
     canStart,
@@ -158,7 +160,8 @@ export function ProfileSyncModal(props: {
               preview={preview}
               selectionReady={selection !== null && selectionKey === settledKey}
               checking={preview.isFetching || selectionKey !== settledKey}
-              startError={start.error}
+              startError={startError}
+              previewMismatch={previewMismatch}
               nothingStarted={nothingStarted}
               batches={list.data?.batches ?? []}
               onViewRun={setBatchId}
@@ -351,6 +354,7 @@ interface SelectionContentProps {
   readonly selectionReady: boolean;
   readonly checking: boolean;
   readonly startError: HostRpcError | null;
+  readonly previewMismatch: boolean;
   readonly nothingStarted: boolean;
   readonly batches: readonly ProfileSyncBatch[];
   readonly onViewRun: (id: string) => void;
@@ -368,6 +372,7 @@ function ProfileSyncSelectionContent({
   selectionReady,
   checking,
   startError,
+  previewMismatch,
   nothingStarted,
   batches,
   onViewRun,
@@ -376,6 +381,11 @@ function ProfileSyncSelectionContent({
   const canCheck = selectionReady && !preview.isFetching;
   return (
     <>
+      {previewMismatch ? (
+        <p role="alert" className="text-ui-xs text-destructive">
+          The device returned a different selection. Check again.
+        </p>
+      ) : null}
       <ProfileSyncProviderPicker
         providers={providers}
         selected={selected}
@@ -421,9 +431,9 @@ function ProfileSyncSelectionContent({
           <h3 className="text-ui-xs font-medium text-muted-foreground">
             Recent runs
           </h3>
-          {batches
-            .slice(-5)
-            .reverse()
+          {[...batches]
+            .sort((left, right) => right.createdAt - left.createdAt)
+            .slice(0, 5)
             .map((b) => (
               <Button
                 key={b.batchId}
@@ -557,12 +567,14 @@ interface SyncModalModel {
   readonly settledKey: string;
   readonly preview: UseQueryResult<ProfileSyncPreview, HostRpcError>;
   readonly currentPreview: ProfileSyncPreview | null;
+  readonly previewMismatch: boolean;
   readonly start: UseMutationResult<
     ProfileSyncBatch,
     HostRpcError,
     RequestOfMethod<HostRpcRegistry, "providers.profileCopy.sync.start">
   >;
   readonly batch: ProfileSyncBatch | null;
+  readonly startError: HostRpcError | null;
   readonly sourceName: string;
   readonly canStart: boolean;
   readonly selectionTooLarge: boolean;
@@ -616,9 +628,17 @@ function useProfileSyncModalState(props: {
       ? selection
       : null,
   );
-  const currentPreview =
-    preview.isSuccess && selectionKey === settledKey ? preview.data : null;
+  const { currentPreview, previewMismatch } = syncPreviewForSelection(
+    preview,
+    selection,
+    selectionKey === settledKey,
+  );
   const start = useProfileSyncStart(sourceHostId);
+  const startError =
+    start.variables !== undefined &&
+    JSON.stringify(start.variables.selection) === selectionKey
+      ? start.error
+      : null;
   const batch =
     list.data?.batches.find((b) => b.batchId === batchId) ??
     (start.data?.batchId === batchId ? start.data : null);
@@ -631,12 +651,9 @@ function useProfileSyncModalState(props: {
     !preview.isFetching &&
     !start.isPending;
   const run = (): void => {
-    if (currentPreview === null) return;
+    if (currentPreview === null || selection === null) return;
     setEmptyStartSelection(null);
-    const requestKey = JSON.stringify([
-      currentPreview.selection,
-      currentPreview.revision,
-    ]);
+    const requestKey = JSON.stringify([selection, currentPreview.revision]);
     let id = requests.current.get(requestKey);
     if (id === undefined) {
       id = crypto.randomUUID();
@@ -644,7 +661,7 @@ function useProfileSyncModalState(props: {
     }
     start.mutate(
       {
-        selection: currentPreview.selection,
+        selection,
         revision: currentPreview.revision,
         batchId: id,
       },
@@ -680,7 +697,9 @@ function useProfileSyncModalState(props: {
     settledKey,
     preview,
     currentPreview,
+    previewMismatch,
     start,
+    startError,
     batch,
     sourceName,
     canStart,
@@ -688,6 +707,43 @@ function useProfileSyncModalState(props: {
     nothingStarted: emptyStartSelection === selectionKey,
     run,
   };
+}
+
+function syncPreviewForSelection(
+  preview: UseQueryResult<ProfileSyncPreview, HostRpcError>,
+  selection: ProfileSyncSelection | null,
+  settled: boolean,
+): { currentPreview: ProfileSyncPreview | null; previewMismatch: boolean } {
+  if (!settled || !preview.isSuccess || selection === null)
+    return { currentPreview: null, previewMismatch: false };
+  const previewMismatch = !sameSyncSelection(selection, preview.data.selection);
+  return {
+    currentPreview: previewMismatch ? null : preview.data,
+    previewMismatch,
+  };
+}
+
+function sameSyncSelection(
+  left: ProfileSyncSelection,
+  right: ProfileSyncSelection,
+): boolean {
+  const sameScope =
+    left.scope.kind === "all"
+      ? right.scope.kind === "all"
+      : right.scope.kind === "selected" &&
+        sameSelectedIds(left.scope.providers, right.scope.providers);
+  return (
+    left.sourceHostId === right.sourceHostId &&
+    sameScope &&
+    sameSelectedIds(left.destinationHostIds, right.destinationHostIds)
+  );
+}
+
+function sameSelectedIds(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.length === right.length && left.every((id) => right.includes(id));
 }
 
 function selectedCatalogProfiles(
