@@ -7,6 +7,7 @@ import {
   useRef,
 } from "react";
 import { v4 as uuidv4 } from "uuid";
+import type { GuiHarnessId } from "@traycer/protocol/host/agent/shared";
 import type { ChatRunSettings } from "@traycer/protocol/persistence/epic/schemas";
 import {
   subagentCardName,
@@ -17,7 +18,10 @@ import { useEpicContinueSubagent } from "@/hooks/epic/use-epic-continue-subagent
 import { useEpicTileNavigation } from "@/hooks/epic/use-epic-tile-navigation";
 import { useHostSupportsMethod } from "@/hooks/host/use-host-supports-method";
 import { tileIntent } from "@/lib/canvas/tile-open/intent";
-import type { ChatMessage as ChatMessageModel } from "@/stores/composer/chat-store";
+import type {
+  ChatMessage as ChatMessageModel,
+  SubagentSegment,
+} from "@/stores/composer/chat-store";
 
 /**
  * "Continue as chat" for the subagent whose conversation is open: the host
@@ -32,6 +36,23 @@ export interface SubagentContinueAsChat {
    * conversation is still being written, so there is nothing whole to copy.
    */
   readonly isPending: boolean;
+}
+
+/** The open card and the harness of the assistant turn it sits in. */
+function openSubagentCard(
+  messages: ReadonlyArray<ChatMessageModel>,
+  openId: string | null,
+): {
+  readonly card: SubagentSegment;
+  readonly provider: GuiHarnessId | null;
+} | null {
+  if (openId === null) return null;
+  for (const message of messages) {
+    const card = subagentCardPath([message], openId)?.at(-1);
+    if (card === undefined) continue;
+    return { card, provider: message.assistantMeta?.provider ?? null };
+  }
+  return null;
 }
 
 /**
@@ -70,19 +91,22 @@ export function useSubagentContinueAsChat(
   args: UseSubagentContinueAsChatArgs,
 ): SubagentContinueAsChat | null {
   const { chatId, drillIn, epicId, hostId, viewTabId } = args;
-  const harnessId = args.settings?.harnessId ?? null;
   const canAct = args.canAct && args.isLiveSession;
   const { close, openId } = drillIn;
   const hostSupported = useHostSupportsMethod(hostId, "epic.continueSubagent");
   const { isPending: requestPending, mutate } = useEpicContinueSubagent();
   const { openTile } = useEpicTileNavigation();
-  const card = useMemo(
-    () =>
-      openId === null
-        ? null
-        : (subagentCardPath(args.messages, openId)?.at(-1) ?? null),
+  const owner = useMemo(
+    () => openSubagentCard(args.messages, openId),
     [args.messages, openId],
   );
+  const card = owner?.card ?? null;
+  // The harness that RAN the subagent: the turn the card sits in. A chat can
+  // change harness between turns, and its settings name the next turn's - so
+  // they would hide the control on a finished Codex card after a switch away
+  // and offer it on a card the host then refuses. The settings answer only
+  // for a turn that recorded no provider.
+  const harnessId = owner?.provider ?? args.settings?.harnessId ?? null;
   // Values, not the card: it is a new object on every streamed token.
   const cardName = card === null ? null : subagentCardName(card);
   const isStreaming = card?.isStreaming === true;

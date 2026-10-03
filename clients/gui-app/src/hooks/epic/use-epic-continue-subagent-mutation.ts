@@ -1,5 +1,8 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { ContinueSubagentRefusalReason } from "@traycer/protocol/host/epic/unary-schemas";
+import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
+import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { toastFromHostError } from "@/lib/host-error-toast";
@@ -18,6 +21,10 @@ const REFUSAL_COPY: Record<ContinueSubagentRefusalReason, string> = {
   creation_failed: "Couldn't create the chat.",
 };
 
+interface ContinueSubagentMutationContext {
+  readonly hostId: string;
+}
+
 /**
  * Mutation hook for `epic.continueSubagent`: one native subagent's
  * conversation carried on as a chat of its own.
@@ -30,17 +37,35 @@ const REFUSAL_COPY: Record<ContinueSubagentRefusalReason, string> = {
  */
 export function useEpicContinueSubagent() {
   const client = useTabHostClient();
+  const hostId = useTabHostId();
+  const queryClient = useQueryClient();
   return useHostMutation({
     client,
     method: "epic.continueSubagent",
     mapVariables: (variables) => variables,
     options: {
       mutationKey: epicMutationKeys.continueSubagent(),
-      onSuccess: (response) => {
-        if (response.kind !== "refused") return;
-        toast.error(REFUSAL_COPY[response.reason], {
-          description: response.detail.length > 0 ? response.detail : undefined,
-        });
+      // The host the request is SENT to, captured before it goes: the answer
+      // is about that host's registry whatever the tab does meanwhile.
+      onMutate: (): ContinueSubagentMutationContext => ({ hostId }),
+      onSuccess: (
+        response,
+        _variables,
+        ctx: ContinueSubagentMutationContext,
+      ) => {
+        if (response.kind === "refused") {
+          toast.error(REFUSAL_COPY[response.reason], {
+            description:
+              response.detail.length > 0 ? response.detail : undefined,
+          });
+          return;
+        }
+        // The chat landed in the host's chat database and in nothing this
+        // renderer listens to. A tile for it waits on its record, so without
+        // this re-read it sits on its loading state until a poll delivers
+        // one. `existing` too: the first request's answer may never have
+        // reached this renderer.
+        invalidateEpicChatRecords(queryClient, ctx.hostId);
       },
       onError: (error) => {
         toastFromHostError(error, "Couldn't continue this subagent as a chat.");

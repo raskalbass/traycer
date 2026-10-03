@@ -167,6 +167,69 @@ describe("useSubagentContinueAsChat", () => {
     });
   });
 
+  describe("which harness decides (the owning turn's provider, else settings)", () => {
+    function turn(
+      index: number,
+      provider: ChatRunSettings["harnessId"] | null,
+      segment: SubagentSegment,
+    ): ChatMessageModel {
+      return {
+        ...makeMessage(index, "assistant"),
+        segments: [segment],
+        assistantMeta:
+          provider === null
+            ? null
+            : {
+                provider,
+                providerLabel: provider,
+                profileLabel: null,
+                envCredentialVar: null,
+                modelLabel: null,
+                reasoningEffort: null,
+                reasoningEffortLabel: null,
+                serviceTier: null,
+                costUsd: null,
+              },
+      };
+    }
+
+    it("offers a card whose turn ran on codex although settings now name opencode", () => {
+      const messages = [turn(1, "codex", card("card-1", null))];
+      const { result } = render({ messages, settings: settings("opencode") });
+      expect(result.current).not.toBeNull();
+    });
+
+    it("refuses a card whose turn ran on opencode although settings now name claude", () => {
+      const messages = [turn(1, "opencode", card("card-1", null))];
+      const { result } = render({ messages, settings: settings("claude") });
+      expect(result.current).toBeNull();
+    });
+
+    it("falls back to settings when the turn recorded no provider", () => {
+      const messages = [turn(1, null, card("card-1", null))];
+      expect(
+        render({ messages, settings: settings("claude") }).result.current,
+      ).not.toBeNull();
+      expect(render({ messages, settings: null }).result.current).toBeNull();
+    });
+
+    it("judges each card by its OWN turn's provider", () => {
+      const messages = [
+        turn(1, "codex", card("card-1", null)),
+        turn(2, "opencode", card("card-2", null)),
+      ];
+      const settingsNow = settings("claude");
+      expect(
+        render({ messages, openId: "card-1", settings: settingsNow }).result
+          .current,
+      ).not.toBeNull();
+      expect(
+        render({ messages, openId: "card-2", settings: settingsNow }).result
+          .current,
+      ).toBeNull();
+    });
+  });
+
   describe("not offered", () => {
     it("with no card open", () => {
       expect(render({ openId: null }).result.current).toBeNull();

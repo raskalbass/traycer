@@ -7,15 +7,20 @@ import type { ContinueSubagentResponse } from "@traycer/protocol/host/epic/unary
 const toastError = vi.hoisted(() => vi.fn());
 const toastFromHostError = vi.hoisted(() => vi.fn());
 const request = vi.hoisted(() => vi.fn());
+const tabHost = vi.hoisted(() => ({ hostId: "host-tab" }));
 
 vi.mock("sonner", () => ({ toast: { error: toastError } }));
 vi.mock("@/lib/host-error-toast", () => ({ toastFromHostError }));
+vi.mock("@/components/epic-canvas/hooks/use-tab-host-id", () => ({
+  useTabHostId: () => tabHost.hostId,
+}));
 vi.mock("@/hooks/host/use-tab-host-client", () => ({
   useTabHostClient: () => ({ request }),
 }));
 
 import { useEpicContinueSubagent } from "@/hooks/epic/use-epic-continue-subagent-mutation";
 import { epicMutationKeys } from "@/lib/query-keys/epic-mutation-keys";
+import { hostQueryKeys } from "@/lib/query-keys/host-query-keys";
 
 const VARIABLES = { epicId: "epic-1", chatId: "chat-1", blockId: "block-1" };
 
@@ -42,6 +47,24 @@ function setup() {
   return { ...hook, queryClient };
 }
 
+/** A chat-record list entry as the real hook keys it: the scope plus a sub-key. */
+function recordsKey(hostId: string) {
+  return [
+    ...hostQueryKeys.methodScope(hostId, "epic.listChatRecords"),
+    { epicId: "epic-1" },
+  ] as const;
+}
+
+function seedRecords(queryClient: QueryClient, hostIds: ReadonlyArray<string>) {
+  for (const hostId of hostIds) {
+    queryClient.setQueryData(recordsKey(hostId), []);
+  }
+}
+
+function isInvalidated(queryClient: QueryClient, hostId: string): boolean {
+  return queryClient.getQueryState(recordsKey(hostId))?.isInvalidated === true;
+}
+
 async function run(response: ContinueSubagentResponse): Promise<void> {
   request.mockResolvedValue(response);
   const { result } = setup();
@@ -55,6 +78,75 @@ describe("useEpicContinueSubagent", () => {
     toastError.mockReset();
     toastFromHostError.mockReset();
     request.mockReset();
+    tabHost.hostId = "host-tab";
+  });
+
+  describe("chat-record invalidation", () => {
+    it.each(["created", "existing"] as const)(
+      "invalidates the tab host's chat records on %s and no other host's",
+      async (kind) => {
+        request.mockResolvedValue({ kind, epicId: "epic-1", chatId: "chat-2" });
+        const { result, queryClient } = setup();
+        seedRecords(queryClient, ["host-tab", "host-other"]);
+        await act(async () => {
+          await result.current.mutateAsync(VARIABLES);
+        });
+        expect(isInvalidated(queryClient, "host-tab")).toBe(true);
+        expect(isInvalidated(queryClient, "host-other")).toBe(false);
+      },
+    );
+
+    it("invalidates nothing on a refusal", async () => {
+      request.mockResolvedValue({
+        kind: "refused",
+        reason: "still_running",
+        detail: "",
+      });
+      const { result, queryClient } = setup();
+      seedRecords(queryClient, ["host-tab"]);
+      await act(async () => {
+        await result.current.mutateAsync(VARIABLES);
+      });
+      expect(isInvalidated(queryClient, "host-tab")).toBe(false);
+    });
+
+    it("invalidates nothing when the request is rejected", async () => {
+      request.mockRejectedValue(new Error("boom"));
+      const { result, queryClient } = setup();
+      seedRecords(queryClient, ["host-tab"]);
+      await act(async () => {
+        await result.current.mutateAsync(VARIABLES).catch(() => undefined);
+      });
+      expect(isInvalidated(queryClient, "host-tab")).toBe(false);
+    });
+
+    it("invalidates the host the request was sent from, not the tab's host now", async () => {
+      let deliver: (response: ContinueSubagentResponse) => void = () => {
+        throw new Error("no request was made");
+      };
+      request.mockReturnValue(
+        new Promise<ContinueSubagentResponse>((resolve) => {
+          deliver = resolve;
+        }),
+      );
+      const { result, rerender, queryClient } = setup();
+      seedRecords(queryClient, ["host-tab", "host-moved"]);
+      let settled: Promise<unknown> = Promise.resolve();
+      act(() => {
+        settled = result.current.mutateAsync(VARIABLES);
+      });
+      await waitFor(() => {
+        expect(request).toHaveBeenCalledTimes(1);
+      });
+      tabHost.hostId = "host-moved";
+      rerender();
+      await act(async () => {
+        deliver({ kind: "created", epicId: "epic-1", chatId: "chat-2" });
+        await settled;
+      });
+      expect(isInvalidated(queryClient, "host-tab")).toBe(true);
+      expect(isInvalidated(queryClient, "host-moved")).toBe(false);
+    });
   });
 
   it("sends epic.continueSubagent with exactly the three ids to the tab host client", async () => {
