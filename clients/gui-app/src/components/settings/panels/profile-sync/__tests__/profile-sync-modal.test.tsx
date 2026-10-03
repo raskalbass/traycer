@@ -6,12 +6,19 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
-import type { ProfileSyncRule } from "@traycer/protocol/host/profile-sync-schemas";
+import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
+import type {
+  ProfileSyncBatch,
+  ProfileSyncItem,
+  ProfileSyncRule,
+  ProfileSyncSelection,
+} from "@traycer/protocol/host/profile-sync-schemas";
 import { hostRpcSchedulingPolicy } from "@/lib/host-rpc-policy/host-method-policy-table";
 import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -98,37 +105,69 @@ function resetStores(): void {
   clearProfileCopyObservations();
 }
 
+interface MountOptions {
+  readonly rules: readonly ProfileSyncRule[];
+  readonly providers: readonly ProviderCliState[];
+  readonly previewItems: (
+    selection: ProfileSyncSelection,
+  ) => readonly ProfileSyncItem[];
+  readonly startItems: (
+    selection: ProfileSyncSelection,
+  ) => readonly ProfileSyncItem[];
+}
+
+function defaultProviders(): readonly ProviderCliState[] {
+  return [
+    claudeProviderState([managedProfile(SOURCE_PROFILE_ID, "Work")]),
+    {
+      ...claudeProviderState([
+        managedProfile("55555555-5555-4555-8555-555555555555", "Personal"),
+      ]),
+      providerId: "codex",
+    },
+  ];
+}
+
+function noItems(): readonly ProfileSyncItem[] {
+  return [];
+}
+
 function mount(
   rules: readonly ProfileSyncRule[],
 ): MockHostMessenger<HostRpcRegistry> {
+  return mountWith({
+    rules,
+    providers: defaultProviders(),
+    previewItems: noItems,
+    startItems: noItems,
+  });
+}
+
+function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
   const queryClient = createAppQueryClient();
   const messenger = new MockHostMessenger<HostRpcRegistry>({
     registry: hostRpcRegistry,
     requestId: () => "req-sync",
     handlers: {
       "providers.list": () => ({
-        providers: [
-          claudeProviderState([managedProfile(SOURCE_PROFILE_ID, "Work")]),
-          {
-            ...claudeProviderState([
-              managedProfile(
-                "55555555-5555-4555-8555-555555555555",
-                "Personal",
-              ),
-            ]),
-            providerId: "codex",
-          },
-        ],
+        providers: [...options.providers],
         native: null,
       }),
       "providers.profileCopy.sync.list": () => ({
         batches: [],
-        rules: [...rules],
+        rules: [...options.rules],
       }),
       "providers.profileCopy.sync.preview": (params) => ({
         selection: params,
         revision: PREVIEW_REVISION,
-        items: [],
+        items: [...options.previewItems(params)],
+      }),
+      "providers.profileCopy.sync.start": (params): ProfileSyncBatch => ({
+        batchId: params.batchId,
+        sourceHostId: params.selection.sourceHostId,
+        createdAt: 1,
+        automatic: false,
+        items: [...options.startItems(params.selection)],
       }),
     },
   });
@@ -290,5 +329,299 @@ describe("ProfileSyncModal", () => {
       name: /All supported providers, including future providers/,
     });
     expect(all.getAttribute("aria-checked")).toBe("false");
+  });
+});
+
+const STAMP = "c".repeat(64);
+const CATALOG_PROFILE_A = "11111111-aaaa-4aaa-8aaa-111111111111";
+const CATALOG_PROFILE_B = "22222222-bbbb-4bbb-8bbb-222222222222";
+
+type PreviewDestination = NonNullable<
+  ProfileSyncItem["preview"]
+>["destinations"][number];
+
+function previewDestination(
+  destinationHostId: string,
+  disposition: "automatic" | "already-present",
+): PreviewDestination {
+  return {
+    destinationHostId,
+    feasibility: {
+      automatic: {
+        status: "available" as const,
+        admissionRevision: "b".repeat(64),
+      },
+      manual: {
+        status: "unavailable" as const,
+        reason: "manual-login-unavailable" as const,
+      },
+    },
+    disposition,
+    reason: null,
+    existingProfileId: null,
+    destinationProviderEnabled: true,
+  };
+}
+
+function syncItem(
+  index: number,
+  destinationHostId: string,
+  state: ProfileSyncItem["state"],
+  destinations: PreviewDestination[],
+): ProfileSyncItem {
+  return {
+    providerId: "claude",
+    sourceProfileId: SOURCE_PROFILE_ID,
+    name: `Profile ${String(index)}`,
+    destinationHostId,
+    operationId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    preview: {
+      source: {
+        sourceHostId: SOURCE_HOST_ID,
+        sourceProfileId: SOURCE_PROFILE_ID,
+        providerId: "claude",
+      },
+      previewRevision: PREVIEW_REVISION,
+      destinations,
+    },
+    outcome: null,
+    state,
+    sourceSettings: {
+      name: `Profile ${String(index)}`,
+      color: "#ef4444",
+      enabled: true,
+    },
+    sourceIdentityStamp: STAMP,
+    identityChanged: false,
+    destinationSettings: null,
+    baseline: null,
+  };
+}
+
+function startCalls(messenger: MockHostMessenger<HostRpcRegistry>) {
+  return messenger.calls.filter(
+    (call) => call.method === "providers.profileCopy.sync.start",
+  );
+}
+
+async function pickDestinations(names: readonly RegExp[]): Promise<void> {
+  for (const name of names) {
+    fireEvent.click(await screen.findByRole("checkbox", { name }));
+  }
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+  });
+}
+
+describe("ProfileSyncModal review regressions", () => {
+  beforeEach(() => {
+    resetStores();
+    harness.spine = null;
+    harness.hosts = [
+      hostOption(SOURCE_HOST_ID, "Studio Mac", true),
+      hostOption(DEST_HOST_ID, "Linux box", false),
+      hostOption(DEST_HOST_TWO_ID, "Old Mac", false),
+    ];
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    cleanup();
+    resetStores();
+    harness.spine = null;
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("describes each destination from its own preview row and leaves already-present out of the review count", async () => {
+    mountWith({
+      rules: [],
+      providers: defaultProviders(),
+      previewItems: () => [
+        // The matching destination is second: reading the first row would say
+        // "already has this account" for a profile that WILL be copied.
+        syncItem(1, DEST_HOST_ID, "ready", [
+          previewDestination(DEST_HOST_TWO_ID, "already-present"),
+          previewDestination(DEST_HOST_ID, "automatic"),
+        ]),
+        syncItem(2, DEST_HOST_TWO_ID, "already-present", [
+          previewDestination(DEST_HOST_TWO_ID, "already-present"),
+        ]),
+        syncItem(3, DEST_HOST_TWO_ID, "ready", [
+          previewDestination(DEST_HOST_TWO_ID, "automatic"),
+        ]),
+      ],
+      startItems: noItems,
+    });
+    openSync(null);
+    await pickDestinations([/Linux box/, /Old Mac/]);
+    const summaries = await screen.findAllByText(/\d+ profiles ·/);
+    expect(summaries).toHaveLength(2);
+    expect(summaries[0]?.textContent).toMatch(/1 profiles · Ready/);
+    // Two rows, one already present: nothing here needs review.
+    expect(summaries[1]?.textContent).toMatch(/2 profiles · Ready/);
+    expect(summaries[1]?.textContent).not.toMatch(/need review/);
+    const firstDetails = summaries[0].closest("details");
+    if (firstDetails === null)
+      throw new Error("expected the Linux box details");
+    expect(within(firstDetails).queryByText(/already has this/)).toBeNull();
+  });
+
+  it("an empty start answer keeps the selection, says nothing was started and refetches the preview", async () => {
+    const messenger = mountWith({
+      rules: [],
+      providers: defaultProviders(),
+      previewItems: () => [
+        syncItem(1, DEST_HOST_ID, "ready", [
+          previewDestination(DEST_HOST_ID, "automatic"),
+        ]),
+      ],
+      startItems: noItems,
+    });
+    openSync(null);
+    await pickDestinations([/Linux box/]);
+    await screen.findByText("1 profile transfers selected");
+    const before = previewCalls(messenger).length;
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    expect(
+      await screen.findByText(
+        "Nothing was started. Check the selection and try again.",
+      ),
+    ).toBeTruthy();
+    expect(startCalls(messenger)).toHaveLength(1);
+    // Still the selection view: no results screen, the destination stays chosen.
+    expect(screen.queryByRole("button", { name: /Back/ })).toBeNull();
+    expect(
+      screen
+        .getByRole("checkbox", { name: /Linux box/ })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    await waitFor(() =>
+      expect(previewCalls(messenger).length).toBeGreaterThan(before),
+    );
+  });
+
+  describe("source catalog limits the selectable providers", () => {
+    function catalogWithUnsupported(): readonly ProviderCliState[] {
+      return [
+        claudeProviderState([
+          managedProfile(CATALOG_PROFILE_A, "Work"),
+          managedProfile(CATALOG_PROFILE_B, "Personal"),
+        ]),
+        {
+          ...claudeProviderState([
+            managedProfile("55555555-5555-4555-8555-555555555555", "Main"),
+          ]),
+          providerId: "codex",
+        },
+        {
+          ...claudeProviderState([
+            managedProfile("66666666-6666-4666-8666-666666666666", "One"),
+            managedProfile("77777777-7777-4777-8777-777777777777", "Two"),
+            managedProfile("88888888-8888-4888-8888-888888888888", "Three"),
+          ]),
+          providerId: "opencode",
+        },
+      ];
+    }
+
+    it("starts with only the catalog's transferable providers selected, with the matching count", async () => {
+      mountWith({
+        rules: [],
+        providers: catalogWithUnsupported(),
+        previewItems: noItems,
+        startItems: noItems,
+      });
+      openSync(null);
+      const trigger = await screen.findByRole("button", {
+        name: "Choose providers",
+      });
+      await waitFor(() => expect(trigger.textContent).toMatch(/Claude/));
+      expect(trigger.textContent).toMatch(/Codex/);
+      expect(trigger.textContent).not.toMatch(/Grok|Antigravity|Gemini|Open/);
+      // Three profiles across the two (the opencode ones cannot be transferred).
+      expect(screen.getByText(/2 selected/).textContent).toMatch(/3 profiles/);
+    });
+
+    it("offers only those providers, and Select all / Clear stay inside them", async () => {
+      mountWith({
+        rules: [],
+        providers: catalogWithUnsupported(),
+        previewItems: noItems,
+        startItems: noItems,
+      });
+      openSync(null);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Choose providers" }),
+      );
+      expect(await screen.findAllByRole("option")).toHaveLength(2);
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+      expect(screen.getByText(/0 selected/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+      expect(screen.getByText(/2 selected/).textContent).toMatch(/3 profiles/);
+    });
+
+    it("sends only the catalog providers in the preview and the start", async () => {
+      const messenger = mountWith({
+        rules: [],
+        providers: catalogWithUnsupported(),
+        previewItems: () => [
+          syncItem(1, DEST_HOST_ID, "ready", [
+            previewDestination(DEST_HOST_ID, "automatic"),
+          ]),
+        ],
+        startItems: noItems,
+      });
+      openSync(null);
+      await screen.findByRole("button", { name: "Choose providers" });
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      expect(previewCalls(messenger).at(-1)?.params).toMatchObject({
+        scope: { kind: "selected", providers: ["claude", "codex"] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      await waitFor(() => expect(startCalls(messenger)).toHaveLength(1));
+      expect(startCalls(messenger)[0]?.params).toMatchObject({
+        selection: {
+          scope: { kind: "selected", providers: ["claude", "codex"] },
+        },
+      });
+    });
+
+    it("a new automatic rule defaults to the same catalog providers", async () => {
+      mountWith({
+        rules: [],
+        providers: catalogWithUnsupported(),
+        previewItems: noItems,
+        startItems: noItems,
+      });
+      openSync(null);
+      fireEvent.mouseDown(
+        await screen.findByRole("tab", { name: /Automatic sync/ }),
+        {
+          button: 0,
+        },
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Add device" }),
+      );
+      const trigger = await screen.findByRole("button", {
+        name: "Choose providers",
+      });
+      await waitFor(() => expect(trigger.textContent).toMatch(/Claude/));
+      expect(trigger.textContent).toMatch(/Codex/);
+      expect(trigger.textContent).not.toMatch(/Grok|Antigravity|Gemini|Open/);
+      fireEvent.click(trigger);
+      expect(await screen.findAllByRole("option")).toHaveLength(2);
+    });
   });
 });

@@ -36,6 +36,7 @@ import { useProfileCopyFlowStore } from "@/stores/settings/profile-copy-flow-sto
 import { useDebouncedValue } from "@/hooks/ui/use-debounced-value";
 import {
   PROFILE_COPY_PROVIDERS,
+  profileCopyWireProvider,
   profileCopyPreviewRecord,
   type ProfileCopyWireProvider,
 } from "@/lib/profile-copy/profile-copy-model";
@@ -82,6 +83,7 @@ export function ProfileSyncModal(props: {
     batch,
     sourceName,
     canStart,
+    nothingStarted,
     run,
   } = useProfileSyncModalState(props);
   return (
@@ -151,6 +153,7 @@ export function ProfileSyncModal(props: {
               selectionReady={selection !== null && selectionKey === settledKey}
               checking={preview.isFetching || selectionKey !== settledKey}
               startError={start.error}
+              nothingStarted={nothingStarted}
               batches={list.data?.batches ?? []}
               onViewRun={setBatchId}
             />
@@ -271,7 +274,7 @@ function ProfileSyncPreviewDetails(props: {
     (i) => i.destinationHostId === props.destinationId,
   );
   const attention = items.filter(
-    (i) => i.state !== "ready" && i.state !== "synced",
+    (i) => !["ready", "synced", "already-present"].includes(i.state),
   ).length;
   return (
     <details className="mt-2 text-ui-xs">
@@ -281,7 +284,9 @@ function ProfileSyncPreviewDetails(props: {
       </summary>
       <div className="mt-2 flex flex-col gap-2">
         {items.map((i) => {
-          const preview = i.preview?.destinations[0];
+          const preview = i.preview?.destinations.find(
+            (d) => d.destinationHostId === i.destinationHostId,
+          );
           const presentation =
             preview === undefined || i.outcome !== null
               ? null
@@ -333,6 +338,7 @@ interface SelectionContentProps {
   readonly selectionReady: boolean;
   readonly checking: boolean;
   readonly startError: HostRpcError | null;
+  readonly nothingStarted: boolean;
   readonly batches: readonly ProfileSyncBatch[];
   readonly onViewRun: (id: string) => void;
 }
@@ -349,6 +355,7 @@ function ProfileSyncSelectionContent({
   selectionReady,
   checking,
   startError,
+  nothingStarted,
   batches,
   onViewRun,
 }: SelectionContentProps): ReactNode {
@@ -389,6 +396,11 @@ function ProfileSyncSelectionContent({
           {startError.code === "E_INVALID_ARGUMENT"
             ? "Profiles changed. Check again before syncing."
             : "The start could not be confirmed. Check recent runs or retry this same selection; it will not create a second transfer."}
+        </p>
+      ) : null}
+      {nothingStarted ? (
+        <p role="status" className="text-ui-sm text-muted-foreground">
+          Nothing was started. Check the selection and try again.
         </p>
       ) : null}
       {batches.length ? (
@@ -540,6 +552,7 @@ interface SyncModalModel {
   readonly batch: ProfileSyncBatch | null;
   readonly sourceName: string;
   readonly canStart: boolean;
+  readonly nothingStarted: boolean;
   readonly run: () => void;
 }
 function useProfileSyncModalState(props: {
@@ -549,13 +562,16 @@ function useProfileSyncModalState(props: {
 }): SyncModalModel {
   const { sourceHostId, hosts } = props;
   const [tab, setTab] = useState("now");
-  const [selected, setSelected] = useState<ProfileCopyWireProvider[]>(
+  const [chosenProviders, setSelected] = useState<ProfileCopyWireProvider[]>(
     props.initialProvider === null
       ? [...PROFILE_COPY_PROVIDERS]
       : [props.initialProvider],
   );
   const [destinations, setDestinations] = useState<string[]>([]);
   const [batchId, setBatchId] = useState<string | null>(null);
+  const [emptyStartSelection, setEmptyStartSelection] = useState<string | null>(
+    null,
+  );
   const requests = useRef(new Map<string, string>());
   const close = useProfileCopyFlowStore((s) => s.close);
   const catalog = useProvidersListForClient(
@@ -563,6 +579,11 @@ function useProfileSyncModalState(props: {
     { enabled: true, subscribed: true },
   );
   const list = useProfileSyncList(sourceHostId);
+  const selected = chosenProviders.filter((provider) =>
+    catalog.data?.providers.some(
+      (p) => profileCopyWireProvider(p.providerId) === provider,
+    ),
+  );
   const selection: ProfileSyncSelection | null =
     selected.length > 0 && destinations.length > 0
       ? {
@@ -595,6 +616,7 @@ function useProfileSyncModalState(props: {
     !start.isPending;
   const run = (): void => {
     if (currentPreview === null) return;
+    setEmptyStartSelection(null);
     let id = requests.current.get(currentPreview.revision);
     if (id === undefined) {
       id = crypto.randomUUID();
@@ -606,7 +628,17 @@ function useProfileSyncModalState(props: {
         revision: currentPreview.revision,
         batchId: id,
       },
-      { onSuccess: (result) => setBatchId(result.batchId) },
+      {
+        onSuccess: (result) => {
+          if (result.items.length === 0) {
+            requests.current.delete(currentPreview.revision);
+            setEmptyStartSelection(selectionKey);
+            void preview.refetch();
+            return;
+          }
+          setBatchId(result.batchId);
+        },
+      },
     );
   };
   return {
@@ -632,6 +664,7 @@ function useProfileSyncModalState(props: {
     batch,
     sourceName,
     canStart,
+    nothingStarted: emptyStartSelection === selectionKey,
     run,
   };
 }

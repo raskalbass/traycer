@@ -20,6 +20,7 @@ import {
 } from "@/hooks/providers/use-profile-sync";
 import {
   PROFILE_COPY_PROVIDERS,
+  profileCopyWireProvider,
   type ProfileCopyWireProvider,
 } from "@/lib/profile-copy/profile-copy-model";
 import {
@@ -219,11 +220,12 @@ function ProfileSyncRuleEditor(props: {
     props.rule?.destinationHostId ?? "",
   );
   const [all, setAll] = useState(props.rule?.scope.kind === "all");
-  const [selected, setSelected] = useState<ProfileCopyWireProvider[]>(
+  const [chosenProviders, setSelected] = useState<ProfileCopyWireProvider[]>(
     props.rule?.scope.kind === "selected"
       ? [...props.rule.scope.providers]
       : [...PROFILE_COPY_PROVIDERS],
   );
+  const selected = ruleProviders(props.rule, chosenProviders, props.providers);
   const save = useProfileSyncSaveRule(props.hostId);
   const scope: ProfileSyncScope = all
     ? { kind: "all" }
@@ -326,6 +328,19 @@ function ProfileSyncRuleEditor(props: {
         </Button>
       </div>
     </div>
+  );
+}
+
+function ruleProviders(
+  rule: ProfileSyncRule | null,
+  chosen: ProfileCopyWireProvider[],
+  providers: readonly ProviderCliState[],
+): ProfileCopyWireProvider[] {
+  // Preserve saved scopes, including providers that may return to the source.
+  // A new explicit scope defaults to providers currently in its catalog.
+  if (rule !== null) return chosen;
+  return chosen.filter((provider) =>
+    providers.some((p) => profileCopyWireProvider(p.providerId) === provider),
   );
 }
 

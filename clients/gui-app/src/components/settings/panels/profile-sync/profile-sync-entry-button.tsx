@@ -5,27 +5,25 @@ import { Button } from "@/components/ui/button";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { useHostMethodSupport } from "@/hooks/host/use-host-supports-method";
 import { useProfileCopyFlowStore } from "@/stores/settings/profile-copy-flow-store";
-import { profileCopyWireProvider } from "@/lib/profile-copy/profile-copy-model";
+import {
+  profileCopyWireProvider,
+  type ProfileCopyWireProvider,
+} from "@/lib/profile-copy/profile-copy-model";
 
 export function ProfileSyncEntryButton(props: {
   readonly hostId: string | null;
   readonly providerId: ProviderId;
 }): ReactNode {
-  return props.hostId === null ? null : (
-    <ProfileSyncAvailableEntry
-      hostId={props.hostId}
-      providerId={props.providerId}
-    />
+  const providerId = profileCopyWireProvider(props.providerId);
+  return props.hostId === null || providerId === null ? null : (
+    <ProfileSyncAvailableEntry hostId={props.hostId} providerId={providerId} />
   );
 }
 function ProfileSyncAvailableEntry(props: {
   readonly hostId: string;
-  readonly providerId: ProviderId;
+  readonly providerId: ProfileCopyWireProvider;
 }): ReactNode {
-  const supported = useHostMethodSupport(
-    props.hostId,
-    "providers.profileCopy.sync.preview",
-  );
+  const supported = useSourceSyncSupport(props.hostId);
   const open = useProfileCopyFlowStore((s) => s.open);
   let label = "Update Traycer on this device to sync profiles.";
   if (supported === true)
@@ -42,7 +40,7 @@ function ProfileSyncAvailableEntry(props: {
             open({
               kind: "sync",
               sourceHostId: props.hostId,
-              providerId: profileCopyWireProvider(props.providerId),
+              providerId: props.providerId,
             })
           }
         >
@@ -52,4 +50,34 @@ function ProfileSyncAvailableEntry(props: {
       </span>
     </TooltipWrapper>
   );
+}
+
+/** The shared modal exposes runs, rules, resolution and transfer retries. */
+function useSourceSyncSupport(hostId: string): boolean | null {
+  const preview = useHostMethodSupport(
+    hostId,
+    "providers.profileCopy.sync.preview",
+  );
+  const list = useHostMethodSupport(hostId, "providers.profileCopy.sync.list");
+  const start = useHostMethodSupport(
+    hostId,
+    "providers.profileCopy.sync.start",
+  );
+  const saveRule = useHostMethodSupport(
+    hostId,
+    "providers.profileCopy.sync.saveRule",
+  );
+  const stopRule = useHostMethodSupport(
+    hostId,
+    "providers.profileCopy.sync.stopRule",
+  );
+  const resolve = useHostMethodSupport(
+    hostId,
+    "providers.profileCopy.sync.resolve",
+  );
+  const retry = useHostMethodSupport(hostId, "providers.profileCopy.retry");
+  const answers = [preview, list, start, saveRule, stopRule, resolve, retry];
+  if (answers.some((answer) => answer === false)) return false;
+  if (answers.some((answer) => answer === null)) return null;
+  return true;
 }
