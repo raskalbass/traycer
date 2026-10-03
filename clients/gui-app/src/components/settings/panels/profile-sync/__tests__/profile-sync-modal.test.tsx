@@ -13,6 +13,7 @@ import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
+import { profileSyncStartSchema } from "@traycer/protocol/host/profile-sync-schemas";
 import type {
   ProfileSyncBatch,
   ProfileSyncItem,
@@ -508,6 +509,24 @@ describe("ProfileSyncModal review regressions", () => {
     await waitFor(() =>
       expect(previewCalls(messenger).length).toBeGreaterThan(before),
     );
+    // The refetch settled on the SAME preview revision. A retry must not reuse
+    // the batch id of the start that started nothing, or the host would replay
+    // that empty batch instead of starting the selection.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Sync now" })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    await waitFor(() => expect(startCalls(messenger)).toHaveLength(2));
+    const batchIds = startCalls(messenger).map(
+      (call) => profileSyncStartSchema.parse(call.params).batchId,
+    );
+    expect(batchIds[0]).toBeTruthy();
+    expect(batchIds[1]).toBeTruthy();
+    expect(batchIds[1]).not.toBe(batchIds[0]);
   });
 
   describe("source catalog limits the selectable providers", () => {
