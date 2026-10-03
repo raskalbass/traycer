@@ -385,7 +385,9 @@ function ProfileSyncSelectionContent({
   const sourceName = hosts.nameFor(sourceHostId);
   const canCheck = selectionReady && !preview.isFetching;
   const recentRuns = batches
-    .filter((batch) => batch.sourceHostId === sourceHostId)
+    .filter(
+      (batch) => batch.sourceHostId === sourceHostId && batch.items.length > 0,
+    )
     .sort((left, right) => right.createdAt - left.createdAt)
     .slice(0, 5);
   return (

@@ -130,6 +130,8 @@ let updateStarted: ((batch: ProfileSyncBatch) => ProfileSyncBatch) | null =
   null;
 let retryResult: "current" | "stale-revision" | "unavailable" = "current";
 let retryOutcome: ProfileCopyOutcome | null = null;
+let retryThrows = false;
+let resolveThrows = false;
 
 interface MountOptions {
   readonly rules: readonly ProfileSyncRule[];
@@ -152,6 +154,16 @@ function defaultProviders(): readonly ProviderCliState[] {
       providerId: "codex",
     },
   ];
+}
+
+/** A listed (not previewed) transfer: no nested preview, no outcome. */
+function listedItem(destinationHostId: string): ProfileSyncItem {
+  return {
+    ...syncItem(1, destinationHostId, "synced", [
+      previewDestination(destinationHostId, "automatic"),
+    ]),
+    preview: null,
+  };
 }
 
 function noItems(): readonly ProfileSyncItem[] {
@@ -228,17 +240,39 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
         lastStarted = answered;
         return answered;
       },
-      "providers.profileCopy.retry": () => ({
-        result: retryResult,
-        outcome: retryOutcome ?? profileCopyOutcome({}),
-      }),
-      "providers.profileCopy.sync.resolve": (params): ProfileSyncBatch => ({
-        batchId: params.batchId,
-        sourceHostId: params.sourceHostId,
-        createdAt: 1,
-        automatic: false,
-        items: [],
-      }),
+      "providers.profileCopy.retry": () => {
+        if (retryThrows) {
+          throw new HostRpcError({
+            code: "RPC_ERROR",
+            message: "retry unreachable",
+            requestId: "req-sync",
+            method: "providers.profileCopy.retry",
+            fatalDetails: null,
+          });
+        }
+        return {
+          result: retryResult,
+          outcome: retryOutcome ?? profileCopyOutcome({}),
+        };
+      },
+      "providers.profileCopy.sync.resolve": (params): ProfileSyncBatch => {
+        if (resolveThrows) {
+          throw new HostRpcError({
+            code: "RPC_ERROR",
+            message: "resolve unreachable",
+            requestId: "req-sync",
+            method: "providers.profileCopy.sync.resolve",
+            fatalDetails: null,
+          });
+        }
+        return {
+          batchId: params.batchId,
+          sourceHostId: params.sourceHostId,
+          createdAt: 1,
+          automatic: false,
+          items: [],
+        };
+      },
     },
   });
   const spine = new HostClient<HostRpcRegistry>({
@@ -496,6 +530,8 @@ describe("ProfileSyncModal review regressions", () => {
     updateStarted = null;
     retryResult = "current";
     retryOutcome = null;
+    retryThrows = false;
+    resolveThrows = false;
     resetStores();
     harness.spine = null;
     harness.hosts = [
@@ -1190,7 +1226,7 @@ describe("ProfileSyncModal review regressions", () => {
         sourceHostId: SOURCE_HOST_ID,
         createdAt: base + minute * 60_000,
         automatic: false,
-        items: [],
+        items: [listedItem(DEST_HOST_ID)],
       }));
       mount([]);
       openSync(null);
@@ -1521,7 +1557,7 @@ describe("ProfileSyncModal review regressions", () => {
         sourceHostId: SOURCE_HOST_ID,
         createdAt: minute * 60_000,
         automatic: false,
-        items: [],
+        items: [listedItem(DEST_HOST_ID)],
       }));
       listBatches = [
         ...listBatches,
@@ -1530,7 +1566,8 @@ describe("ProfileSyncModal review regressions", () => {
           sourceHostId: DEST_HOST_ID,
           createdAt: 9 * 60_000,
           automatic: false,
-          items: [],
+          // Belongs to another source, so its destination is a third device.
+          items: [listedItem(DEST_HOST_TWO_ID)],
         },
       ];
       mount([]);
@@ -1662,5 +1699,170 @@ describe("ProfileSyncModal review regressions", () => {
       expect(screen.queryByText(STALE_TEXT)).toBeNull();
       expect(screen.queryByText(UNAVAILABLE_TEXT)).toBeNull();
     });
+  });
+
+  describe("round 8: recent history and action errors", () => {
+    const REACH_ERROR = /Couldn't reach Studio Mac right now/;
+
+    function listed(minute: number, itemCount: number): ProfileSyncBatch {
+      return {
+        batchId: `00000000-0000-4000-8000-00000000${String(minute).padStart(4, "0")}`,
+        sourceHostId: SOURCE_HOST_ID,
+        createdAt: 1_700_000_000_000 + minute * 60_000,
+        automatic: false,
+        items: Array.from({ length: itemCount }, (_unused, index) => ({
+          ...syncItem(index + 1, DEST_HOST_ID, "synced", [
+            previewDestination(DEST_HOST_ID, "automatic"),
+          ]),
+          preview: null,
+        })),
+      };
+    }
+
+    it("picks the five newest NON-EMPTY runs, newest first", async () => {
+      listBatches = [
+        listed(1, 1),
+        listed(2, 1),
+        listed(3, 1),
+        listed(4, 1),
+        listed(5, 1),
+        listed(6, 0),
+        listed(7, 0),
+        listed(8, 0),
+      ];
+      mount([]);
+      openSync(null);
+      await screen.findByText("Recent runs");
+      const rows = screen
+        .getAllByRole("button", { name: /profile transfers/ })
+        .map((row) => row.textContent);
+      expect(rows).toHaveLength(5);
+      [5, 4, 3, 2, 1].forEach((minute, index) => {
+        expect(rows[index]).toContain(
+          new Date(1_700_000_000_000 + minute * 60_000).toLocaleString(),
+        );
+      });
+    });
+
+    it("hides the Recent runs heading when every listed run is empty", async () => {
+      listBatches = [listed(1, 0), listed(2, 0)];
+      mount([]);
+      openSync(null);
+      await screen.findByRole("checkbox", { name: /Linux box/ });
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/Loading profiles and sync history/),
+        ).toBeNull(),
+      );
+      expect(screen.queryByText("Recent runs")).toBeNull();
+    });
+
+    function quarantinedAt(
+      attemptId: string,
+      revision: number,
+    ): ProfileCopyOutcome {
+      return recordedOutcome({
+        attempt: profileCopyAttempt({
+          operationId: "00000000-0000-4000-8000-000000000001",
+          attemptId,
+        }),
+        revision,
+        state: "quarantined",
+      });
+    }
+
+    function actionItem(): ProfileSyncItem {
+      return {
+        ...syncItem(1, DEST_HOST_ID, "unconfirmed", []),
+        preview: null,
+        outcome: quarantinedAt(ATTEMPT_ID, 3),
+      };
+    }
+
+    async function startWithActions(): Promise<void> {
+      mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: () => [
+          syncItem(1, DEST_HOST_ID, "ready", [
+            previewDestination(DEST_HOST_ID, "automatic"),
+          ]),
+        ],
+        startItems: () => [actionItem()],
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    }
+
+    function advanceTo(
+      change: (item: ProfileSyncItem) => ProfileSyncItem,
+    ): Promise<void> {
+      updateStarted = (batch) => ({
+        ...batch,
+        items: batch.items.map(change),
+      });
+      return act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+    }
+
+    const actions: ReadonlyArray<readonly [string, string, () => void]> = [
+      [
+        "Check status",
+        "resolve",
+        () => {
+          resolveThrows = true;
+        },
+      ],
+      [
+        "Retry",
+        "retry",
+        () => {
+          retryThrows = true;
+        },
+      ],
+    ];
+    const advances: ReadonlyArray<
+      readonly [string, (item: ProfileSyncItem) => ProfileSyncItem]
+    > = [
+      [
+        "a later revision",
+        (item) => ({ ...item, outcome: quarantinedAt(ATTEMPT_ID, 4) }),
+      ],
+      [
+        "a replacement attempt",
+        (item) => ({ ...item, outcome: quarantinedAt(ATTEMPT_TWO_ID, 3) }),
+      ],
+      [
+        "a state advance with the same outcome revision",
+        (item) => ({ ...item, state: "synced" as const }),
+      ],
+    ];
+
+    for (const [button, verb, fail] of actions) {
+      it(`keeps a ${verb} transport error while the listed item is unchanged`, async () => {
+        fail();
+        await startWithActions();
+        fireEvent.click(await screen.findByRole("button", { name: button }));
+        expect(await screen.findByText(REACH_ERROR)).toBeTruthy();
+        await advanceTo((item) => item);
+        expect(screen.getByText(REACH_ERROR)).toBeTruthy();
+      });
+
+      for (const [label, change] of advances) {
+        it(`clears a ${verb} transport error once the same operation shows ${label}`, async () => {
+          fail();
+          await startWithActions();
+          fireEvent.click(await screen.findByRole("button", { name: button }));
+          expect(await screen.findByText(REACH_ERROR)).toBeTruthy();
+          await advanceTo(change);
+          await waitFor(() =>
+            expect(screen.queryByText(REACH_ERROR)).toBeNull(),
+          );
+        });
+      }
+    }
   });
 });

@@ -71,6 +71,7 @@ function ProfileSyncResultItem(props: {
   const { item, batch, hosts, sourceHostId } = props;
   const [expanded, setExpanded] = useState(false);
   const resolve = useProfileSyncResolve(sourceHostId);
+  const resolveError = useProfileSyncItemError(item, resolve.error);
   const retry = useProfileSyncItemRetry(sourceHostId, item);
   const sourceName = hosts.nameFor(sourceHostId);
   const outcome = item.outcome;
@@ -78,7 +79,8 @@ function ProfileSyncResultItem(props: {
     outcome !== null && profileCopySourceRecovery(outcome, false) === "retry";
   const doResolve = (
     action: "check" | "keep-destination" | "use-source",
-  ): void =>
+  ): void => {
+    resolveError.capture();
     resolve.mutate({
       sourceHostId,
       batchId: batch.batchId,
@@ -86,7 +88,8 @@ function ProfileSyncResultItem(props: {
       action,
       expectedDestination: item.destinationSettings,
     });
-  const error = resolve.error ?? retry.error;
+  };
+  const error = resolveError.error ?? retry.error;
   return (
     <div className="flex flex-col gap-2 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -170,6 +173,31 @@ function ProfileSyncResultItem(props: {
   );
 }
 
+interface ScopedSyncItemError {
+  readonly capture: () => void;
+  readonly error: HostRpcError | null;
+}
+function useProfileSyncItemError(
+  item: ProfileSyncItem,
+  error: HostRpcError | null,
+): ScopedSyncItemError {
+  const current = JSON.stringify([
+    item.state,
+    item.outcome?.attempt.attemptId,
+    item.outcome?.revision,
+    item.sourceIdentityStamp,
+    item.identityChanged,
+    item.sourceSettings,
+    item.destinationSettings,
+    item.baseline,
+  ]);
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  return {
+    capture: () => setSubmitted(current),
+    error: submitted === current ? error : null,
+  };
+}
+
 interface SyncRetryNotice {
   readonly kind: "stale-revision" | "unavailable";
   readonly attemptId: string;
@@ -186,6 +214,7 @@ function useProfileSyncItemRetry(
   item: ProfileSyncItem,
 ): SyncItemRetry {
   const retry = useProfileCopyRetryMutation(sourceHostId, item.operationId);
+  const error = useProfileSyncItemError(item, retry.error);
   const retryIds = useRef(new Map<string, string>());
   const [notice, setNotice] = useState<SyncRetryNotice | null>(null);
   const outcome = item.outcome;
@@ -198,6 +227,7 @@ function useProfileSyncItemRetry(
       retryIds.current.set(key, id);
     }
     setNotice(null);
+    error.capture();
     retry.mutate(
       {
         attempt: outcome.attempt,
@@ -219,7 +249,7 @@ function useProfileSyncItemRetry(
   };
   return {
     pending: retry.isPending,
-    error: retry.error,
+    error: error.error,
     notice:
       notice !== null &&
       outcome !== null &&
