@@ -2,7 +2,7 @@ import {
   createContext,
   use,
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
 } from "react";
@@ -95,9 +95,11 @@ export function useSubagentContinueAsChat(
     (harnessId === "codex" || harnessId === "claude");
   // What is open when an answer ARRIVES, which need not be what was open
   // when it was asked for: the reader can step to another card, or back to
-  // the chat, while the request is in flight.
+  // the chat, while the request is in flight. Synced in a LAYOUT effect: a
+  // passive one runs after the commit has yielded, and an answer that lands
+  // in that gap would read the card the reader had just left.
   const openIdRef = useRef(openId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     openIdRef.current = openId;
   }, [openId]);
   const run = useCallback((): void => {
