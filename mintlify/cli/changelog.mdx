@@ -20,7 +20,7 @@ More reliable provider sign-in and Host restarts on macOS.
 
 * **Provider sign-in** — sign-in continues while the Host prepares the provider CLI, and refusals and account-verification requests are surfaced.
 * **Models** — model names still match when a provider drops a tier marker from its model slug.
-* **macOS Host restart** — restarting recovers a Host whose service was removed with `launchctl bootout`.
+* **macOS Host service** — if neither the Desktop-managed nor CLI-managed service is loaded, start and restart commands explain how to recover: quit and reopen Traycer Desktop, or run `traycer host service install` to register the CLI-managed service.
 
 See the [GitHub release](https://github.com/traycerai/traycer/releases/tag/cli-v1.4.1).
 </Update>

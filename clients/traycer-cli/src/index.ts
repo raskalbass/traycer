@@ -49,6 +49,16 @@ import { buildAgentTranscriptCommand } from "./commands/agent-transcript";
 import { buildAgentInboxCommand } from "./commands/agent-inbox";
 import { buildTerminalListCommand } from "./commands/terminal-list";
 import { buildTerminalOutputCommand } from "./commands/terminal-output";
+import { buildProfileListCommand } from "./commands/profile-list";
+import {
+  buildProfileLoginCommand,
+  PROCESS_PROFILE_LOGIN_IO,
+} from "./commands/profile-login";
+import {
+  buildProfileRemoveCommand,
+  buildProfileRenameCommand,
+  buildProfileSetEnabledCommand,
+} from "./commands/profile-mutations";
 import { buildWorkspaceListCommand } from "./commands/workspace-list";
 import { buildWorktreeCreateCommand } from "./commands/worktree-create";
 import { buildWorktreeListCommand } from "./commands/worktree-list";
@@ -834,6 +844,7 @@ function registerCommands(program: Command, agentRolesEnabled: boolean): void {
   registerConfigCommands(program);
   registerCommentsCommands(program);
   registerTerminalCommands(program);
+  registerProfileCommands(program);
   registerWorkspaceCommands(program);
   registerWorktreeCommands(program);
   registerAgentCommands(program, agentRolesEnabled);
@@ -2338,17 +2349,28 @@ function registerServiceCommands(host: Command): void {
 // `host lifecycle get | set <mode>` - the CLI half of the host lifecycle
 // setting Traycer Desktop shows in Settings (see commands/host-lifecycle.ts).
 function registerHostLifecycleCommands(host: Command): void {
+  const modeHelp = `
+Modes:
+  background    Start the host when you log in. Keep work running after you quit Traycer Desktop.
+  linked        Start the host when you open Traycer Desktop. Quitting stops the host and its work.
+  ask           Start the host with Traycer Desktop. When you quit, ask whether to keep work running or stop it.
+  stop-if-idle  Start the host with Traycer Desktop. When you quit, stop if nothing is running; otherwise, ask.
+  none          Don't start a host on this machine. Use Traycer Desktop to connect to remote hosts instead.
+
+A host you started manually in a terminal keeps running when you quit Traycer Desktop.
+`;
   const lifecycle = host
     .command("lifecycle")
     .description(
-      "Show or choose how the host's lifetime follows Traycer Desktop: background (starts at login, keeps running), linked (starts and stops with the app), ask, stop-if-idle, or none (no local host)",
-    );
+      "Show or change when the host starts and what happens to running work when you quit Traycer Desktop",
+    )
+    .addHelpText("after", modeHelp);
 
   withRunner(
     lifecycle
       .command("get")
       .description(
-        "Show the lifecycle mode, the desktop presence, who started and owns the running host, and whether the running supervisor enforces the mode. Read-only.",
+        "Show the current mode, whether Traycer Desktop is open, how the host was started, and whether it supports the selected mode.",
       ),
     () => hostLifecycleGetCommand,
   );
@@ -2357,9 +2379,10 @@ function registerHostLifecycleCommands(host: Command): void {
     lifecycle
       .command("set")
       .description(
-        "Choose the lifecycle mode. Nothing is started or stopped, and 'none' does not stop a running host. The mode applies to the next unattended host start. Choosing a mode other than background also brings the registered service definition to the current launcher (as 'traycer host service refresh' does), so login starts can be parked.",
+        "Choose when the host starts and what happens when you quit Traycer Desktop. This command does not start or stop the host. Startup changes apply the next time the host starts automatically. Quit behavior can update while Traycer Desktop is open, but a quit already in progress keeps your earlier choice. Some running hosts need a restart to apply the mode. Choosing 'none' leaves the running host alone; Traycer Desktop switches to remote hosts on its next launch. Login startup settings are updated when needed to match the mode.",
       )
-      .argument("<mode>", "background | linked | ask | stop-if-idle | none"),
+      .argument("<mode>", "background | linked | ask | stop-if-idle | none")
+      .addHelpText("after", modeHelp),
     (_opts, args) =>
       buildHostLifecycleSetCommand({
         mode: args[0],
@@ -2725,6 +2748,128 @@ function registerTerminalCommands(program: Command): void {
       buildTerminalOutputCommand({
         epicId: null,
         terminalId: expectRequiredPositional(args[0], "terminal id"),
+      }),
+  );
+}
+
+// The terminal counterpart of the GUI's provider settings: both drive the same
+// `providers.*` host methods, so a change made in one shows in the other. The
+// mutating commands are refused on the readonly agent surface
+// (`READONLY_REFUSED_COMMANDS`); `list` is a read and is not.
+function registerProfileCommands(program: Command): void {
+  const profile = program
+    .command("profile")
+    .description(
+      "Manage provider profiles: the accounts each provider can run under",
+    );
+  const providerArgument = "Provider name: claude, codex, grok or antigravity";
+  const profileArgument =
+    "'ambient' for the provider's own CLI login, or a managed profile id from 'traycer profile list'";
+
+  withRunner(
+    profile
+      .command("list")
+      .description(
+        "List provider profiles with their account, state and cached limit status",
+      )
+      .argument("[provider]", `${providerArgument}. Omit to list every one.`),
+    (_opts, args) => buildProfileListCommand({ provider: args[0] ?? null }),
+  );
+
+  withRunner(
+    profile
+      .command("add")
+      .description(
+        "Create a managed profile and sign it in. Prints a sign-in link and waits for it to finish.",
+      )
+      .argument("<provider>", providerArgument)
+      .option(
+        "--label <name>",
+        "Name for the profile (defaults to the account's email prefix)",
+      ),
+    (opts, args) =>
+      buildProfileLoginCommand(
+        {
+          provider: expectRequiredPositional(args[0], "provider"),
+          target: {
+            kind: "create",
+            label: typeof opts.label === "string" ? opts.label : null,
+          },
+        },
+        PROCESS_PROFILE_LOGIN_IO,
+      ),
+  );
+
+  withRunner(
+    profile
+      .command("login")
+      .description(
+        "Sign an existing profile in again. Prints a sign-in link and waits for it to finish.",
+      )
+      .argument("<provider>", providerArgument)
+      .argument("<profile>", profileArgument),
+    (_opts, args) =>
+      buildProfileLoginCommand(
+        {
+          provider: expectRequiredPositional(args[0], "provider"),
+          target: {
+            kind: "existing",
+            profile: expectRequiredPositional(args[1], "profile"),
+          },
+        },
+        PROCESS_PROFILE_LOGIN_IO,
+      ),
+  );
+
+  withRunner(
+    profile
+      .command("rename")
+      .description("Rename a profile")
+      .argument("<provider>", providerArgument)
+      .argument("<profile>", profileArgument)
+      .argument("<label>", "New name, 1 to 64 characters"),
+    (_opts, args) =>
+      buildProfileRenameCommand({
+        provider: expectRequiredPositional(args[0], "provider"),
+        profile: expectRequiredPositional(args[1], "profile"),
+        label: expectRequiredPositional(args[2], "label"),
+      }),
+  );
+
+  for (const enabled of [true, false]) {
+    withRunner(
+      profile
+        .command(enabled ? "enable" : "disable")
+        .description(
+          enabled
+            ? "Let Traycer use a profile again"
+            : "Stop Traycer using a profile without removing it",
+        )
+        .argument("<provider>", providerArgument)
+        .argument("<profile>", profileArgument),
+      (_opts, args) =>
+        buildProfileSetEnabledCommand({
+          provider: expectRequiredPositional(args[0], "provider"),
+          profile: expectRequiredPositional(args[1], "profile"),
+          enabled,
+        }),
+    );
+  }
+
+  withRunner(
+    profile
+      .command("remove")
+      .description(
+        "Remove a managed profile and its stored sign-in. The ambient profile cannot be removed.",
+      )
+      .argument("<provider>", providerArgument)
+      .argument("<profile>", "Managed profile id from 'traycer profile list'")
+      .option("--yes", "Remove without asking for confirmation"),
+    (opts, args) =>
+      buildProfileRemoveCommand({
+        provider: expectRequiredPositional(args[0], "provider"),
+        profile: expectRequiredPositional(args[1], "profile"),
+        yes: opts.yes === true,
       }),
   );
 }
