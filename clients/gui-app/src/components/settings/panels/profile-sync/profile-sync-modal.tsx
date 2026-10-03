@@ -384,6 +384,10 @@ function ProfileSyncSelectionContent({
 }: SelectionContentProps): ReactNode {
   const sourceName = hosts.nameFor(sourceHostId);
   const canCheck = selectionReady && !preview.isFetching;
+  const recentRuns = batches
+    .filter((batch) => batch.sourceHostId === sourceHostId)
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, 5);
   return (
     <>
       {startRefusal !== null ? (
@@ -436,27 +440,23 @@ function ProfileSyncSelectionContent({
           Nothing was started. Check the selection and try again.
         </p>
       ) : null}
-      {batches.length ? (
+      {recentRuns.length > 0 ? (
         <section className="flex flex-col gap-2 border-t border-border/50 pt-3">
           <h3 className="text-ui-xs font-medium text-muted-foreground">
             Recent runs
           </h3>
-          {[...batches]
-            .filter((batch) => batch.sourceHostId === sourceHostId)
-            .sort((left, right) => right.createdAt - left.createdAt)
-            .slice(0, 5)
-            .map((b) => (
-              <Button
-                key={b.batchId}
-                size="sm"
-                variant="ghost"
-                className="justify-between"
-                onClick={() => onViewRun(b.batchId)}
-              >
-                <span>{new Date(b.createdAt).toLocaleString()}</span>
-                <span>{b.items.length} profile transfers</span>
-              </Button>
-            ))}
+          {recentRuns.map((b) => (
+            <Button
+              key={b.batchId}
+              size="sm"
+              variant="ghost"
+              className="justify-between"
+              onClick={() => onViewRun(b.batchId)}
+            >
+              <span>{new Date(b.createdAt).toLocaleString()}</span>
+              <span>{b.items.length} profile transfers</span>
+            </Button>
+          ))}
         </section>
       ) : null}
     </>
