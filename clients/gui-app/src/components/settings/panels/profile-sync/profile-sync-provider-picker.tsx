@@ -34,6 +34,9 @@ export function ProfileSyncProviderPicker(props: {
   const count = eligible
     .filter((p) => props.selected.includes(p.id))
     .reduce((n, p) => n + p.count, 0);
+  const allEligibleSelected = eligible.every((p) =>
+    props.selected.includes(p.id),
+  );
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -70,15 +73,18 @@ export function ProfileSyncProviderPicker(props: {
                 variant="ghost"
                 onClick={() =>
                   props.onChange(
-                    props.selected.length === eligible.length
+                    allEligibleSelected
                       ? []
-                      : eligible.map((p) => p.id),
+                      : [
+                          ...new Set([
+                            ...props.selected,
+                            ...eligible.map((p) => p.id),
+                          ]),
+                        ],
                   )
                 }
               >
-                {props.selected.length === eligible.length
-                  ? "Clear"
-                  : "Select all"}
+                {allEligibleSelected ? "Clear" : "Select all"}
               </Button>
             </div>
             <CommandList>

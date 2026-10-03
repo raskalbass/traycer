@@ -230,6 +230,13 @@ function ProfileSyncRuleEditor(props: {
   const scope: ProfileSyncScope = all
     ? { kind: "all" }
     : { kind: "selected", providers: selected };
+  const canSave = canSaveRule({
+    rule: props.rule,
+    destination,
+    candidates: props.candidates,
+    scope,
+    pending: save.isPending,
+  });
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -304,11 +311,7 @@ function ProfileSyncRuleEditor(props: {
           Cancel
         </Button>
         <Button
-          disabled={
-            destination.length === 0 ||
-            (!all && selected.length === 0) ||
-            save.isPending
-          }
+          disabled={!canSave}
           onClick={() =>
             save.mutate(
               {
@@ -328,6 +331,27 @@ function ProfileSyncRuleEditor(props: {
         </Button>
       </div>
     </div>
+  );
+}
+
+function canSaveRule({
+  rule,
+  destination,
+  candidates,
+  scope,
+  pending,
+}: {
+  readonly rule: ProfileSyncRule | null;
+  readonly destination: string;
+  readonly candidates: readonly string[];
+  readonly scope: ProfileSyncScope;
+  readonly pending: boolean;
+}): boolean {
+  return (
+    !pending &&
+    destination.length > 0 &&
+    (rule !== null || candidates.includes(destination)) &&
+    (scope.kind === "all" || scope.providers.length > 0)
   );
 }
 

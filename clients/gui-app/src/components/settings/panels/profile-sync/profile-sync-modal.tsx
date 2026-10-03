@@ -136,12 +136,12 @@ export function ProfileSyncModal(props: {
               />
             </>
           ) : null}
-          {batch === null && tab === "automatic" ? (
+          {batch === null && tab === "automatic" && list.isSuccess ? (
             <ProfileSyncRules
               hostId={sourceHostId}
               hosts={hosts}
               providers={catalog.data?.providers ?? []}
-              rules={list.data?.rules ?? []}
+              rules={list.data.rules}
               onViewRun={setBatchId}
             />
           ) : null}
@@ -581,7 +581,10 @@ function useProfileSyncModalState(props: {
       ? [...PROFILE_COPY_PROVIDERS]
       : [props.initialProvider],
   );
-  const [destinations, setDestinations] = useState<string[]>([]);
+  const { destinations, setDestinations } = useSyncDestinations(
+    sourceHostId,
+    hosts,
+  );
   const [batchId, setBatchId] = useState<string | null>(null);
   const [emptyStartSelection, setEmptyStartSelection] = useState<string | null>(
     null,
@@ -701,6 +704,30 @@ function selectedCatalogProfiles(
     )
     .reduce((count, p) => count + p.profiles.length, 0);
   return { selected, profileCount };
+}
+
+function useSyncDestinations(
+  sourceHostId: string,
+  hosts: ProfileCopyHosts,
+): {
+  destinations: string[];
+  setDestinations: Dispatch<SetStateAction<string[]>>;
+} {
+  const [chosen, setChosen] = useState<string[]>([]);
+  const available = (ids: string[]): string[] =>
+    ids.filter(
+      (id) =>
+        id !== sourceHostId && hosts.options.some((host) => host.hostId === id),
+    );
+  const destinations = available(chosen);
+  const setDestinations: Dispatch<SetStateAction<string[]>> = (update) =>
+    setChosen((current) => {
+      const selected = available(current);
+      return available(
+        typeof update === "function" ? update(selected) : update,
+      );
+    });
+  return { destinations, setDestinations };
 }
 
 function syncSelection(

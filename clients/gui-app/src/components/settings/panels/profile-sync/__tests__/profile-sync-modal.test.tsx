@@ -113,6 +113,7 @@ function resetStores(): void {
 // Per-test knobs for the start and resolve answers; reset in beforeEach.
 let startFailures = 0;
 let startBatchSource: string | null = null;
+let listFails = false;
 
 interface MountOptions {
   readonly rules: readonly ProfileSyncRule[];
@@ -162,10 +163,18 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
         providers: [...options.providers],
         native: null,
       }),
-      "providers.profileCopy.sync.list": () => ({
-        batches: [],
-        rules: [...options.rules],
-      }),
+      "providers.profileCopy.sync.list": () => {
+        if (listFails) {
+          throw new HostRpcError({
+            code: "RPC_ERROR",
+            message: "history unavailable",
+            requestId: "req-sync",
+            method: "providers.profileCopy.sync.list",
+            fatalDetails: null,
+          });
+        }
+        return { batches: [], rules: [...options.rules] };
+      },
       "providers.profileCopy.sync.preview": (params) => ({
         selection: params,
         revision: PREVIEW_REVISION,
@@ -446,6 +455,7 @@ describe("ProfileSyncModal review regressions", () => {
   beforeEach(() => {
     startFailures = 0;
     startBatchSource = null;
+    listFails = false;
     resetStores();
     harness.spine = null;
     harness.hosts = [
@@ -897,6 +907,159 @@ describe("ProfileSyncModal review regressions", () => {
         );
         expect(screen.queryByText(LIMIT_TEXT)).toBeNull();
       });
+    });
+  });
+
+  describe("round 3: sync history gate and host removal", () => {
+    function perDestination(
+      selection: ProfileSyncSelection,
+    ): readonly ProfileSyncItem[] {
+      return selection.destinationHostIds.map((id, index) =>
+        syncItem(index + 1, id, "ready", [previewDestination(id, "automatic")]),
+      );
+    }
+
+    function refreshHosts(): void {
+      // The host options are read by the flow body above the modal: re-render
+      // it with a fresh view object, leaving `session` (and so the modal's
+      // selection state) untouched.
+      act(() => {
+        useProfileCopyFlowStore.setState((state) => ({
+          view: state.view === null ? null : { ...state.view },
+        }));
+      });
+    }
+
+    it("shows no empty-rules state, Add device or editor until the sync history loads, then the authoritative rule", async () => {
+      listFails = true;
+      mountWith({
+        rules: [SAVED_RULE],
+        providers: defaultProviders(),
+        previewItems: noItems,
+        startItems: noItems,
+      });
+      openSync(null);
+      fireEvent.mouseDown(
+        await screen.findByRole("tab", { name: /Automatic sync/ }),
+        { button: 0 },
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      const retry = await screen.findByRole("button", { name: "Try again" });
+      expect(screen.queryByText(/No automatic rules yet/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Add device" })).toBeNull();
+      expect(screen.queryByText("Add automatic sync")).toBeNull();
+      listFails = false;
+      fireEvent.click(retry);
+      expect(
+        await screen.findByRole("heading", { name: "Linux box" }),
+      ).toBeTruthy();
+      expect(screen.queryByText(/No automatic rules yet/)).toBeNull();
+      expect(screen.getByRole("button", { name: "Add device" })).toBeTruthy();
+    });
+
+    it("drops a removed destination from the count, the preview and the start, and keeps an offline device selectable", async () => {
+      const offline = hostOption("offline-host", "Sleeping box", false);
+      harness.hosts = [
+        ...harness.hosts,
+        {
+          ...offline,
+          connectable: false,
+          health: { ...offline.health, live: false },
+        },
+      ];
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: perDestination,
+        startItems: noItems,
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/, /Old Mac/, /Sleeping box/]);
+      await screen.findByText("3 profile transfers selected");
+      harness.hosts = harness.hosts.filter(
+        (host) => host.hostId !== DEST_HOST_TWO_ID,
+      );
+      refreshHosts();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      expect(
+        await screen.findByText("2 profile transfers selected"),
+      ).toBeTruthy();
+      expect(screen.queryByRole("checkbox", { name: /Old Mac/ })).toBeNull();
+      const lastPreview = previewCalls(messenger).at(-1);
+      expect(lastPreview).toBeDefined();
+      const requested = profileSyncSelectionSchema.parse(lastPreview?.params);
+      expect(requested.destinationHostIds).toEqual([
+        DEST_HOST_ID,
+        "offline-host",
+      ]);
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      await waitFor(() => expect(startCalls(messenger)).toHaveLength(1));
+      const started = profileSyncStartSchema.parse(
+        startCalls(messenger)[0].params,
+      );
+      expect(started.selection.destinationHostIds).toEqual([
+        DEST_HOST_ID,
+        "offline-host",
+      ]);
+    });
+
+    it("a removed selected device no longer counts toward the 16-device limit", async () => {
+      harness.hosts = [
+        hostOption(SOURCE_HOST_ID, "Studio Mac", true),
+        ...Array.from({ length: 17 }, (_unused, index) =>
+          hostOption(
+            `limit-host-${String(index + 1)}`,
+            `Device ${String(index + 1)}`,
+            false,
+          ),
+        ),
+      ];
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: noItems,
+        startItems: noItems,
+      });
+      openSync(null);
+      for (let index = 1; index <= 16; index += 1) {
+        fireEvent.click(
+          await screen.findByRole("checkbox", {
+            name: new RegExp(`Device ${String(index)}(?!\\d)`),
+          }),
+        );
+      }
+      const seventeenth = await screen.findByRole("checkbox", {
+        name: /Device 17(?!\d)/,
+      });
+      expect(seventeenth.hasAttribute("disabled")).toBe(true);
+      harness.hosts = harness.hosts.filter(
+        (host) => host.hostId !== "limit-host-16",
+      );
+      refreshHosts();
+      const reopened = await screen.findByRole("checkbox", {
+        name: /Device 17(?!\d)/,
+      });
+      expect(reopened.hasAttribute("disabled")).toBe(false);
+      // Choosing it prunes the removed device from the outgoing request too.
+      fireEvent.click(reopened);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      await waitFor(() => {
+        const last = previewCalls(messenger).at(-1);
+        expect(last).toBeDefined();
+        const requested = profileSyncSelectionSchema.parse(last?.params);
+        expect(requested.destinationHostIds).toContain("limit-host-17");
+      });
+      const finalPreview = profileSyncSelectionSchema.parse(
+        previewCalls(messenger).at(-1)?.params,
+      );
+      expect(finalPreview.destinationHostIds).not.toContain("limit-host-16");
+      expect(finalPreview.destinationHostIds).toHaveLength(16);
     });
   });
 });
