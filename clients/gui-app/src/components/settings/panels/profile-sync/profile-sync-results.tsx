@@ -21,6 +21,7 @@ import {
 } from "../profile-copy/profile-copy-shared";
 
 export function ProfileSyncResults(props: {
+  readonly sourceHostId: string;
   readonly batch: ProfileSyncBatch;
   readonly hosts: ProfileCopyHosts;
 }): ReactNode {
@@ -42,6 +43,7 @@ export function ProfileSyncResults(props: {
               .map((item) => (
                 <ProfileSyncResultItem
                   key={item.operationId}
+                  sourceHostId={props.sourceHostId}
                   item={item}
                   batch={props.batch}
                   hosts={props.hosts}
@@ -54,19 +56,17 @@ export function ProfileSyncResults(props: {
   );
 }
 function ProfileSyncResultItem(props: {
+  readonly sourceHostId: string;
   readonly batch: ProfileSyncBatch;
   readonly item: ProfileSyncItem;
   readonly hosts: ProfileCopyHosts;
 }): ReactNode {
-  const { item, batch, hosts } = props;
+  const { item, batch, hosts, sourceHostId } = props;
   const [expanded, setExpanded] = useState(false);
-  const resolve = useProfileSyncResolve(batch.sourceHostId);
-  const retry = useProfileCopyRetryMutation(
-    batch.sourceHostId,
-    item.operationId,
-  );
+  const resolve = useProfileSyncResolve(sourceHostId);
+  const retry = useProfileCopyRetryMutation(sourceHostId, item.operationId);
   const retryIds = useRef(new Map<string, string>());
-  const sourceName = hosts.nameFor(batch.sourceHostId);
+  const sourceName = hosts.nameFor(sourceHostId);
   const outcome = item.outcome;
   const canRetry =
     outcome !== null && profileCopySourceRecovery(outcome, false) === "retry";
@@ -74,7 +74,7 @@ function ProfileSyncResultItem(props: {
     action: "check" | "keep-destination" | "use-source",
   ): void =>
     resolve.mutate({
-      sourceHostId: batch.sourceHostId,
+      sourceHostId,
       batchId: batch.batchId,
       operationId: item.operationId,
       action,

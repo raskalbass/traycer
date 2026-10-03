@@ -11,9 +11,13 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
+import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
-import { profileSyncStartSchema } from "@traycer/protocol/host/profile-sync-schemas";
+import {
+  profileSyncSelectionSchema,
+  profileSyncStartSchema,
+} from "@traycer/protocol/host/profile-sync-schemas";
 import type {
   ProfileSyncBatch,
   ProfileSyncItem,
@@ -106,6 +110,10 @@ function resetStores(): void {
   clearProfileCopyObservations();
 }
 
+// Per-test knobs for the start and resolve answers; reset in beforeEach.
+let startFailures = 0;
+let startBatchSource: string | null = null;
+
 interface MountOptions {
   readonly rules: readonly ProfileSyncRule[];
   readonly providers: readonly ProviderCliState[];
@@ -163,12 +171,32 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
         revision: PREVIEW_REVISION,
         items: [...options.previewItems(params)],
       }),
-      "providers.profileCopy.sync.start": (params): ProfileSyncBatch => ({
+      "providers.profileCopy.sync.start": (params): ProfileSyncBatch => {
+        if (startFailures > 0) {
+          startFailures -= 1;
+          // An answer lost on the wire: the host may or may not have started.
+          throw new HostRpcError({
+            code: "RPC_ERROR",
+            message: "start unconfirmed",
+            requestId: "req-sync",
+            method: "providers.profileCopy.sync.start",
+            fatalDetails: null,
+          });
+        }
+        return {
+          batchId: params.batchId,
+          sourceHostId: startBatchSource ?? params.selection.sourceHostId,
+          createdAt: 1,
+          automatic: false,
+          items: [...options.startItems(params.selection)],
+        };
+      },
+      "providers.profileCopy.sync.resolve": (params): ProfileSyncBatch => ({
         batchId: params.batchId,
-        sourceHostId: params.selection.sourceHostId,
+        sourceHostId: params.sourceHostId,
         createdAt: 1,
         automatic: false,
-        items: [...options.startItems(params.selection)],
+        items: [],
       }),
     },
   });
@@ -416,6 +444,8 @@ async function pickDestinations(names: readonly RegExp[]): Promise<void> {
 
 describe("ProfileSyncModal review regressions", () => {
   beforeEach(() => {
+    startFailures = 0;
+    startBatchSource = null;
     resetStores();
     harness.spine = null;
     harness.hosts = [
@@ -641,6 +671,232 @@ describe("ProfileSyncModal review regressions", () => {
       expect(trigger.textContent).not.toMatch(/Grok|Antigravity|Gemini|Open/);
       fireEvent.click(trigger);
       expect(await screen.findAllByRole("option")).toHaveLength(2);
+    });
+  });
+
+  describe("round 2: request ids, captured source and run capacity", () => {
+    const READY_ITEM = (): ProfileSyncItem[] => [
+      syncItem(1, DEST_HOST_ID, "ready", [
+        previewDestination(DEST_HOST_ID, "automatic"),
+      ]),
+    ];
+
+    async function settled(
+      messenger: MockHostMessenger<HostRpcRegistry>,
+      previewsBefore: number,
+    ): Promise<void> {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      await waitFor(() => {
+        expect(previewCalls(messenger).length).toBeGreaterThan(previewsBefore);
+        expect(
+          screen
+            .getByRole("button", { name: "Sync now" })
+            .hasAttribute("disabled"),
+        ).toBe(false);
+      });
+    }
+
+    it("two different selections on the same preview revision send different batch ids after an unconfirmed first start", async () => {
+      startFailures = 1;
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: READY_ITEM,
+        startItems: noItems,
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      expect(await screen.findByText(/could not be confirmed/)).toBeTruthy();
+      const before = previewCalls(messenger).length;
+      fireEvent.click(await screen.findByRole("checkbox", { name: /Old Mac/ }));
+      await settled(messenger, before);
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      await waitFor(() => expect(startCalls(messenger)).toHaveLength(2));
+      const [firstCall, secondCall] = startCalls(messenger);
+      const first = profileSyncStartSchema.parse(firstCall.params);
+      const second = profileSyncStartSchema.parse(secondCall.params);
+      expect(first.revision).toBe(second.revision);
+      expect(first.selection.destinationHostIds).toEqual([DEST_HOST_ID]);
+      expect(second.selection.destinationHostIds).toEqual([
+        DEST_HOST_ID,
+        DEST_HOST_TWO_ID,
+      ]);
+      expect(second.batchId).not.toBe(first.batchId);
+    });
+
+    it("an unconfirmed start retried for the same selection keeps its batch id", async () => {
+      startFailures = 1;
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: READY_ITEM,
+        startItems: noItems,
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      expect(await screen.findByText(/could not be confirmed/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      await waitFor(() => expect(startCalls(messenger)).toHaveLength(2));
+      const [firstCall, secondCall] = startCalls(messenger);
+      const first = profileSyncStartSchema.parse(firstCall.params);
+      const second = profileSyncStartSchema.parse(secondCall.params);
+      expect(first.batchId).toBeTruthy();
+      expect(second.batchId).toBe(first.batchId);
+    });
+
+    it("result actions dispatch to the captured source even when the returned batch names another host", async () => {
+      startBatchSource = DEST_HOST_ID;
+      const messenger = mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: READY_ITEM,
+        startItems: () => [
+          syncItem(1, DEST_HOST_ID, "unconfirmed", [
+            previewDestination(DEST_HOST_ID, "automatic"),
+          ]),
+        ],
+      });
+      openSync(null);
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Check status" }),
+      );
+      const resolves = () =>
+        messenger.calls.filter(
+          (call) => call.method === "providers.profileCopy.sync.resolve",
+        );
+      await waitFor(() => expect(resolves()).toHaveLength(1));
+      expect(resolves()[0]?.authority.endpoint.hostId).toBe(SOURCE_HOST_ID);
+      expect(resolves()[0]?.params).toMatchObject({
+        sourceHostId: SOURCE_HOST_ID,
+      });
+      expect(
+        messenger.calls.some(
+          (call) =>
+            call.method.startsWith("providers.profileCopy.") &&
+            call.method !== "providers.profileCopy.sync.start" &&
+            call.authority.endpoint.hostId === DEST_HOST_ID,
+        ),
+      ).toBe(false);
+    });
+
+    describe("run capacity of 512 profile transfers", () => {
+      const LIMIT_TEXT =
+        "Choose fewer providers or devices: a run supports up to 512 profile transfers.";
+
+      function catalog(profiles: number): readonly ProviderCliState[] {
+        return [
+          claudeProviderState(
+            Array.from({ length: profiles }, (_unused, index) =>
+              managedProfile(
+                `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+                `Profile ${String(index + 1)}`,
+              ),
+            ),
+          ),
+        ];
+      }
+
+      function deviceName(index: number): RegExp {
+        return new RegExp(`Device ${String(index)}(?!\\d)`);
+      }
+
+      async function chooseDevices(count: number): Promise<void> {
+        for (let index = 1; index <= count; index += 1) {
+          fireEvent.click(
+            await screen.findByRole("checkbox", { name: deviceName(index) }),
+          );
+        }
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(400);
+        });
+      }
+
+      beforeEach(() => {
+        harness.hosts = [
+          hostOption(SOURCE_HOST_ID, "Studio Mac", true),
+          ...Array.from({ length: 16 }, (_unused, index) =>
+            hostOption(
+              `capacity-host-${String(index + 1)}`,
+              `Device ${String(index + 1)}`,
+              false,
+            ),
+          ),
+        ];
+      });
+
+      it("33 profiles to 16 devices is refused before any preview or start, with an explanation", async () => {
+        const messenger = mountWith({
+          rules: [],
+          providers: catalog(33),
+          previewItems: noItems,
+          startItems: noItems,
+        });
+        openSync(null);
+        await screen.findByRole("button", { name: "Choose providers" });
+        await chooseDevices(16);
+        expect(await screen.findByText(LIMIT_TEXT)).toBeTruthy();
+        expect(previewCalls(messenger)).toHaveLength(0);
+        expect(
+          screen
+            .getByRole("button", { name: "Sync now" })
+            .hasAttribute("disabled"),
+        ).toBe(true);
+        fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+        expect(startCalls(messenger)).toHaveLength(0);
+      });
+
+      it("dropping to 15 devices lifts the refusal and previews", async () => {
+        const messenger = mountWith({
+          rules: [],
+          providers: catalog(33),
+          previewItems: noItems,
+          startItems: noItems,
+        });
+        openSync(null);
+        await screen.findByRole("button", { name: "Choose providers" });
+        await chooseDevices(16);
+        await screen.findByText(LIMIT_TEXT);
+        fireEvent.click(
+          await screen.findByRole("checkbox", { name: deviceName(16) }),
+        );
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(400);
+        });
+        await waitFor(() =>
+          expect(previewCalls(messenger).length).toBeGreaterThan(0),
+        );
+        expect(screen.queryByText(LIMIT_TEXT)).toBeNull();
+        const lastPreview = previewCalls(messenger).at(-1);
+        expect(lastPreview).toBeDefined();
+        const requested = profileSyncSelectionSchema.parse(lastPreview?.params);
+        expect(requested.destinationHostIds).toHaveLength(15);
+        expect(requested.destinationHostIds).not.toContain("capacity-host-16");
+      });
+
+      it("exactly 32 profiles to 16 devices (512) is allowed", async () => {
+        const messenger = mountWith({
+          rules: [],
+          providers: catalog(32),
+          previewItems: noItems,
+          startItems: noItems,
+        });
+        openSync(null);
+        await screen.findByRole("button", { name: "Choose providers" });
+        await chooseDevices(16);
+        await waitFor(() =>
+          expect(previewCalls(messenger).length).toBeGreaterThan(0),
+        );
+        expect(screen.queryByText(LIMIT_TEXT)).toBeNull();
+      });
     });
   });
 });

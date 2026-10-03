@@ -1,5 +1,6 @@
 import type { HostRpcRegistry } from "@/lib/host";
 import type { ProfileSyncList } from "@traycer/protocol/host/profile-sync-schemas";
+import { PROFILE_SYNC_MAX_ITEMS } from "@traycer/protocol/host/profile-sync-schemas";
 import type { Dispatch, SetStateAction } from "react";
 import type { UseQueryResult, UseMutationResult } from "@tanstack/react-query";
 import type {
@@ -83,6 +84,7 @@ export function ProfileSyncModal(props: {
     batch,
     sourceName,
     canStart,
+    selectionTooLarge,
     nothingStarted,
     run,
   } = useProfileSyncModalState(props);
@@ -127,7 +129,11 @@ export function ProfileSyncModal(props: {
               >
                 ← Back
               </Button>
-              <ProfileSyncResults batch={batch} hosts={hosts} />
+              <ProfileSyncResults
+                sourceHostId={sourceHostId}
+                batch={batch}
+                hosts={hosts}
+              />
             </>
           ) : null}
           {batch === null && tab === "automatic" ? (
@@ -164,6 +170,7 @@ export function ProfileSyncModal(props: {
         tab={tab}
         batchId={batchId}
         selected={selected}
+        selectionTooLarge={selectionTooLarge}
         destinations={destinations}
         currentPreview={currentPreview}
         close={close}
@@ -184,6 +191,7 @@ function ProfileSyncFooter({
   tab,
   batchId,
   selected,
+  selectionTooLarge,
   destinations,
   currentPreview,
   close,
@@ -195,6 +203,7 @@ function ProfileSyncFooter({
   | "tab"
   | "batchId"
   | "selected"
+  | "selectionTooLarge"
   | "destinations"
   | "currentPreview"
   | "close"
@@ -211,6 +220,7 @@ function ProfileSyncFooter({
               selected.length,
               destinations.length,
               currentPreview,
+              selectionTooLarge,
             )}
           </p>
           <Button variant="outline" onClick={close}>
@@ -318,7 +328,10 @@ function selectionStatus(
   providers: number,
   destinations: number,
   preview: ProfileSyncPreview | null,
+  selectionTooLarge: boolean,
 ): string {
+  if (selectionTooLarge)
+    return `Choose fewer providers or devices: a run supports up to ${PROFILE_SYNC_MAX_ITEMS} profile transfers.`;
   if (providers === 0) return "Choose providers.";
   if (destinations === 0) return "Choose destination devices.";
   if (preview === null) return "Checking selection…";
@@ -552,6 +565,7 @@ interface SyncModalModel {
   readonly batch: ProfileSyncBatch | null;
   readonly sourceName: string;
   readonly canStart: boolean;
+  readonly selectionTooLarge: boolean;
   readonly nothingStarted: boolean;
   readonly run: () => void;
 }
@@ -579,19 +593,18 @@ function useProfileSyncModalState(props: {
     { enabled: true, subscribed: true },
   );
   const list = useProfileSyncList(sourceHostId);
-  const selected = chosenProviders.filter((provider) =>
-    catalog.data?.providers.some(
-      (p) => profileCopyWireProvider(p.providerId) === provider,
-    ),
+  const { selected, profileCount } = selectedCatalogProfiles(
+    catalog.data?.providers,
+    chosenProviders,
   );
-  const selection: ProfileSyncSelection | null =
-    selected.length > 0 && destinations.length > 0
-      ? {
-          sourceHostId,
-          scope: { kind: "selected", providers: selected },
-          destinationHostIds: destinations,
-        }
-      : null;
+  const selectionTooLarge =
+    profileCount * destinations.length > PROFILE_SYNC_MAX_ITEMS;
+  const selection = syncSelection(
+    sourceHostId,
+    selected,
+    destinations,
+    selectionTooLarge,
+  );
   const selectionKey = JSON.stringify(selection);
   const settledKey = useDebouncedValue(selectionKey, 400);
   const preview = useProfileSyncPreview(
@@ -617,10 +630,14 @@ function useProfileSyncModalState(props: {
   const run = (): void => {
     if (currentPreview === null) return;
     setEmptyStartSelection(null);
-    let id = requests.current.get(currentPreview.revision);
+    const requestKey = JSON.stringify([
+      currentPreview.selection,
+      currentPreview.revision,
+    ]);
+    let id = requests.current.get(requestKey);
     if (id === undefined) {
       id = crypto.randomUUID();
-      requests.current.set(currentPreview.revision, id);
+      requests.current.set(requestKey, id);
     }
     start.mutate(
       {
@@ -631,7 +648,7 @@ function useProfileSyncModalState(props: {
       {
         onSuccess: (result) => {
           if (result.items.length === 0) {
-            requests.current.delete(currentPreview.revision);
+            requests.current.delete(requestKey);
             setEmptyStartSelection(selectionKey);
             void preview.refetch();
             return;
@@ -664,7 +681,43 @@ function useProfileSyncModalState(props: {
     batch,
     sourceName,
     canStart,
+    selectionTooLarge,
     nothingStarted: emptyStartSelection === selectionKey,
     run,
+  };
+}
+
+function selectedCatalogProfiles(
+  providers: readonly ProviderCliState[] | undefined,
+  chosenProviders: readonly ProfileCopyWireProvider[],
+): { selected: ProfileCopyWireProvider[]; profileCount: number } {
+  const catalog = providers ?? [];
+  const selected = chosenProviders.filter((provider) =>
+    catalog.some((p) => profileCopyWireProvider(p.providerId) === provider),
+  );
+  const profileCount = catalog
+    .filter((p) =>
+      selected.some((id) => profileCopyWireProvider(p.providerId) === id),
+    )
+    .reduce((count, p) => count + p.profiles.length, 0);
+  return { selected, profileCount };
+}
+
+function syncSelection(
+  sourceHostId: string,
+  providers: ProfileCopyWireProvider[],
+  destinationHostIds: string[],
+  selectionTooLarge: boolean,
+): ProfileSyncSelection | null {
+  if (
+    providers.length === 0 ||
+    destinationHostIds.length === 0 ||
+    selectionTooLarge
+  )
+    return null;
+  return {
+    sourceHostId,
+    scope: { kind: "selected", providers },
+    destinationHostIds,
   };
 }

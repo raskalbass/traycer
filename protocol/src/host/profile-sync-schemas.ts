@@ -11,6 +11,9 @@ import {
   profileCopySourceProfileIdSchema,
 } from "./profile-copy-schemas";
 
+/** The source checks the current profile count before preparing a selection. */
+export const PROFILE_SYNC_MAX_ITEMS = 512;
+
 export const profileSyncSettingsSchema = lazySchema(() =>
   z.strictObject({
     name: z.string().min(1).max(128),
@@ -85,7 +88,7 @@ export const profileSyncPreviewSchema = lazySchema(() =>
   z.strictObject({
     selection: profileSyncSelectionSchema,
     revision: z.string().regex(/^[a-f0-9]{64}$/),
-    items: z.array(profileSyncItemSchema).max(512),
+    items: z.array(profileSyncItemSchema).max(PROFILE_SYNC_MAX_ITEMS),
   }),
 );
 export type ProfileSyncPreview = z.infer<typeof profileSyncPreviewSchema>;
@@ -102,7 +105,7 @@ export const profileSyncBatchSchema = lazySchema(() =>
     sourceHostId: profileCopyHostIdSchema,
     createdAt: z.number(),
     automatic: z.boolean(),
-    items: z.array(profileSyncItemSchema).max(512),
+    items: z.array(profileSyncItemSchema).max(PROFILE_SYNC_MAX_ITEMS),
   }),
 );
 export type ProfileSyncBatch = z.infer<typeof profileSyncBatchSchema>;
