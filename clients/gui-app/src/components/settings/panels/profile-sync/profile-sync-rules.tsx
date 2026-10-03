@@ -1,8 +1,10 @@
 import { useId, useState, type ReactNode } from "react";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
-import type {
-  ProfileSyncRule,
-  ProfileSyncScope,
+import {
+  PROFILE_SYNC_MAX_RULES,
+  type ProfileSyncBatch,
+  type ProfileSyncRule,
+  type ProfileSyncScope,
 } from "@traycer/protocol/host/profile-sync-schemas";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -30,22 +32,32 @@ import {
 } from "../profile-copy/profile-copy-shared";
 import { ProfileSyncProviderPicker } from "./profile-sync-provider-picker";
 
+const RULE_CAPACITY_NOTICE = `Automatic sync supports up to ${String(PROFILE_SYNC_MAX_RULES)} device rules. Stop a rule to add another device.`;
+
 export function ProfileSyncRules(props: {
   readonly hostId: string;
   readonly hosts: ProfileCopyHosts;
   readonly providers: readonly ProviderCliState[];
   readonly rules: readonly ProfileSyncRule[];
+  readonly batches: readonly ProfileSyncBatch[];
   readonly onViewRun: (batchId: string) => void;
 }): ReactNode {
   const [editor, setEditor] = useState<ProfileSyncRule | "new" | null>(null);
   const [stop, setStop] = useState<ProfileSyncRule | null>(null);
   const save = useProfileSyncSaveRule(props.hostId),
     remove = useProfileSyncStopRule(props.hostId);
+  const atCapacity = props.rules.length >= PROFILE_SYNC_MAX_RULES;
   const destinations = props.hosts.options.filter(
     (h) =>
       h.hostId !== props.hostId &&
       !props.rules.some((r) => r.destinationHostId === h.hostId),
   );
+  if (props.rules.some((rule) => rule.sourceHostId !== props.hostId))
+    return (
+      <p role="alert" className="text-ui-xs text-destructive">
+        The device returned rules for another source. Check sync history again.
+      </p>
+    );
   if (editor !== null)
     return (
       <ProfileSyncRuleEditor
@@ -53,7 +65,8 @@ export function ProfileSyncRules(props: {
         hostId={props.hostId}
         rule={editor === "new" ? null : editor}
         hosts={props.hosts}
-        candidates={destinations.map((h) => h.hostId)}
+        candidates={atCapacity ? [] : destinations.map((h) => h.hostId)}
+        atCapacity={atCapacity}
         providers={props.providers}
         close={() => setEditor(null)}
       />
@@ -70,12 +83,13 @@ export function ProfileSyncRules(props: {
         <Button
           size="sm"
           variant="outline"
-          disabled={destinations.length === 0}
+          disabled={destinations.length === 0 || atCapacity}
           onClick={() => setEditor("new")}
         >
           Add device
         </Button>
       </div>
+      <ProfileSyncRuleCapacity reached={atCapacity} />
       {props.rules.length === 0 ? (
         <p className="py-5 text-ui-sm text-muted-foreground">
           No automatic rules yet. Add a device and choose which providers to
@@ -131,7 +145,7 @@ export function ProfileSyncRules(props: {
                 {save.isPending ? <MutedAgentSpinner /> : null}
                 {rule.paused ? "Resume" : "Pause"}
               </Button>
-              {rule.batchId !== null ? (
+              {canViewRuleRun(rule, props.batches, props.hostId) ? (
                 <Button
                   size="xs"
                   variant="ghost"
@@ -211,6 +225,7 @@ function ProfileSyncRuleEditor(props: {
   readonly rule: ProfileSyncRule | null;
   readonly hosts: ProfileCopyHosts;
   readonly candidates: readonly string[];
+  readonly atCapacity: boolean;
   readonly providers: readonly ProviderCliState[];
   readonly close: () => void;
 }): ReactNode {
@@ -247,6 +262,9 @@ function ProfileSyncRuleEditor(props: {
           {props.rule === null ? "Add automatic sync" : "Edit automatic sync"}
         </h3>
       </div>
+      <ProfileSyncRuleCapacity
+        reached={props.rule === null && props.atCapacity}
+      />
       <div className="flex flex-col gap-2">
         <span className="text-ui-xs text-muted-foreground">
           Destination device
@@ -331,6 +349,35 @@ function ProfileSyncRuleEditor(props: {
         </Button>
       </div>
     </div>
+  );
+}
+
+function ProfileSyncRuleCapacity(props: {
+  readonly reached: boolean;
+}): ReactNode {
+  return props.reached ? (
+    <p role="status" className="text-ui-xs text-muted-foreground">
+      {RULE_CAPACITY_NOTICE}
+    </p>
+  ) : null;
+}
+
+function canViewRuleRun(
+  rule: ProfileSyncRule,
+  batches: readonly ProfileSyncBatch[],
+  sourceHostId: string,
+): boolean {
+  return (
+    rule.batchId !== null &&
+    batches.some(
+      (batch) =>
+        batch.batchId === rule.batchId &&
+        batch.sourceHostId === sourceHostId &&
+        batch.automatic &&
+        batch.items.every(
+          (item) => item.destinationHostId === rule.destinationHostId,
+        ),
+    )
   );
 }
 

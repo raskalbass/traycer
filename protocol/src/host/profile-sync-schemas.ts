@@ -108,6 +108,9 @@ export const profileSyncItemSchema = lazySchema(() =>
     ),
 );
 export type ProfileSyncItem = z.infer<typeof profileSyncItemSchema>;
+function uniqueOperations(items: readonly ProfileSyncItem[]): boolean {
+  return new Set(items.map((item) => item.operationId)).size === items.length;
+}
 export const profileSyncPreviewSchema = lazySchema(() =>
   z
     .strictObject({
@@ -127,7 +130,10 @@ export const profileSyncPreviewSchema = lazySchema(() =>
               preview.selection.scope.providers.includes(item.providerId)),
         ),
       { message: "Sync items must match the preview selection" },
-    ),
+    )
+    .refine((preview) => uniqueOperations(preview.items), {
+      message: "Sync operation IDs must be unique within a preview",
+    }),
 );
 export type ProfileSyncPreview = z.infer<typeof profileSyncPreviewSchema>;
 export const profileSyncStartSchema = lazySchema(() =>
@@ -154,21 +160,28 @@ export const profileSyncBatchSchema = lazySchema(() =>
       {
         message: "Sync items must match the batch source",
       },
-    ),
+    )
+    .refine((batch) => uniqueOperations(batch.items), {
+      message: "Sync operation IDs must be unique within a batch",
+    }),
 );
 export type ProfileSyncBatch = z.infer<typeof profileSyncBatchSchema>;
 export const profileSyncRuleSchema = lazySchema(() =>
-  z.strictObject({
-    ruleId: profileCopyIdSchema,
-    sourceHostId: profileCopyHostIdSchema,
-    destinationHostId: profileCopyHostIdSchema,
-    scope: profileSyncScopeSchema,
-    paused: z.boolean(),
-    revision: z.number().int().nonnegative(),
-    lastCheckedAt: z.number().nullable(),
-    batchId: profileCopyIdSchema.nullable(),
-    status: z.enum(["waiting", "active", "needs-action", "paused"]),
-  }),
+  z
+    .strictObject({
+      ruleId: profileCopyIdSchema,
+      sourceHostId: profileCopyHostIdSchema,
+      destinationHostId: profileCopyHostIdSchema,
+      scope: profileSyncScopeSchema,
+      paused: z.boolean(),
+      revision: z.number().int().nonnegative(),
+      lastCheckedAt: z.number().nullable(),
+      batchId: profileCopyIdSchema.nullable(),
+      status: z.enum(["waiting", "active", "needs-action", "paused"]),
+    })
+    .refine((rule) => rule.sourceHostId !== rule.destinationHostId, {
+      message: "Sync rules must target another host",
+    }),
 );
 export type ProfileSyncRule = z.infer<typeof profileSyncRuleSchema>;
 export const profileSyncListSchema = lazySchema(() =>

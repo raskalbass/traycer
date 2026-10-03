@@ -6,6 +6,7 @@ import {
   profileSyncItemSchema,
   profileSyncListSchema,
   profileSyncPreviewSchema,
+  profileSyncRuleSchema,
   type ProfileSyncBatch,
   type ProfileSyncItem,
   type ProfileSyncRule,
@@ -228,6 +229,65 @@ describe("profile sync list bounds", () => {
         batches: [],
         rules: rules(PROFILE_SYNC_MAX_RULES + 1),
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("profile sync operation uniqueness and self-targeted rules", () => {
+  const ALT_OPERATION = "00000000-0000-4000-8000-0000000000cc";
+
+  function distinctItem(): ProfileSyncItem {
+    const base = withAttempt({ operationId: ALT_OPERATION });
+    return { ...base, operationId: ALT_OPERATION };
+  }
+
+  it("accepts a batch and a preview whose items carry distinct operation ids", () => {
+    expect(
+      profileSyncBatchSchema.safeParse(
+        batch(SOURCE_HOST, [item(), distinctItem()]),
+      ).success,
+    ).toBe(true);
+    expect(
+      profileSyncPreviewSchema.safeParse({
+        selection: {
+          sourceHostId: SOURCE_HOST,
+          scope: { kind: "all" },
+          destinationHostIds: [DEST_HOST],
+        },
+        revision: REVISION,
+        items: [item(), distinctItem()],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects duplicate operation ids inside a batch and inside a preview", () => {
+    expect(
+      profileSyncBatchSchema.safeParse(batch(SOURCE_HOST, [item(), item()]))
+        .success,
+    ).toBe(false);
+    expect(
+      profileSyncPreviewSchema.safeParse({
+        selection: {
+          sourceHostId: SOURCE_HOST,
+          scope: { kind: "all" },
+          destinationHostIds: [DEST_HOST],
+        },
+        revision: REVISION,
+        items: [item(), item()],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a rule that targets its own source, alone and inside a list", () => {
+    const selfTargeted: ProfileSyncRule = {
+      ...rule(1),
+      destinationHostId: SOURCE_HOST,
+    };
+    expect(profileSyncRuleSchema.safeParse(rule(1)).success).toBe(true);
+    expect(profileSyncRuleSchema.safeParse(selfTargeted).success).toBe(false);
+    expect(
+      profileSyncListSchema.safeParse({ batches: [], rules: [selfTargeted] })
+        .success,
     ).toBe(false);
   });
 });

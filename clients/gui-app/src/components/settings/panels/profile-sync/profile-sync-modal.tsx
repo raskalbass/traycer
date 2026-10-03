@@ -88,6 +88,7 @@ export function ProfileSyncModal(props: {
     canStart,
     selectionTooLarge,
     nothingStarted,
+    startRefusal,
     run,
   } = useProfileSyncModalState(props);
   return (
@@ -144,6 +145,7 @@ export function ProfileSyncModal(props: {
               hosts={hosts}
               providers={catalog.data?.providers ?? []}
               rules={list.data.rules}
+              batches={list.data.batches}
               onViewRun={setBatchId}
             />
           ) : null}
@@ -163,6 +165,7 @@ export function ProfileSyncModal(props: {
               startError={startError}
               previewMismatch={previewMismatch}
               nothingStarted={nothingStarted}
+              startRefusal={startRefusal}
               batches={list.data?.batches ?? []}
               onViewRun={setBatchId}
             />
@@ -356,6 +359,7 @@ interface SelectionContentProps {
   readonly startError: HostRpcError | null;
   readonly previewMismatch: boolean;
   readonly nothingStarted: boolean;
+  readonly startRefusal: string | null;
   readonly batches: readonly ProfileSyncBatch[];
   readonly onViewRun: (id: string) => void;
 }
@@ -374,6 +378,7 @@ function ProfileSyncSelectionContent({
   startError,
   previewMismatch,
   nothingStarted,
+  startRefusal,
   batches,
   onViewRun,
 }: SelectionContentProps): ReactNode {
@@ -381,6 +386,11 @@ function ProfileSyncSelectionContent({
   const canCheck = selectionReady && !preview.isFetching;
   return (
     <>
+      {startRefusal !== null ? (
+        <p role="alert" className="text-ui-xs text-destructive">
+          {startRefusal}
+        </p>
+      ) : null}
       {previewMismatch ? (
         <p role="alert" className="text-ui-xs text-destructive">
           The device returned a different selection. Check again.
@@ -432,6 +442,7 @@ function ProfileSyncSelectionContent({
             Recent runs
           </h3>
           {[...batches]
+            .filter((batch) => batch.sourceHostId === sourceHostId)
             .sort((left, right) => right.createdAt - left.createdAt)
             .slice(0, 5)
             .map((b) => (
@@ -545,6 +556,10 @@ function ProfileSyncDestinations({
   );
 }
 
+interface ScopedStartRefusal {
+  readonly selectionKey: string;
+  readonly message: string;
+}
 interface SyncModalModel {
   readonly sourceHostId: string;
   readonly hosts: ProfileCopyHosts;
@@ -579,6 +594,7 @@ interface SyncModalModel {
   readonly canStart: boolean;
   readonly selectionTooLarge: boolean;
   readonly nothingStarted: boolean;
+  readonly startRefusal: string | null;
   readonly run: () => void;
 }
 function useProfileSyncModalState(props: {
@@ -598,6 +614,9 @@ function useProfileSyncModalState(props: {
     hosts,
   );
   const [batchId, setBatchId] = useState<string | null>(null);
+  const [refusedStart, setRefusedStart] = useState<ScopedStartRefusal | null>(
+    null,
+  );
   const [emptyStartSelection, setEmptyStartSelection] = useState<string | null>(
     null,
   );
@@ -653,6 +672,7 @@ function useProfileSyncModalState(props: {
   const run = (): void => {
     if (currentPreview === null || selection === null) return;
     setEmptyStartSelection(null);
+    setRefusedStart(null);
     const requestKey = JSON.stringify([selection, currentPreview.revision]);
     let id = requests.current.get(requestKey);
     if (id === undefined) {
@@ -666,7 +686,12 @@ function useProfileSyncModalState(props: {
         batchId: id,
       },
       {
-        onSuccess: (result) => {
+        onSuccess: (result, request) => {
+          const refusal = startResponseRefusal(result, request, currentPreview);
+          if (refusal !== null) {
+            setRefusedStart({ selectionKey, message: refusal });
+            return;
+          }
           if (result.items.length === 0) {
             requests.current.delete(requestKey);
             setEmptyStartSelection(selectionKey);
@@ -705,8 +730,43 @@ function useProfileSyncModalState(props: {
     canStart,
     selectionTooLarge,
     nothingStarted: emptyStartSelection === selectionKey,
+    startRefusal: matchingStartRefusal(refusedStart, selectionKey),
     run,
   };
+}
+
+function matchingStartRefusal(
+  refusal: ScopedStartRefusal | null,
+  selectionKey: string,
+): string | null {
+  return refusal !== null && refusal.selectionKey === selectionKey
+    ? refusal.message
+    : null;
+}
+
+function startResponseRefusal(
+  batch: ProfileSyncBatch,
+  request: RequestOfMethod<HostRpcRegistry, "providers.profileCopy.sync.start">,
+  preview: ProfileSyncPreview,
+): string | null {
+  if (batch.sourceHostId !== request.selection.sourceHostId)
+    return "The device returned a run for another source. Check sync history again.";
+  const profiles = new Set(preview.items.map(syncItemIdentity));
+  if (
+    batch.batchId !== request.batchId ||
+    batch.automatic ||
+    batch.items.some((item) => !profiles.has(syncItemIdentity(item)))
+  )
+    return "The device returned a run outside this selection. Check sync history again.";
+  return null;
+}
+
+function syncItemIdentity(item: ProfileSyncBatch["items"][number]): string {
+  return JSON.stringify([
+    item.providerId,
+    item.sourceProfileId,
+    item.destinationHostId,
+  ]);
 }
 
 function syncPreviewForSelection(

@@ -118,6 +118,9 @@ let startBatchSource: string | null = null;
 let listFails = false;
 let listBatches: readonly ProfileSyncBatch[] = [];
 let previewSelection: ProfileSyncSelection | null = null;
+let startBatchMutator: ((batch: ProfileSyncBatch) => ProfileSyncBatch) | null =
+  null;
+let listRules: readonly ProfileSyncRule[] | null = null;
 
 interface MountOptions {
   readonly rules: readonly ProfileSyncRule[];
@@ -177,7 +180,10 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
             fatalDetails: null,
           });
         }
-        return { batches: [...listBatches], rules: [...options.rules] };
+        return {
+          batches: [...listBatches],
+          rules: [...(listRules ?? options.rules)],
+        };
       },
       "providers.profileCopy.sync.preview": (params) => ({
         selection: previewSelection ?? params,
@@ -196,13 +202,16 @@ function mountWith(options: MountOptions): MockHostMessenger<HostRpcRegistry> {
             fatalDetails: null,
           });
         }
-        return {
+        const started: ProfileSyncBatch = {
           batchId: params.batchId,
           sourceHostId: startBatchSource ?? params.selection.sourceHostId,
           createdAt: 1,
           automatic: false,
           items: [...options.startItems(params.selection)],
         };
+        return startBatchMutator === null
+          ? started
+          : startBatchMutator(started);
       },
       "providers.profileCopy.sync.resolve": (params): ProfileSyncBatch => ({
         batchId: params.batchId,
@@ -462,6 +471,8 @@ describe("ProfileSyncModal review regressions", () => {
     listFails = false;
     listBatches = [];
     previewSelection = null;
+    startBatchMutator = null;
+    listRules = null;
     resetStores();
     harness.spine = null;
     harness.hosts = [
@@ -1210,6 +1221,300 @@ describe("ProfileSyncModal review regressions", () => {
       const second = profileSyncStartSchema.parse(secondCall.params);
       expect(second.selection).toEqual(first.selection);
       expect(second.batchId).toBe(first.batchId);
+    });
+  });
+
+  describe("round 6: run ownership, automatic results link and rule capacity", () => {
+    const SELECTION_ALERT =
+      "The device returned a run outside this selection. Check sync history again.";
+    const AUTO_BATCH = "00000000-0000-4000-8000-0000000000c1";
+
+    beforeEach(() => {
+      // Radix Select reads pointer capture, which jsdom does not implement.
+      Element.prototype.hasPointerCapture = () => false;
+      Element.prototype.setPointerCapture = () => undefined;
+      Element.prototype.releasePointerCapture = () => undefined;
+    });
+
+    const queuedItem = (): ProfileSyncItem => ({
+      ...syncItem(1, DEST_HOST_ID, "queued", [
+        previewDestination(DEST_HOST_ID, "automatic"),
+      ]),
+      preview: null,
+    });
+
+    const outsideSelection: ReadonlyArray<
+      readonly [string, (batch: ProfileSyncBatch) => ProfileSyncBatch]
+    > = [
+      [
+        "batch id",
+        (batch) => ({
+          ...batch,
+          batchId: "00000000-0000-4000-8000-0000000000ff",
+        }),
+      ],
+      [
+        "provider",
+        (batch) => ({
+          ...batch,
+          items: batch.items.map((entry) => ({
+            ...entry,
+            providerId: "codex" as const,
+          })),
+        }),
+      ],
+      [
+        "destination",
+        (batch) => ({
+          ...batch,
+          items: batch.items.map((entry) => ({
+            ...entry,
+            destinationHostId: DEST_HOST_TWO_ID,
+          })),
+        }),
+      ],
+      [
+        "profile",
+        (batch) => ({
+          ...batch,
+          items: batch.items.map((entry) => ({
+            ...entry,
+            sourceProfileId: "00000000-0000-4000-8000-0000000000ee",
+          })),
+        }),
+      ],
+    ];
+
+    async function startSelected(): Promise<void> {
+      openSync("claude");
+      await pickDestinations([/Linux box/]);
+      await screen.findByText("1 profile transfers selected");
+      fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    }
+
+    function mountStart(): MockHostMessenger<HostRpcRegistry> {
+      return mountWith({
+        rules: [],
+        providers: defaultProviders(),
+        previewItems: () => [
+          syncItem(1, DEST_HOST_ID, "ready", [
+            previewDestination(DEST_HOST_ID, "automatic"),
+          ]),
+        ],
+        startItems: () => [queuedItem()],
+      });
+    }
+
+    it.each(outsideSelection)(
+      "refuses a same-source run with a different %s and keeps the selection",
+      async (_label, mutate) => {
+        startBatchMutator = mutate;
+        mountStart();
+        await startSelected();
+        expect(await screen.findByText(SELECTION_ALERT)).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "← Back" })).toBeNull();
+        expect(
+          screen
+            .getByRole("checkbox", { name: /Linux box/ })
+            .getAttribute("aria-checked"),
+        ).toBe("true");
+      },
+    );
+
+    it("opens a matching run as before", async () => {
+      mountStart();
+      await startSelected();
+      expect(
+        await screen.findByRole("button", { name: "← Back" }),
+      ).toBeTruthy();
+      expect(screen.queryByText(SELECTION_ALERT)).toBeNull();
+    });
+
+    function autoBatch(overrides: Partial<ProfileSyncBatch>): ProfileSyncBatch {
+      return {
+        batchId: AUTO_BATCH,
+        sourceHostId: SOURCE_HOST_ID,
+        createdAt: 1,
+        automatic: true,
+        items: [
+          {
+            ...syncItem(1, DEST_HOST_ID, "synced", [
+              previewDestination(DEST_HOST_ID, "automatic"),
+            ]),
+            preview: null,
+          },
+        ],
+        ...overrides,
+      };
+    }
+
+    async function openAutomatic(): Promise<void> {
+      openSync(null);
+      fireEvent.mouseDown(
+        await screen.findByRole("tab", { name: /Automatic sync/ }),
+        { button: 0 },
+      );
+    }
+
+    it("offers View results for a rule only when its link resolves to a listed same-source automatic batch for its destination, and opens it", async () => {
+      listBatches = [autoBatch({})];
+      mount([{ ...SAVED_RULE, batchId: AUTO_BATCH }]);
+      await openAutomatic();
+      await screen.findByRole("heading", { name: "Linux box" });
+      fireEvent.click(
+        await screen.findByRole("button", { name: "View results" }),
+      );
+      expect(
+        await screen.findByRole("button", { name: "← Back" }),
+      ).toBeTruthy();
+    });
+
+    it.each([
+      ["dangling", [] as ProfileSyncBatch[]],
+      ["not automatic", [autoBatch({ automatic: false })]],
+      [
+        "another destination",
+        [
+          autoBatch({
+            items: [
+              {
+                ...syncItem(1, DEST_HOST_TWO_ID, "synced", [
+                  previewDestination(DEST_HOST_TWO_ID, "automatic"),
+                ]),
+                preview: null,
+              },
+            ],
+          }),
+        ],
+      ],
+      ["another source", [autoBatch({ sourceHostId: "foreign-source-host" })]],
+    ])("hides View results for a %s link", async (_label, batches) => {
+      listBatches = batches;
+      mount([{ ...SAVED_RULE, batchId: AUTO_BATCH }]);
+      await openAutomatic();
+      await screen.findByRole("heading", { name: "Linux box" });
+      expect(screen.queryByRole("button", { name: "View results" })).toBeNull();
+    });
+
+    function ruleSet(count: number): ProfileSyncRule[] {
+      return Array.from({ length: count }, (_unused, index) => ({
+        ...SAVED_RULE,
+        ruleId: `00000000-0000-4000-8000-${String(index + 1000).padStart(12, "0")}`,
+        destinationHostId: `rule-dest-${String(index)}`,
+      }));
+    }
+
+    it("at 64 rules Add device is disabled with the explanation, and existing rules stay manageable", async () => {
+      mount(ruleSet(64));
+      await openAutomatic();
+      expect(
+        await screen.findByText(
+          "Automatic sync supports up to 64 device rules. Stop a rule to add another device.",
+        ),
+      ).toBeTruthy();
+      expect(
+        screen
+          .getByRole("button", { name: "Add device" })
+          .hasAttribute("disabled"),
+      ).toBe(true);
+      expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(64);
+      expect(screen.getAllByRole("button", { name: "Pause" })).toHaveLength(64);
+      expect(screen.getAllByRole("button", { name: "Stop…" })).toHaveLength(64);
+    });
+
+    it("at 63 rules with an unused destination Add device is enabled and no capacity text shows", async () => {
+      mount(ruleSet(63));
+      await openAutomatic();
+      await screen.findByText("Keep profiles in sync");
+      expect(
+        screen
+          .getByRole("button", { name: "Add device" })
+          .hasAttribute("disabled"),
+      ).toBe(false);
+      expect(screen.queryByText(/supports up to 64 device rules/)).toBeNull();
+    });
+
+    it("an open new-rule editor cannot save once the list reaches 64 rules", async () => {
+      const messenger = mount(ruleSet(63));
+      await openAutomatic();
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Add device" }),
+      );
+      fireEvent.keyDown(
+        await screen.findByRole("combobox", { name: "Destination device" }),
+        { key: "ArrowDown" },
+      );
+      fireEvent.click(await screen.findByRole("option", { name: /Linux box/ }));
+      const save = await screen.findByRole("button", {
+        name: "Enable automatic sync",
+      });
+      expect(save.hasAttribute("disabled")).toBe(false);
+      listRules = ruleSet(64);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("button", { name: "Enable automatic sync" })
+            .hasAttribute("disabled"),
+        ).toBe(true),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Enable automatic sync" }),
+      );
+      expect(
+        messenger.calls.filter(
+          (call) => call.method === "providers.profileCopy.sync.saveRule",
+        ),
+      ).toHaveLength(0);
+    });
+
+    it("refuses the whole rules view when any rule names another source", async () => {
+      mount([
+        SAVED_RULE,
+        {
+          ...SAVED_RULE,
+          ruleId: "00000000-0000-4000-8000-0000000000d1",
+          sourceHostId: DEST_HOST_ID,
+          destinationHostId: DEST_HOST_TWO_ID,
+        },
+      ]);
+      await openAutomatic();
+      expect(
+        await screen.findByText(
+          "The device returned rules for another source. Check sync history again.",
+        ),
+      ).toBeTruthy();
+      for (const name of ["Edit", "Pause", "Stop…", "Add device"])
+        expect(screen.queryByRole("button", { name })).toBeNull();
+      expect(screen.queryByRole("heading", { name: "Linux box" })).toBeNull();
+    });
+
+    it("lists only the captured source's runs under Recent runs", async () => {
+      listBatches = [1, 2].map((minute): ProfileSyncBatch => ({
+        batchId: `00000000-0000-4000-8000-00000000010${String(minute)}`,
+        sourceHostId: SOURCE_HOST_ID,
+        createdAt: minute * 60_000,
+        automatic: false,
+        items: [],
+      }));
+      listBatches = [
+        ...listBatches,
+        {
+          batchId: "00000000-0000-4000-8000-000000000199",
+          sourceHostId: DEST_HOST_ID,
+          createdAt: 9 * 60_000,
+          automatic: false,
+          items: [],
+        },
+      ];
+      mount([]);
+      openSync(null);
+      await screen.findByText("Recent runs");
+      expect(
+        screen.getAllByRole("button", { name: /profile transfers/ }),
+      ).toHaveLength(2);
     });
   });
 });
