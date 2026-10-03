@@ -539,6 +539,7 @@ import {
   epicCreateChatV10,
   epicCreateChatV11,
   epicCreateChatV12,
+  epicContinueSubagentV10,
   epicCreateCommentThreadV10,
   epicCreateTuiAgentV10,
   epicCreateTuiAgentV11,
@@ -7763,6 +7764,18 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
       versions: {
         0: {
           contract: epicReparentArtifactV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "epic.continueSubagent": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: epicContinueSubagentV10,
           upgradeFromPreviousVersion: null,
         },
       },
