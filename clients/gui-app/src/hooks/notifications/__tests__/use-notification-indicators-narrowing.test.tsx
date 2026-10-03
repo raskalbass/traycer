@@ -4,7 +4,7 @@
  * projection, and two entities under one provider must narrow independently.
  * Full mixed/local-mode semantics stay owned by `use-notification-indicators-query.test.tsx`.
  */
-import { memo, useLayoutEffect, type ReactNode } from "react";
+import { memo, useLayoutEffect, useState, type ReactNode } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostNotificationsCloudFeedRow } from "@traycer/protocol/host/notifications/contracts";
@@ -277,5 +277,48 @@ describe("NotificationIndicatorsProvider per-entity narrowing", () => {
     // chat-1's own flags never changed - must not fan out to it.
     expect(screen.getByTestId("flag-chat-1").textContent).toBe("none");
     expect(providerRenders["chat-1"]).toBe(afterMountOne);
+  });
+
+  it("hands a consumer that mounts in the commit of a change the new state at its first render", () => {
+    const firstReads: string[] = [];
+    const Late = (): ReactNode => {
+      const state = useSurfaceNotificationIndicatorState(
+        { epicId: EPIC_ID, chatId: "chat-late" },
+        null,
+      );
+      // What the first render saw, whatever it sees later.
+      const [first] = useState(state.pendingApproval ? "approval" : "none");
+      useLayoutEffect(() => {
+        firstReads.push(first);
+      }, [first]);
+      return null;
+    };
+    const lit: SurfaceNotificationIndicators = {
+      epics: {},
+      chats: {
+        "chat-late": {
+          unreadFailure: false,
+          pendingFork: false,
+          pendingApproval: true,
+          pendingInterview: false,
+          unreadDone: false,
+        },
+      },
+    };
+    const view = render(
+      <NotificationIndicatorsProvider indicators={emptyIndicators()}>
+        {null}
+      </NotificationIndicatorsProvider>,
+    );
+    // A task that moves section remounts its row in the commit that changes
+    // its state: the row's waiting pulse is keyed on seeing the state CHANGE
+    // after mount, so it must not see the old state first.
+    view.rerender(
+      <NotificationIndicatorsProvider indicators={lit}>
+        <Late />
+      </NotificationIndicatorsProvider>,
+    );
+
+    expect(firstReads).toEqual(["approval"]);
   });
 });

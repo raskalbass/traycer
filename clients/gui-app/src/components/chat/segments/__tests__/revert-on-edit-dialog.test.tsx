@@ -106,14 +106,18 @@ describe("<RevertOnEditDialog /> opt-out reset", () => {
           return real;
         }
         return new Proxy(real, {
-          get(target, prop, receiver) {
+          get(target, prop) {
             if (prop === "animationName") {
               return elt.getAttribute("data-state") === "closed"
                 ? "radix-exit"
                 : "radix-enter";
             }
-            const value: unknown = Reflect.get(target, prop, receiver);
-            return value;
+            // jsdom 30's CSSStyleProperties getters and methods reject a
+            // Proxy as `this`, so they run against the real object.
+            const value: unknown = Reflect.get(target, prop, target);
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]): unknown =>
+              Reflect.apply(value, target, args);
           },
         });
       });

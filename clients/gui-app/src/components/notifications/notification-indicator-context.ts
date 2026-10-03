@@ -15,11 +15,17 @@ const EMPTY_INDICATORS: SurfaceNotificationIndicators = {
   chats: {},
 };
 
+/** What a consumer needs of the provider's store: to read it and to hear of a change. */
+export type ReadonlyIndicatorsStore = Pick<
+  StoreApi<SurfaceNotificationIndicators>,
+  "getState" | "getInitialState" | "subscribe"
+>;
+
 export const NotificationIndicatorsContext =
   createContext<SurfaceNotificationIndicators>(EMPTY_INDICATORS);
 
 export const NotificationIndicatorStoreContext =
-  createContext<StoreApi<SurfaceNotificationIndicators> | null>(null);
+  createContext<ReadonlyIndicatorsStore | null>(null);
 
 const emptySubscribe = () => () => undefined;
 
