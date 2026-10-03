@@ -31,7 +31,7 @@ import {
   ProviderProfilesRefreshButton,
 } from "./provider-rate-limit-section";
 import { ProfileEditDialog } from "./provider-profile-edit-dialog";
-import { ProfileCopyEntryButton } from "./profile-copy/profile-copy-entry-button";
+import { ProfileSyncEntryButton } from "./profile-sync/profile-sync-entry-button";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import type { FailedProviderProfileAttempt } from "./add-provider-profile-dialog";
 import {
@@ -285,7 +285,11 @@ export function ProviderProfileScopedSection(
       <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-ui-sm font-medium text-foreground">Profiles</div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
+            <ProfileSyncEntryButton
+              hostId={hostId}
+              providerId={state.providerId}
+            />
             <TooltipWrapper
               label={addProfileDisabledReason}
               side="top"
@@ -395,11 +399,6 @@ export function ProviderProfileScopedSection(
               </span>
             </TooltipWrapper>
           ) : null}
-          <ProfileCopyEntryButton
-            hostId={hostId}
-            providerId={state.providerId}
-            profile={selectedProfile}
-          />
           <TooltipWrapper
             label={
               managementHeldReason ??

@@ -1,0 +1,637 @@
+import type { HostRpcRegistry } from "@/lib/host";
+import type { ProfileSyncList } from "@traycer/protocol/host/profile-sync-schemas";
+import type { Dispatch, SetStateAction } from "react";
+import type { UseQueryResult, UseMutationResult } from "@tanstack/react-query";
+import type {
+  HostRpcError,
+  RequestOfMethod,
+  ResponseOfMethod,
+} from "@traycer-clients/shared/host-transport/host-messenger";
+import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
+import type { ProfileSyncBatch } from "@traycer/protocol/host/profile-sync-schemas";
+import { useId, useRef, useState, type ReactNode } from "react";
+import { RefreshCw } from "lucide-react";
+import type {
+  ProfileSyncSelection,
+  ProfileSyncPreview,
+} from "@traycer/protocol/host/profile-sync-schemas";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MutedAgentSpinner } from "@/components/ui/agent-spinning-dots";
+import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
+import { useProvidersListForClient } from "@/hooks/providers/use-providers-list-query";
+import {
+  useProfileSyncList,
+  useProfileSyncPreview,
+  useProfileSyncStart,
+} from "@/hooks/providers/use-profile-sync";
+import { useProfileCopyFlowStore } from "@/stores/settings/profile-copy-flow-store";
+import { useDebouncedValue } from "@/hooks/ui/use-debounced-value";
+import {
+  PROFILE_COPY_PROVIDERS,
+  profileCopyPreviewRecord,
+  type ProfileCopyWireProvider,
+} from "@/lib/profile-copy/profile-copy-model";
+import { presentProfileCopyPreview } from "@/lib/profile-copy/profile-copy-presentation";
+import {
+  hostOptionStatusWord,
+  AVAILABLE_HOST_ROW_SURFACE_STATE,
+} from "../../host-scope/host-option-model";
+import {
+  profileCopyProviderLabel,
+  profileCopyRequestErrorText,
+  type ProfileCopyHosts,
+} from "../profile-copy/profile-copy-shared";
+import { ProfileSyncProviderPicker } from "./profile-sync-provider-picker";
+import { ProfileSyncRules } from "./profile-sync-rules";
+import { ProfileSyncResults } from "./profile-sync-results";
+import { SYNC_STATE_LABELS } from "./profile-sync-state";
+
+export function ProfileSyncModal(props: {
+  readonly sourceHostId: string;
+  readonly initialProvider: ProfileCopyWireProvider | null;
+  readonly hosts: ProfileCopyHosts;
+}): ReactNode {
+  const {
+    sourceHostId,
+    hosts,
+    tab,
+    setTab,
+    selected,
+    setSelected,
+    destinations,
+    setDestinations,
+    batchId,
+    setBatchId,
+    close,
+    catalog,
+    list,
+    selection,
+    selectionKey,
+    settledKey,
+    preview,
+    currentPreview,
+    start,
+    batch,
+    sourceName,
+    canStart,
+    run,
+  } = useProfileSyncModalState(props);
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Sync profiles</DialogTitle>
+        <DialogDescription>
+          From {sourceName} to your selected devices.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="px-5 pt-3">
+          <Tabs
+            value={tab}
+            onValueChange={(value) => {
+              setTab(value);
+              setBatchId(null);
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="now">Sync now</TabsTrigger>
+              <TabsTrigger value="automatic">
+                {automaticTabLabel(list.data)}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-5 py-4">
+          <ProfileSyncLoadStatus
+            catalog={catalog}
+            list={list}
+            sourceName={sourceName}
+          />
+          {batch !== null ? (
+            <>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="self-start"
+                onClick={() => setBatchId(null)}
+              >
+                ← Back
+              </Button>
+              <ProfileSyncResults batch={batch} hosts={hosts} />
+            </>
+          ) : null}
+          {batch === null && tab === "automatic" ? (
+            <ProfileSyncRules
+              hostId={sourceHostId}
+              hosts={hosts}
+              providers={catalog.data?.providers ?? []}
+              rules={list.data?.rules ?? []}
+              onViewRun={setBatchId}
+            />
+          ) : null}
+          {batch === null && tab === "now" ? (
+            <ProfileSyncSelectionContent
+              sourceHostId={sourceHostId}
+              hosts={hosts}
+              providers={catalog.data?.providers ?? []}
+              selected={selected}
+              setSelected={setSelected}
+              destinations={destinations}
+              setDestinations={setDestinations}
+              currentPreview={currentPreview}
+              preview={preview}
+              selectionReady={selection !== null && selectionKey === settledKey}
+              checking={preview.isFetching || selectionKey !== settledKey}
+              startError={start.error}
+              batches={list.data?.batches ?? []}
+              onViewRun={setBatchId}
+            />
+          ) : null}
+        </div>
+      </div>
+      <ProfileSyncFooter
+        tab={tab}
+        batchId={batchId}
+        selected={selected}
+        destinations={destinations}
+        currentPreview={currentPreview}
+        close={close}
+        canStart={canStart}
+        run={run}
+        start={start}
+      />
+    </>
+  );
+}
+function automaticTabLabel(list: ProfileSyncList | undefined): string {
+  return list && list.rules.length > 0
+    ? `Automatic sync (${list.rules.length})`
+    : "Automatic sync";
+}
+
+function ProfileSyncFooter({
+  tab,
+  batchId,
+  selected,
+  destinations,
+  currentPreview,
+  close,
+  canStart,
+  run,
+  start,
+}: Pick<
+  SyncModalModel,
+  | "tab"
+  | "batchId"
+  | "selected"
+  | "destinations"
+  | "currentPreview"
+  | "close"
+  | "canStart"
+  | "run"
+  | "start"
+>): ReactNode {
+  return (
+    <DialogFooter>
+      {tab === "now" && batchId === null ? (
+        <>
+          <p className="mr-auto self-center text-ui-xs text-muted-foreground">
+            {selectionStatus(
+              selected.length,
+              destinations.length,
+              currentPreview,
+            )}
+          </p>
+          <Button variant="outline" onClick={close}>
+            Cancel
+          </Button>
+          <Button disabled={!canStart} onClick={run}>
+            {start.isPending ? <MutedAgentSpinner /> : null}Sync now
+          </Button>
+        </>
+      ) : (
+        <Button onClick={close}>Done</Button>
+      )}
+    </DialogFooter>
+  );
+}
+function ProfileSyncLoadStatus({
+  catalog,
+  list,
+  sourceName,
+}: Pick<SyncModalModel, "catalog" | "list" | "sourceName">): ReactNode {
+  return (
+    <>
+      {" "}
+      {catalog.isPending || list.isPending ? (
+        <div className="flex gap-2 text-ui-xs text-muted-foreground">
+          <MutedAgentSpinner />
+          Loading profiles and sync history…
+        </div>
+      ) : null}
+      {catalog.error ? (
+        <p role="alert" className="text-ui-xs text-destructive">
+          {profileCopyRequestErrorText(catalog.error, sourceName)}
+        </p>
+      ) : null}
+      {list.error ? (
+        <p role="alert" className="text-ui-xs text-destructive">
+          {profileCopyRequestErrorText(list.error, sourceName)}{" "}
+          <Button size="xs" variant="ghost" onClick={() => void list.refetch()}>
+            Try again
+          </Button>
+        </p>
+      ) : null}
+    </>
+  );
+}
+function ProfileSyncPreviewDetails(props: {
+  readonly preview: ProfileSyncPreview | null;
+  readonly destinationId: string;
+  readonly hosts: ProfileCopyHosts;
+  readonly checking: boolean;
+}): ReactNode {
+  if (props.checking)
+    return (
+      <p className="mt-2 flex items-center gap-2 text-ui-xs text-muted-foreground">
+        <MutedAgentSpinner />
+        Checking profiles…
+      </p>
+    );
+  if (props.preview === null) return null;
+  const items = props.preview.items.filter(
+    (i) => i.destinationHostId === props.destinationId,
+  );
+  const attention = items.filter(
+    (i) => i.state !== "ready" && i.state !== "synced",
+  ).length;
+  return (
+    <details className="mt-2 text-ui-xs">
+      <summary className="cursor-pointer text-muted-foreground">
+        {items.length} profiles ·{" "}
+        {attention ? `${attention} need review` : "Ready"}
+      </summary>
+      <div className="mt-2 flex flex-col gap-2">
+        {items.map((i) => {
+          const preview = i.preview?.destinations[0];
+          const presentation =
+            preview === undefined || i.outcome !== null
+              ? null
+              : presentProfileCopyPreview(profileCopyPreviewRecord(preview), {
+                  source: props.hosts.nameFor(
+                    props.preview?.selection.sourceHostId ?? "",
+                  ),
+                  destination: props.hosts.nameFor(i.destinationHostId),
+                  provider: profileCopyProviderLabel(i.providerId),
+                  profile: i.name,
+                });
+          return (
+            <div key={i.operationId}>
+              <p>
+                {profileCopyProviderLabel(i.providerId)} / {i.name}
+              </p>
+              <p className="text-muted-foreground">
+                {presentation?.body ?? SYNC_STATE_LABELS[i.state]}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
+function selectionStatus(
+  providers: number,
+  destinations: number,
+  preview: ProfileSyncPreview | null,
+): string {
+  if (providers === 0) return "Choose providers.";
+  if (destinations === 0) return "Choose destination devices.";
+  if (preview === null) return "Checking selection…";
+  return `${preview.items.length} profile transfers selected`;
+}
+
+interface SelectionContentProps {
+  readonly sourceHostId: string;
+  readonly hosts: ProfileCopyHosts;
+  readonly providers: readonly ProviderCliState[];
+  readonly selected: ProfileCopyWireProvider[];
+  readonly setSelected: (value: ProfileCopyWireProvider[]) => void;
+  readonly destinations: string[];
+  readonly setDestinations: Dispatch<SetStateAction<string[]>>;
+  readonly currentPreview: ProfileSyncPreview | null;
+  readonly preview: UseQueryResult<ProfileSyncPreview, HostRpcError>;
+  readonly selectionReady: boolean;
+  readonly checking: boolean;
+  readonly startError: HostRpcError | null;
+  readonly batches: readonly ProfileSyncBatch[];
+  readonly onViewRun: (id: string) => void;
+}
+function ProfileSyncSelectionContent({
+  sourceHostId,
+  hosts,
+  providers,
+  selected,
+  setSelected,
+  destinations,
+  setDestinations,
+  currentPreview,
+  preview,
+  selectionReady,
+  checking,
+  startError,
+  batches,
+  onViewRun,
+}: SelectionContentProps): ReactNode {
+  const sourceName = hosts.nameFor(sourceHostId);
+  const canCheck = selectionReady && !preview.isFetching;
+  return (
+    <>
+      <ProfileSyncProviderPicker
+        providers={providers}
+        selected={selected}
+        onChange={setSelected}
+      />
+      <ProfileSyncDestinations
+        sourceHostId={sourceHostId}
+        hosts={hosts}
+        destinations={destinations}
+        setDestinations={setDestinations}
+        preview={currentPreview}
+        checking={checking}
+        canCheck={canCheck}
+        check={() => {
+          if (selectionReady) void preview.refetch();
+        }}
+      />
+
+      {preview.error ? (
+        <p role="alert" className="text-ui-xs text-destructive">
+          {profileCopyRequestErrorText(preview.error, sourceName)}
+        </p>
+      ) : null}
+      {currentPreview?.items.length === 0 ? (
+        <p className="text-ui-sm text-muted-foreground">
+          No eligible profiles were found for this selection.
+        </p>
+      ) : null}
+      {startError ? (
+        <p role="alert" className="text-ui-xs text-destructive">
+          {startError.code === "E_INVALID_ARGUMENT"
+            ? "Profiles changed. Check again before syncing."
+            : "The start could not be confirmed. Check recent runs or retry this same selection; it will not create a second transfer."}
+        </p>
+      ) : null}
+      {batches.length ? (
+        <section className="flex flex-col gap-2 border-t border-border/50 pt-3">
+          <h3 className="text-ui-xs font-medium text-muted-foreground">
+            Recent runs
+          </h3>
+          {batches
+            .slice(-5)
+            .reverse()
+            .map((b) => (
+              <Button
+                key={b.batchId}
+                size="sm"
+                variant="ghost"
+                className="justify-between"
+                onClick={() => onViewRun(b.batchId)}
+              >
+                <span>{new Date(b.createdAt).toLocaleString()}</span>
+                <span>{b.items.length} profile transfers</span>
+              </Button>
+            ))}
+        </section>
+      ) : null}
+    </>
+  );
+}
+function ProfileSyncDestinations({
+  sourceHostId,
+  hosts,
+  destinations,
+  setDestinations,
+  preview,
+  checking,
+  canCheck,
+  check,
+}: {
+  readonly sourceHostId: string;
+  readonly hosts: ProfileCopyHosts;
+  readonly destinations: string[];
+  readonly setDestinations: Dispatch<SetStateAction<string[]>>;
+  readonly preview: ProfileSyncPreview | null;
+  readonly checking: boolean;
+  readonly canCheck: boolean;
+  readonly check: () => void;
+}): ReactNode {
+  const id = useId();
+  const candidates = hosts.options.filter((h) => h.hostId !== sourceHostId);
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-ui-sm font-medium">Destination devices</h3>
+      {candidates.length === 0 ? (
+        <p className="text-ui-sm text-muted-foreground">
+          Connect another device to your account to sync profiles to it.
+        </p>
+      ) : (
+        <div className="divide-y divide-border/50 rounded-lg border border-border/60">
+          {candidates.map((host) => (
+            <div key={host.hostId} className="p-3">
+              <label
+                htmlFor={`${id}-${host.hostId}`}
+                className="flex cursor-pointer items-center gap-3"
+              >
+                <Checkbox
+                  id={`${id}-${host.hostId}`}
+                  checked={destinations.includes(host.hostId)}
+                  disabled={
+                    !destinations.includes(host.hostId) &&
+                    destinations.length >= 16
+                  }
+                  onCheckedChange={(checked) =>
+                    setDestinations((current) =>
+                      checked === true
+                        ? [...current, host.hostId]
+                        : current.filter((id) => id !== host.hostId),
+                    )
+                  }
+                />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-ui-sm font-medium">
+                    {host.name}
+                  </span>
+                  <span className="text-ui-xs text-muted-foreground">
+                    {[
+                      host.platform,
+                      hostOptionStatusWord(
+                        host,
+                        AVAILABLE_HOST_ROW_SURFACE_STATE,
+                      ),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </span>
+              </label>
+              {destinations.includes(host.hostId) ? (
+                <ProfileSyncPreviewDetails
+                  preview={preview}
+                  destinationId={host.hostId}
+                  hosts={hosts}
+                  checking={checking}
+                />
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+      <Button
+        size="xs"
+        variant="ghost"
+        className="self-start"
+        disabled={!canCheck}
+        onClick={check}
+      >
+        <RefreshCw data-icon="inline-start" />
+        Check again
+      </Button>
+    </section>
+  );
+}
+
+interface SyncModalModel {
+  readonly sourceHostId: string;
+  readonly hosts: ProfileCopyHosts;
+  readonly tab: string;
+  readonly setTab: Dispatch<SetStateAction<string>>;
+  readonly selected: ProfileCopyWireProvider[];
+  readonly setSelected: Dispatch<SetStateAction<ProfileCopyWireProvider[]>>;
+  readonly destinations: string[];
+  readonly setDestinations: Dispatch<SetStateAction<string[]>>;
+  readonly batchId: string | null;
+  readonly setBatchId: Dispatch<SetStateAction<string | null>>;
+  readonly close: () => void;
+  readonly catalog: UseQueryResult<
+    ResponseOfMethod<HostRpcRegistry, "providers.list">,
+    HostRpcError
+  >;
+  readonly list: UseQueryResult<ProfileSyncList, HostRpcError>;
+  readonly selection: ProfileSyncSelection | null;
+  readonly selectionKey: string;
+  readonly settledKey: string;
+  readonly preview: UseQueryResult<ProfileSyncPreview, HostRpcError>;
+  readonly currentPreview: ProfileSyncPreview | null;
+  readonly start: UseMutationResult<
+    ProfileSyncBatch,
+    HostRpcError,
+    RequestOfMethod<HostRpcRegistry, "providers.profileCopy.sync.start">
+  >;
+  readonly batch: ProfileSyncBatch | null;
+  readonly sourceName: string;
+  readonly canStart: boolean;
+  readonly run: () => void;
+}
+function useProfileSyncModalState(props: {
+  readonly sourceHostId: string;
+  readonly hosts: ProfileCopyHosts;
+  readonly initialProvider: ProfileCopyWireProvider | null;
+}): SyncModalModel {
+  const { sourceHostId, hosts } = props;
+  const [tab, setTab] = useState("now");
+  const [selected, setSelected] = useState<ProfileCopyWireProvider[]>(
+    props.initialProvider === null
+      ? [...PROFILE_COPY_PROVIDERS]
+      : [props.initialProvider],
+  );
+  const [destinations, setDestinations] = useState<string[]>([]);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const requests = useRef(new Map<string, string>());
+  const close = useProfileCopyFlowStore((s) => s.close);
+  const catalog = useProvidersListForClient(
+    useHostClientForHostId(sourceHostId),
+    { enabled: true, subscribed: true },
+  );
+  const list = useProfileSyncList(sourceHostId);
+  const selection: ProfileSyncSelection | null =
+    selected.length > 0 && destinations.length > 0
+      ? {
+          sourceHostId,
+          scope: { kind: "selected", providers: selected },
+          destinationHostIds: destinations,
+        }
+      : null;
+  const selectionKey = JSON.stringify(selection);
+  const settledKey = useDebouncedValue(selectionKey, 400);
+  const preview = useProfileSyncPreview(
+    sourceHostId,
+    selectionKey === settledKey && tab === "now" && batchId === null
+      ? selection
+      : null,
+  );
+  const currentPreview =
+    preview.isSuccess && selectionKey === settledKey ? preview.data : null;
+  const start = useProfileSyncStart(sourceHostId);
+  const batch =
+    list.data?.batches.find((b) => b.batchId === batchId) ??
+    (start.data?.batchId === batchId ? start.data : null);
+  const sourceName = hosts.nameFor(sourceHostId);
+  const canStart =
+    currentPreview !== null &&
+    currentPreview.items.some((i) =>
+      ["ready", "synced", "queued", "copying"].includes(i.state),
+    ) &&
+    !preview.isFetching &&
+    !start.isPending;
+  const run = (): void => {
+    if (currentPreview === null) return;
+    let id = requests.current.get(currentPreview.revision);
+    if (id === undefined) {
+      id = crypto.randomUUID();
+      requests.current.set(currentPreview.revision, id);
+    }
+    start.mutate(
+      {
+        selection: currentPreview.selection,
+        revision: currentPreview.revision,
+        batchId: id,
+      },
+      { onSuccess: (result) => setBatchId(result.batchId) },
+    );
+  };
+  return {
+    sourceHostId,
+    hosts,
+    tab,
+    setTab,
+    selected,
+    setSelected,
+    destinations,
+    setDestinations,
+    batchId,
+    setBatchId,
+    close,
+    catalog,
+    list,
+    selection,
+    selectionKey,
+    settledKey,
+    preview,
+    currentPreview,
+    start,
+    batch,
+    sourceName,
+    canStart,
+    run,
+  };
+}

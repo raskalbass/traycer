@@ -1,3 +1,5 @@
+import { cn } from "@/lib/utils";
+import { ProfileSyncModal } from "../profile-sync/profile-sync-modal";
 import type { ReactNode } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
@@ -20,6 +22,14 @@ function ProfileCopyFlowBody(props: {
   const { view } = props;
   const hosts = useProfileCopyHosts();
   switch (view.kind) {
+    case "sync":
+      return (
+        <ProfileSyncModal
+          sourceHostId={view.sourceHostId}
+          initialProvider={view.providerId}
+          hosts={hosts}
+        />
+      );
     case "new":
       return (
         <ProfileCopyNewCopy
@@ -71,7 +81,12 @@ export function ProfileCopyFlowHost(): ReactNode {
       {view !== null ? (
         <DialogContent
           layout="banded"
-          className="flex max-h-[min(85dvh,44rem)] flex-col overflow-hidden sm:max-w-[min(34rem,var(--safe-area-width))]"
+          className={cn(
+            "flex max-h-[min(85dvh,44rem)] flex-col overflow-hidden",
+            view.kind === "sync"
+              ? "sm:max-w-2xl"
+              : "sm:max-w-[min(34rem,var(--safe-area-width))]",
+          )}
         >
           <ProfileCopyFlowBody key={session} view={view} />
         </DialogContent>
