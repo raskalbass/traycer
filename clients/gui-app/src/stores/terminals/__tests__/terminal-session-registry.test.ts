@@ -1158,8 +1158,8 @@ describe("TerminalSessionRegistry", () => {
 
       // The real reconnect: a natural reconnecting -> open cycle on the
       // CURRENT (already-reopened "cache") stream replays every
-      // still-unacked write verbatim - no need to rebuild the transport via
-      // `retryTransport` when the existing stream client itself redials.
+      // still-unacked write verbatim: the existing stream client redials
+      // itself.
       const beforeReconnectFrameCount = owned.sentFrames().length;
       owned.callbacks().onConnectionStatus("open", null);
 
