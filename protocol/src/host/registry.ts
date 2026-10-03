@@ -7781,6 +7781,10 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
       },
       downgradePathsFromLatest: {},
     },
+    // Optional: a host without it cannot continue a subagent at all, and
+    // there is no older verb that could stand in. The GUI reads the host's
+    // manifest and does not offer the control there.
+    degrade: { kind: "unsupported" },
   },
   "epic.createChat": {
     1: {
