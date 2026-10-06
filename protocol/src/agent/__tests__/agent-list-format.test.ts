@@ -701,6 +701,184 @@ describe("session state token", () => {
   });
 });
 
+describe("activity token", () => {
+  it("renders working or idle on a local row from `active`", () => {
+    const output = formatAgentListResponse(
+      response(
+        [
+          agent({ id: "caller", isSelf: true }),
+          agent({ id: "busy", active: true }),
+          agent({ id: "quiet", active: false }),
+        ],
+        "caller",
+      ),
+    );
+
+    expect(agentLine(output, "busy ")).toContain("activity: working");
+    expect(agentLine(output, "quiet ")).toContain("activity: idle");
+  });
+
+  it("renders no token on a non-local row, whatever `active` says", () => {
+    const output = formatAgentListResponse(
+      response(
+        [
+          agent({ id: "caller", isSelf: true }),
+          agent({ id: "remote", isLocal: false, active: true }),
+        ],
+        "caller",
+      ),
+    );
+
+    expect(agentLine(output, "remote ")).not.toContain("activity:");
+  });
+
+  it("explains the token only when a row renders it, and pins the load-bearing phrases", () => {
+    const withToken = formatAgentListResponse(
+      response(
+        [agent({ id: "caller", isSelf: true }), agent({ id: "peer" })],
+        "caller",
+      ),
+    );
+    expect(withToken).toContain("activity: <state>:");
+    expect(withToken).toContain(
+      "a working row may already have ended its turn",
+    );
+    expect(withToken).toContain("reads idle even while it is still working");
+    expect(withToken).toContain("Your own row carries none");
+    expect(withToken).toContain("it has NOT necessarily replied to you");
+    expect(withToken).toContain("that is not the same as idle");
+
+    const allRemote = formatAgentListResponse(
+      response(
+        [
+          agent({ id: "caller", isSelf: true, isLocal: false }),
+          agent({ id: "remote", isLocal: false, active: true }),
+        ],
+        "caller",
+      ),
+    );
+    expect(allRemote).not.toContain("activity:");
+
+    expect(formatAgentListResponse(response([], "caller"))).not.toContain(
+      "activity:",
+    );
+  });
+
+  it("renders no token on the caller's own row, and no legend line when it is the only local row", () => {
+    const output = formatAgentListResponse(
+      response(
+        [
+          agent({ id: "caller", isSelf: true, active: true }),
+          agent({ id: "remote", isLocal: false }),
+        ],
+        "caller",
+      ),
+    );
+
+    expect(agentLine(output, "caller ")).not.toContain("activity:");
+    expect(output).not.toContain("activity: <state>:");
+  });
+
+  it("places the token after the location and before the session token", () => {
+    const output = formatAgentListResponse(
+      response(
+        [
+          agent({ id: "caller", isSelf: true }),
+          agent({
+            id: "full",
+            active: true,
+            folderPaths: ["/repo/wt"],
+            isWorktree: true,
+            sessionState: "running",
+          }),
+        ],
+        "caller",
+      ),
+    );
+    const line = agentLine(output, "full ");
+
+    expect(line.indexOf("worktree:")).toBeGreaterThan(-1);
+    expect(line.indexOf("activity: working")).toBeGreaterThan(
+      line.indexOf("worktree:"),
+    );
+    expect(line.indexOf("session: running")).toBeGreaterThan(
+      line.indexOf("activity: working"),
+    );
+  });
+
+  it("leaves the token and its legend line off a compact listing", () => {
+    const output = formatAgentListPage(
+      response(
+        [
+          agent({ id: "caller", isSelf: true }),
+          agent({ id: "busy", active: true }),
+        ],
+        "caller",
+      ),
+      { detail: "compact", page: null },
+    );
+
+    expect(agentLine(output, "busy ")).toBe("busy gui/claude R/S");
+    expect(output).not.toContain("activity:");
+  });
+
+  it("explains the token only on a page that prints one", () => {
+    // Two rows: the caller, then a local peer. The first page of one row
+    // prints only the caller, which carries no token.
+    const listing = response(
+      [
+        agent({ id: "caller", isSelf: true }),
+        agent({ id: "busy", active: true }),
+      ],
+      "caller",
+    );
+
+    const first = formatAgentListPage(listing, {
+      detail: "full",
+      page: { offset: 0, limit: 1 },
+    });
+    expect(first).not.toContain("activity:");
+
+    const second = formatAgentListPage(listing, {
+      detail: "full",
+      page: { offset: 1, limit: 1 },
+    });
+    expect(agentLine(second, "busy ")).toContain("activity: working");
+    expect(second).toContain("activity: <state>:");
+  });
+
+  it("does not explain the token for a local row no section prints", () => {
+    // `a` and `b` are each other's parent, so no root reaches them and the
+    // listing prints neither.
+    const output = formatAgentListResponse(
+      response(
+        [
+          agent({ id: "caller", isSelf: true }),
+          agent({ id: "a", parentId: "b", active: true }),
+          agent({ id: "b", parentId: "a" }),
+        ],
+        "caller",
+      ),
+    );
+
+    expect(output).not.toContain("activity:");
+  });
+
+  it("carries the activity legend line when sending is unavailable", () => {
+    const output = formatAgentListResponse({
+      ...response(
+        [agent({ id: "caller", isSelf: true }), agent({ id: "peer" })],
+        "caller",
+      ),
+      caller: { agentId: "caller", canSendMessages: false },
+    });
+
+    expect(output).toContain("Sending is unavailable in this session");
+    expect(output).toContain("activity: <state>:");
+    expect(output).toContain("that is not the same as idle");
+  });
+});
+
 const ARCHIVED_LEGEND =
   "[archived]: the agent/chat is archived and treated as inactive until its next user or A2A message";
 const SHRINK = "archived='exclude' / detail='compact' to shrink the listing.";
