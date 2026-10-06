@@ -10,7 +10,9 @@ import {
   agentListDowngradeV9ToV7,
   agentListDowngradeV9ToV8,
   agentListHarnessModelsDowngradeV2ToV1,
+  agentListDowngradeV10ToV9,
   agentListUpgradeV91ToV92,
+  agentListUpgradeV92ToV100,
   agentListV92,
 } from "@traycer/protocol/host/agent/contracts";
 import {
@@ -20,8 +22,10 @@ import {
   agentSummarySchemaV91,
   guiHarnessIdSchema,
   listAgentsResponseSchemaV91,
-  type AgentSummary,
+  listAgentsResponseSchemaV92,
+  type AgentSummaryV92,
   type ListAgentsResponse,
+  type ListAgentsResponseV92,
   tuiHarnessIdSchema,
 } from "@traycer/protocol/host/agent/shared";
 import { providerIdSchema } from "@traycer/protocol/host/provider-ids";
@@ -514,7 +518,7 @@ describe("agent host schemas", () => {
   });
 });
 
-const V92_ROW: AgentSummary = {
+const V92_ROW: AgentSummaryV92 = {
   id: "agent-1",
   parentId: null,
   hostId: "host-1",
@@ -533,7 +537,7 @@ const V92_ROW: AgentSummary = {
   archived: true,
 };
 
-const V92_RESPONSE: ListAgentsResponse = {
+const V92_RESPONSE: ListAgentsResponseV92 = {
   caller: { agentId: "agent-1", canSendMessages: true },
   scope: "user",
   agents: [
@@ -624,5 +628,53 @@ describe("agent.list@9.2 archived flag", () => {
         agentSummarySchema.safeParse({ ...V92_ROW, archived }).success,
       ).toBe(true);
     }
+  });
+});
+
+// Major 10 opened for `commandcode`, the first harness id after `1.5.0`, and
+// major 9 (whose latest minor is 9.2) froze at the id set that release
+// negotiated. The hop between them is an id-only change: `archived`, which
+// 9.2 put on the row, is live on 10.0 and survives the bridge.
+describe("agent.list@10.0 against the frozen 9.2 line", () => {
+  const V100_RESPONSE: ListAgentsResponse = {
+    caller: { agentId: "agent-1", canSendMessages: true },
+    scope: "user",
+    agents: [
+      V92_ROW,
+      { ...V92_ROW, id: "agent-2", isSelf: false, archived: null },
+      {
+        ...V92_ROW,
+        id: "agent-commandcode",
+        isSelf: false,
+        harnessId: "commandcode",
+        archived: false,
+      },
+    ],
+  };
+
+  it("upgrades a @9.2 response to @10.0 unchanged", () => {
+    expect(agentListUpgradeV92ToV100.from).toEqual({ major: 9, minor: 2 });
+    expect(agentListUpgradeV92ToV100.upgradeResponse(V92_RESPONSE)).toBe(
+      V92_RESPONSE,
+    );
+  });
+
+  it("downgrades to @9.2 by dropping the commandcode row alone, archived kept", () => {
+    expect(agentListDowngradeV10ToV9.to).toEqual({ major: 9, minor: 2 });
+    const downgraded =
+      agentListDowngradeV10ToV9.downgradeResponse(V100_RESPONSE);
+    expect(downgraded.ok).toBe(true);
+    if (!downgraded.ok) throw new Error("expected the downgrade to succeed");
+    expect(downgraded.value.agents.map((row) => row.id)).toEqual([
+      "agent-1",
+      "agent-2",
+    ]);
+    expect(downgraded.value.agents.map((row) => row.archived)).toEqual([
+      true,
+      null,
+    ]);
+    expect(() =>
+      listAgentsResponseSchemaV92.parse(downgraded.value),
+    ).not.toThrow();
   });
 });
