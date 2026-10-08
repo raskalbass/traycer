@@ -184,6 +184,8 @@ export const CHAT_STATE_FIELD_ACCOUNTING = {
   openedSubagentCardBlockIds: true,
   pendingCancelRestorations: true,
   failedSendRestoration: true,
+  queueEditRecords: true,
+  unconfirmedSendActionIds: true,
   hashOnlyRecoveries: true,
   currentComposerSettings: true,
   liveAssistantMessage: true,
